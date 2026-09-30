@@ -12,6 +12,18 @@ OUT=${2:?usage: package-macos.sh <gasm-run> <out dir> [version]}
 VERSION=${3:-0.0.0}
 mkdir -p "$OUT"
 
+# App icon from assets/icon-1024.png (rendered from site/public/favicon.svg).
+ICNS=""
+if command -v iconutil >/dev/null && [ -f assets/icon-1024.png ]; then
+  SET=$(mktemp -d)/gasm.iconset; mkdir -p "$SET"
+  for s in 16 32 128 256 512; do
+    sips -z $s $s assets/icon-1024.png --out "$SET/icon_${s}x${s}.png" >/dev/null
+    sips -z $((s*2)) $((s*2)) assets/icon-1024.png --out "$SET/icon_${s}x${s}@2x.png" >/dev/null
+  done
+  ICNS=$(dirname "$SET")/gasm.icns
+  iconutil -c icns "$SET" -o "$ICNS"
+fi
+
 app() { # <App name> <bundle id suffix> <game> <launcher body>
   local name=$1 id=$2 game=$3 body=$4
   local dir="$OUT/$name.app/Contents"
@@ -19,6 +31,7 @@ app() { # <App name> <bundle id suffix> <game> <launcher body>
   mkdir -p "$dir/MacOS" "$dir/Resources"
   cp "$RUN" "$dir/Resources/gasm-run"
   cp "build/$game.wasm" "$dir/Resources/"
+  [ -n "$ICNS" ] && cp "$ICNS" "$dir/Resources/gasm.icns"
   cat > "$dir/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -30,6 +43,7 @@ app() { # <App name> <bundle id suffix> <game> <launcher body>
   <key>CFBundleShortVersionString</key><string>$VERSION</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleExecutable</key><string>launch</string>
+  <key>CFBundleIconFile</key><string>gasm</string>
   <key>LSMinimumSystemVersion</key><string>11.0</string>
   <key>NSHighResolutionCapable</key><true/>
 </dict></plist>
