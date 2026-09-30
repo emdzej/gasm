@@ -150,7 +150,7 @@ frame.
 
 | Import | Signature | Semantics |
 |---|---|---|
-| `open` | `(url_ptr, len) -> i32` | Open `ws://` (native and web) or `wss://` (web). Handle > 0, or `-1` if denied or invalid. |
+| `open` | `(url_ptr, len) -> i32` | Open a `ws://` or `wss://` URL. Handle > 0, or `-1` if denied or invalid. TLS uses the platform's trusted certificates. |
 | `state` | `(conn) -> u32` | `0` connecting, `1` open, `2` closed, `3` error. |
 | `send` | `(conn, ptr, len) -> i32` | One message (`len > 0`). `0` ok, `-1` not open. |
 | `recv` | `(conn, dst, cap) -> i32` | Next message's length (copied only if ≤ `cap`; otherwise it stays queued), `0` if none waiting, `-1` if closed or failed and drained. |

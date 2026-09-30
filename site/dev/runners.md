@@ -133,6 +133,8 @@ Map the calls onto WebGPU (browser) or a WebGPU implementation (wgpu, Dawn):
 - `recv` returns the next message's length and copies only if it fits, so a
   guest can retry with a bigger buffer.
 - Deny by default unless the user opts in (`--allow-net`). Log denials.
+- Support `wss://` with the platform's trusted roots. The native runner uses
+  rustls with OS certificates (`rustls-native-certs`, which honours `SSL_CERT_FILE`).
 
 ### Step 7: storage (`gasm:storage`, optional)
 

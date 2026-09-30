@@ -5,7 +5,7 @@
 | Command | What it proves | Time |
 |---|---|---|
 | `scripts/determinism-test.sh` | Every case gives identical video, audio and GPU-upload hashes on **wasmtime JIT**, **wasmtime AOT** and **V8 (Node)** | ~75 s |
-| `scripts/net-test.sh` | Full online sumo matches through `gasm-relay` for native↔native, native↔Node and Node↔native end in the **identical game state**, with no desync | ~10 s |
+| `scripts/net-test.sh` | Full online sumo matches through `gasm-relay` for native↔native, native↔Node, Node↔native, and native↔Node over **TLS** (`wss://`, throwaway CA) end in the **identical game state**, with no desync | ~15 s |
 | `make test` | Both of the above | |
 | `make parity ROM=… FRAMES=…` | The NES game built **natively** (Rust, stub host) matches the wasm build | ~1 min first build |
 | `node scripts/web-smoke.mjs <url> <out.png> [secs]` | The browser runner loads and runs in headless Chrome (including WebGPU); prints status, fps and console, saves a screenshot | ~10 s |

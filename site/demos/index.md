@@ -35,9 +35,9 @@ and the same room name, and press start. Native players join with
 
 ::: warning HTTPS pages need wss://
 This site is served over HTTPS, so browsers only allow **`wss://`** relays from
-it. Put `gasm-relay` behind a TLS proxy (for example Caddy:
-`reverse_proxy localhost:9000`), or run the web runner locally with `make web`,
-which works with plain `ws://`.
+it. Give `gasm-relay` a certificate (`--tls-cert fullchain.pem --tls-key privkey.pem`)
+or put it behind a TLS proxy (for example Caddy: `reverse_proxy localhost:9000`).
+Alternatively, run the web runner locally with `make web`, which works with plain `ws://`.
 :::
 
 ## Run the demos locally

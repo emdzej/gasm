@@ -90,6 +90,9 @@ Headless runs with `--screenshot` render GPU games offscreen: look at the PNG.
   scopes.
 - **net:** runners flush queued messages and do a WebSocket close handshake on
   exit. Lockstep peers finish the frames they have inputs for after a leave notice.
+  TLS is rustls with the **ring** backend (no cmake/NASM on CI); the crypto
+  provider is installed once per process (`net::install_crypto_provider`). The
+  public-endpoint test is opt-in: `cargo test --release -- --ignored`.
 
 ## Conventions
 

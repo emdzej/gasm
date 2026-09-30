@@ -116,8 +116,9 @@ $R build/sumo.wasm --allow-net --param relay=ws://RELAY_HOST:9000 --param room=f
   feels fine on a LAN; over long distances the game briefly pauses when an
   input is late (lockstep: nobody ever sees a different game state). The log
   prints *in sync at frame N* every 20 s. *DESYNC* would indicate a bug.
-- Native connections use `ws://` only (no TLS yet). Browsers can use `wss://`
-  (needed when the page itself is served over HTTPS).
+- Both runners support `wss://` (TLS). Native uses the operating system's
+  trusted certificates (set `SSL_CERT_FILE` to use a specific CA bundle).
+  Browsers *require* `wss://` when the page is served over HTTPS, as on gasm.emdzej.pl.
 
 ## 6. Controls
 
@@ -227,7 +228,14 @@ node runners/web/headless.mjs build/sumo.wasm --headless 100000 --param quit_at=
 
 ```
 gasm-relay [addr:port] [--max-peers N]     (default 0.0.0.0:9000, 2 peers per room)
+gasm-relay 0.0.0.0:9443 --tls-cert fullchain.pem --tls-key privkey.pem   # serve wss:// directly
 ```
+
+For a public relay, use a real certificate, e.g. from Let's Encrypt
+(`certbot certonly --standalone -d relay.example.com`, then point `--tls-cert`
+at `fullchain.pem` and `--tls-key` at `privkey.pem`). Players then use
+`wss://relay.example.com:9443`. Putting gasm-relay behind a TLS reverse proxy
+(Caddy, nginx) works too.
 
 Clients connect to `ws://host:port/<room>`. The relay forwards messages
 between the peers in a room and announces joins and leaves. It knows nothing

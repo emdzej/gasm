@@ -2,6 +2,7 @@
 //!
 //!   gasm-relay [addr:port]            (default 0.0.0.0:9000)
 //!   gasm-relay 0.0.0.0:9000 --max-peers 4
+//!   gasm-relay 0.0.0.0:9443 --tls-cert fullchain.pem --tls-key privkey.pem   (wss://)
 //!
 //! Clients connect to ws://host:port/<room>. Binary protocol (byte 0 = type):
 //!
@@ -16,7 +17,7 @@
 //! client sees the same order of events. The relay never inspects payloads.
 
 use std::collections::HashMap;
-use std::io::ErrorKind;
+use std::io::{ErrorKind, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 use std::sync::{Arc, Mutex};
@@ -37,29 +38,73 @@ fn main() {
     let mut args = std::env::args().skip(1);
     let mut addr = "0.0.0.0:9000".to_string();
     let mut max_peers = 2usize;
+    let (mut cert, mut key) = (None, None);
     while let Some(a) = args.next() {
         match a.as_str() {
             "--max-peers" => max_peers = args.next().and_then(|v| v.parse().ok()).unwrap_or(2).clamp(1, 255),
+            "--tls-cert" => cert = args.next(),
+            "--tls-key" => key = args.next(),
             "-h" | "--help" => {
-                eprintln!("usage: gasm-relay [addr:port] [--max-peers N]");
+                eprintln!("usage: gasm-relay [addr:port] [--max-peers N] [--tls-cert chain.pem --tls-key key.pem]");
                 return;
             }
             _ => addr = a,
         }
     }
+    let tls = match (cert, key) {
+        (Some(c), Some(k)) => Some(load_tls(&c, &k).unwrap_or_else(|e| {
+            eprintln!("gasm-relay: TLS: {e}");
+            std::process::exit(1);
+        })),
+        (None, None) => None,
+        _ => {
+            eprintln!("gasm-relay: --tls-cert and --tls-key go together");
+            std::process::exit(2);
+        }
+    };
     let listener = TcpListener::bind(&addr).unwrap_or_else(|e| {
         eprintln!("gasm-relay: cannot listen on {addr}: {e}");
         std::process::exit(1);
     });
-    eprintln!("[relay] listening on ws://{addr}/<room> (max {max_peers} peers per room)");
+    let scheme = if tls.is_some() { "wss" } else { "ws" };
+    eprintln!("[relay] listening on {scheme}://{addr}/<room> (max {max_peers} peers per room)");
     let rooms: Rooms = Arc::default();
     for stream in listener.incoming().flatten() {
-        let rooms = rooms.clone();
+        let (rooms, tls) = (rooms.clone(), tls.clone());
         std::thread::spawn(move || {
-            if let Err(e) = client(stream, &rooms, max_peers) {
+            if let Err(e) = handle(stream, &rooms, max_peers, tls) {
                 eprintln!("[relay] client error: {e}");
             }
         });
+    }
+}
+
+fn load_tls(cert: &str, key: &str) -> Result<Arc<rustls::ServerConfig>, String> {
+    use rustls_pki_types::pem::PemObject;
+    use rustls_pki_types::{CertificateDer, PrivateKeyDer};
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    let certs = CertificateDer::pem_file_iter(cert)
+        .and_then(|it| it.collect::<Result<Vec<_>, _>>())
+        .map_err(|e| format!("{cert}: {e}"))?;
+    let key = PrivateKeyDer::from_pem_file(key).map_err(|e| format!("{key}: {e}"))?;
+    let cfg = rustls::ServerConfig::builder()
+        .with_no_client_auth()
+        .with_single_cert(certs, key)
+        .map_err(|e| e.to_string())?;
+    Ok(Arc::new(cfg))
+}
+
+/// Plain or TLS: the WebSocket code is generic over the stream. `raw` is a
+/// clone of the socket, used to set timeouts after the (blocking) handshakes.
+fn handle(tcp: TcpStream, rooms: &Rooms, max_peers: usize, tls: Option<Arc<rustls::ServerConfig>>) -> Result<(), String> {
+    let raw = tcp.try_clone().map_err(|e| e.to_string())?;
+    let _ = raw.set_nodelay(true);
+    match tls {
+        None => client(tcp, &raw, rooms, max_peers),
+        Some(cfg) => {
+            let conn = rustls::ServerConnection::new(cfg).map_err(|e| e.to_string())?;
+            client(rustls::StreamOwned::new(conn, tcp), &raw, rooms, max_peers)
+        }
     }
 }
 
@@ -73,8 +118,8 @@ fn broadcast(rooms: &Rooms, room: &str, except: usize, msg: &[u8]) {
     }
 }
 
-fn client(stream: TcpStream, rooms: &Rooms, max_peers: usize) -> Result<(), String> {
-    let peer_addr = stream.peer_addr().map(|a| a.to_string()).unwrap_or_default();
+fn client<S: Read + Write>(stream: S, raw: &TcpStream, rooms: &Rooms, max_peers: usize) -> Result<(), String> {
+    let peer_addr = raw.peer_addr().map(|a| a.to_string()).unwrap_or_default();
     let mut path = String::new();
     let mut ws = tungstenite::accept_hdr(stream, |req: &Request, resp: Response| {
         path = req.uri().path().to_string();
@@ -85,8 +130,7 @@ fn client(stream: TcpStream, rooms: &Rooms, max_peers: usize) -> Result<(), Stri
         "" => "lobby".to_string(),
         r => r.to_string(),
     };
-    let _ = ws.get_mut().set_nodelay(true);
-    ws.get_mut().set_read_timeout(Some(Duration::from_millis(2))).map_err(|e| e.to_string())?;
+    raw.set_read_timeout(Some(Duration::from_millis(2))).map_err(|e| e.to_string())?;
 
     // Join: take the lowest free index, tell the others while holding the lock
     // so membership events are ordered before any data from this peer.
@@ -134,7 +178,7 @@ fn client(stream: TcpStream, rooms: &Rooms, max_peers: usize) -> Result<(), Stri
     result
 }
 
-fn pump(ws: &mut WebSocket<TcpStream>, rx: &Receiver<Vec<u8>>, rooms: &Rooms, room: &str, index: usize) -> Result<(), String> {
+fn pump<S: Read + Write>(ws: &mut WebSocket<S>, rx: &Receiver<Vec<u8>>, rooms: &Rooms, room: &str, index: usize) -> Result<(), String> {
     loop {
         loop {
             match rx.try_recv() {

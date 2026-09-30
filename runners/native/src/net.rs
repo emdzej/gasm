@@ -2,7 +2,8 @@
 //!
 //! Each connection runs on a background thread; the guest-facing API is
 //! non-blocking (queues + an atomic state), matching the browser runner.
-//! Only `ws://` is supported natively for now (no TLS).
+//! `ws://` and `wss://` (rustls, trusting the OS certificate store; set
+//! `SSL_CERT_FILE` to use a specific CA bundle instead).
 
 use std::collections::{HashMap, VecDeque};
 use std::io::ErrorKind;
@@ -43,10 +44,11 @@ impl Net {
             eprintln!("[gasm] net: denied connection to {url} (run with --allow-net)");
             return -1;
         }
-        if !url.starts_with("ws://") {
-            eprintln!("[gasm] net: only ws:// URLs are supported natively: {url}");
+        if !url.starts_with("ws://") && !url.starts_with("wss://") {
+            eprintln!("[gasm] net: only ws:// and wss:// URLs are supported: {url}");
             return -1;
         }
+        install_crypto_provider();
         let state = Arc::new(AtomicU32::new(CONNECTING));
         let (out_tx, out_rx) = mpsc::channel::<Vec<u8>>();
         let (in_tx, in_rx) = mpsc::channel::<Vec<u8>>();
@@ -117,9 +119,15 @@ fn run(url: &str, state: &AtomicU32, outgoing: Receiver<Vec<u8>>, incoming: Send
             return;
         }
     };
-    if let MaybeTlsStream::Plain(s) = ws.get_mut() {
-        let _ = s.set_nodelay(true);
-        let _ = s.set_read_timeout(Some(Duration::from_millis(2)));
+    // Short read timeouts let one thread alternate between sending and receiving.
+    let tcp = match ws.get_mut() {
+        MaybeTlsStream::Plain(s) => Some(&*s),
+        MaybeTlsStream::Rustls(s) => Some(&s.sock),
+        _ => None,
+    };
+    if let Some(tcp) = tcp {
+        let _ = tcp.set_nodelay(true);
+        let _ = tcp.set_read_timeout(Some(Duration::from_millis(2)));
     }
     state.store(OPEN, Ordering::Release);
     let end = pump(&mut ws, &outgoing, &incoming);
@@ -142,6 +150,14 @@ fn close_gracefully(ws: &mut WebSocket<MaybeTlsStream<std::net::TcpStream>>) {
             Err(_) => break, // ConnectionClosed: handshake complete
         }
     }
+}
+
+/// rustls needs a process-wide crypto backend; we use ring (see Cargo.toml).
+pub fn install_crypto_provider() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+    });
 }
 
 pub(crate) fn pump(
@@ -172,5 +188,49 @@ pub(crate) fn pump(
             Err(tungstenite::Error::ConnectionClosed | tungstenite::Error::AlreadyClosed) => return Ok(()),
             Err(e) => return Err(e.to_string()),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Wait (up to 10 s) for a connection to leave CONNECTING; return its state.
+    fn settle(net: &Net, h: i32) -> u32 {
+        let t0 = std::time::Instant::now();
+        while net.state(h) == CONNECTING && t0.elapsed() < Duration::from_secs(10) {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        net.state(h)
+    }
+
+    /// Public TLS endpoint, OS trust store. Run with: cargo test --release -- --ignored
+    #[test]
+    #[ignore = "needs internet"]
+    fn wss_public_echo() {
+        let mut net = Net::new(true);
+        let h = net.open("wss://echo.websocket.org");
+        assert!(h > 0);
+        assert_eq!(settle(&net, h), OPEN, "TLS connection did not open");
+        assert_eq!(net.send(h, b"gasm-tls-check".to_vec()), 0);
+        let t0 = std::time::Instant::now();
+        let mut echoed = false;
+        while t0.elapsed() < Duration::from_secs(10) && !echoed {
+            match net.peek(h) {
+                Ok(m) => {
+                    echoed = m == b"gasm-tls-check";
+                    net.pop(h);
+                }
+                Err(0) => std::thread::sleep(Duration::from_millis(20)),
+                Err(_) => break,
+            }
+        }
+        assert!(echoed, "no echo over wss://");
+    }
+
+    #[test]
+    fn denied_without_permission() {
+        assert_eq!(Net::new(false).open("wss://example.com"), -1);
+        assert_eq!(Net::new(true).open("http://example.com"), -1);
     }
 }

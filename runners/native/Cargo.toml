@@ -12,7 +12,10 @@ winit = "0.30"
 wgpu = "30"
 pollster = "1"
 serde_json = "1"
-tungstenite = "0.30"
+tungstenite = { version = "0.30", features = ["rustls-tls-native-roots"] }
+# TLS for wss:// (client) and gasm-relay --tls-cert (server); ring = no cmake/NASM needed
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+rustls-pki-types = { version = "1", features = ["std"] }
 cpal = "0.18"
 gilrs = "0.11"
 png = "0.18"
