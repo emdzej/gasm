@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: build + determinism + network tests
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: System packages (native runner)
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libasound2-dev libudev-dev pkg-config
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Rust toolchain
+        run: rustup toolchain install stable --profile minimal --target wasm32-unknown-unknown
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            guests/target
+            runners/native/target
+            tools/wasi-sdk
+          key: ${{ runner.os }}-cargo-${{ hashFiles('guests/Cargo.lock', 'runners/native/Cargo.lock', 'scripts/fetch-wasi-sdk.sh') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Build games + native runner
+        run: make
+
+      - name: Fetch test ROMs
+        run: make roms
+
+      - name: Determinism (wasmtime JIT vs AOT vs V8)
+        run: scripts/determinism-test.sh
+
+      - name: Network lockstep (native <-> node via gasm-relay)
+        run: scripts/net-test.sh
+
+      - name: Parity (NES native vs wasm)
+        run: make parity ROM=roms/cpu_instr_test.nes FRAMES=600
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: games
+          path: build/*.wasm

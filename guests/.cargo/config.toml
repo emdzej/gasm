@@ -1,0 +1,4 @@
+[target.wasm32-unknown-unknown]
+# Guests get no OS entropy. tetanes-core only uses rand for RamState::Random,
+# which the NES guest never selects (determinism), so any call would fail loudly.
+rustflags = ['--cfg', 'getrandom_backend="unsupported"']

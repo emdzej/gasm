@@ -1,0 +1,11 @@
+/build/
+/tools/
+/roms/
+/third_party/
+/runners/native/target/
+.DS_Store
+/guests/target/
+/site/node_modules/
+/site/.vitepress/dist/
+/site/.vitepress/cache/
+/site/public/play/

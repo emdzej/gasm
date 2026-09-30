@@ -1,0 +1,235 @@
+# User guide
+
+How to run gasm games natively, in the browser, and online, and how to build
+everything from source.
+
+## Quickest start: no build needed
+
+- **In the browser:** [play the demos](/demos/) (sumo needs WebGPU).
+- **Prebuilt:** download from [GitHub Releases](https://github.com/emdzej/gasm/releases):
+  - `gasm-<version>-macos-apps.zip`: **Sumo.app**, **NES.app**, **Triangle.app**,
+    **Test Pattern.app**. They're unsigned: right-click → **Open** the first
+    time, or run `xattr -dr com.apple.quarantine Sumo.app`. Logs go to
+    `~/Library/Logs/gasm/`.
+  - `gasm-<version>-<platform>` archives (macOS universal, Linux, Windows):
+    `gasm-run`, `gasm-relay`, the games, and `run-sumo` / `run-nes` /
+    `run-relay` / `run-triangle` scripts.
+
+The rest of this guide builds from source.
+
+## 1. Install prerequisites
+
+| Tool | Why | Check |
+|---|---|---|
+| rustup (+ `stable` toolchain) | Rust games (wasm32) and the native runner | `rustup --version` |
+| Node.js ≥ 22 | headless runner, tests (needs the built-in `WebSocket`) | `node --version` |
+| Python 3 | local web server for the browser runner | `python3 --version` |
+| git, curl, make | fetching sources/toolchain | — |
+
+- **Rust from Homebrew isn't enough** for the games: it has no wasm targets.
+  Install rustup (`brew install rustup` then `rustup-init`, or see rustup.rs).
+  The Makefile adds the `wasm32-unknown-unknown` target to the `stable`
+  toolchain automatically. A different toolchain works too: `make TOOLCHAIN=nightly`.
+- **wasi-sdk** is downloaded into `tools/wasi-sdk` by the first `make`. It
+  compiles the C example and provides the `wasm-ld` linker used for the Rust
+  games. To use your own copy, pass `make WASI_SDK=/path/to/wasi-sdk`.
+- Browser runner: any browser with **WebGPU** for sumo (Chrome/Edge 113+,
+  Safari 26+, Firefox 141+ on Windows). NES and the test pattern only need a
+  2D canvas.
+
+## 2. Build
+
+```sh
+make          # games (build/*.wasm) + native runner + relay
+make roms     # optional: test ROMs and homebrew demos into roms/
+```
+
+| File | What |
+|---|---|
+| `build/sumo.wasm` | 3D two-player sumo (GPU + network) |
+| `build/nes.wasm` | NES emulator (tetanes-core); needs a ROM |
+| `build/test-pattern.wasm` | Tiny C demo: gradient, movable square, tone on A |
+| `runners/native/target/release/gasm-run` | Native runner |
+| `runners/native/target/release/gasm-relay` | Room relay for online play |
+
+## 3. Play natively
+
+```sh
+R=runners/native/target/release/gasm-run
+$R build/sumo.wasm                                  # vs. bot
+$R build/sumo.wasm --param mode=local2              # two gamepads, same machine
+$R build/nes.wasm --rom roms/bladebuster.nes
+$R build/nes.wasm --rom ~/path/to/your-game.nes --param filter=ntsc
+```
+
+The window is resizable. Its title shows the game's frame rate. Press **Esc**
+or close the window to quit.
+
+## 4. Play in the browser
+
+```sh
+make web
+# open http://localhost:8080/runners/web/
+```
+
+1. Pick a game in the first drop-down.
+2. **Sumo:** leave the relay field empty to play the bot, or enter a relay URL
+   to play online (next section).
+   **NES:** pick a ROM from the list (from `roms/`), click **open .nes…**, or
+   drag and drop a `.nes` file onto the screen.
+3. Click **▶ start**. Browsers only allow audio after a click, so the first
+   start must be a click.
+
+URL parameters are passed to the game: `?game=sumo.wasm&relay=ws://host:9000&room=abc&autostart`.
+`game` and `autostart` are used by the page itself; everything else becomes a
+game parameter.
+
+ROMs you open are read locally by the page and never uploaded.
+
+## 5. Play sumo online
+
+Players meet in a **room** on a **gasm-relay**. Any mix works: native↔native,
+browser↔browser, native↔browser.
+
+```sh
+# on any machine both players can reach (LAN or a server)
+runners/native/target/release/gasm-relay 0.0.0.0:9000       # or: make relay
+
+# player 1 (native)
+$R build/sumo.wasm --allow-net --param relay=ws://RELAY_HOST:9000 --param room=friday
+
+# player 2 (browser): relay field = ws://RELAY_HOST:9000, room = friday, then start
+```
+
+- The first player to join is **red**, the second **blue**. Each player's camera
+  looks from their own side, and arrows are relative to the screen.
+- Until the opponent arrives, your ball pulses and the log says *waiting for an
+  opponent*. If a player leaves, the other returns to waiting.
+- The native runner needs `--allow-net`; without it, network access is denied
+  and the game falls back to the bot.
+- Inputs are delayed by 4 frames (~66 ms) to hide network latency. That
+  feels fine on a LAN; over long distances the game briefly pauses when an
+  input is late (lockstep: nobody ever sees a different game state). The log
+  prints *in sync at frame N* every 20 s. *DESYNC* would indicate a bug.
+- Native connections use `ws://` only (no TLS yet). Browsers can use `wss://`
+  (needed when the page itself is served over HTTPS).
+
+## 6. Controls
+
+| gasm button | Keyboard | Gamepad (position) | NES | Sumo |
+|---|---|---|---|---|
+| D-pad | Arrow keys | D-pad / left stick | D-pad | move |
+| A | X | East (right face) | A | dash |
+| B | Z | South (bottom face) | B | dash |
+| X | S | North (top face) | — | — |
+| Y | A | West (left face) | — | — |
+| L / R | Q / W | LB / RB | — | — |
+| Start | Enter | Start | Start | — |
+| Select | Right Shift (web: either Shift) | Select/Back | Select | — |
+
+Keyboard and the first gamepad both drive player 1. Additional gamepads
+become players 2–4. **Sumo tips:** dashing has a cooldown (the small white orb
+above your ball shows it's ready). A dash into the opponent pushes much
+harder than rolling into them. Keep away from the edge.
+
+## 7. `gasm-run` reference
+
+```
+gasm-run <game.wasm|game.cwasm> [options]
+
+--rom <path>             shorthand for --asset rom=<path>
+--asset <name>=<path>    expose a file to the game as asset <name> (repeatable)
+--param <name>=<value>   launch parameter for the game (repeatable)
+--allow-net              let the game open network connections
+--window <W>x<H>         initial window size (default 960x720)
+--mute                   no audio output
+--compile <out.cwasm>    ahead-of-time compile to native code and exit
+--headless <N>           run N frames with no window or audio; print hashes
+--screenshot <out.png>   (headless) save the last frame (GPU games render offscreen)
+--input <script>         (headless) scripted input, see below
+--realtime               (headless) run at the game's frame rate instead of flat out
+--no-hash                (headless) skip hashing (for benchmarks)
+```
+
+Game parameters:
+
+| Game | Parameter | Meaning |
+|---|---|---|
+| sumo | `relay=ws://host:port` | play online through a relay |
+| sumo | `room=name` | relay room (default `sumo`) |
+| sumo | `mode=local2` | offline two-player on one machine (default: vs. bot) |
+| sumo, nes | `quit_at=N` | exit after N frames (tests) |
+| nes | `filter=ntsc` | NTSC composite filter (default: sharp pixels) |
+
+### Precompiling (AOT)
+
+```sh
+$R build/nes.wasm --compile build/nes.cwasm
+$R build/nes.cwasm --rom roms/bladebuster.nes
+```
+
+A `.cwasm` starts faster and needs no JIT. It only works with the same
+`gasm-run` build on the same CPU architecture. **Only run `.cwasm` files you
+compiled yourself**, because they contain native code and aren't sandboxed.
+
+### Headless runs and input scripts
+
+```sh
+$R build/nes.wasm --rom roms/bladebuster.nes --headless 2400 \
+   --input "100-104:START,200-204:START,300-2400:RIGHT+A" --screenshot out.png
+```
+
+Output:
+
+```
+frames=2400 presented=2400 size=256x240
+video_fnv32=fd15bbc8 audio_fnv32=56acada3 audio_frames=1916721
+```
+
+Input script syntax: comma-separated `FROM-TO:BUTTON+BUTTON`, frame numbers
+starting at 0, ranges inclusive (`FROM:...` alone means a single frame).
+Buttons: `A B X Y L R SELECT START UP DOWN LEFT RIGHT` (case-insensitive).
+Scripts drive player 1.
+
+The Node runner accepts the same headless options (plus `--param`,
+`--allow-net`, `--realtime`):
+
+```sh
+node runners/web/headless.mjs build/sumo.wasm --headless 100000 --param quit_at=3000
+```
+
+### `gasm-relay`
+
+```
+gasm-relay [addr:port] [--max-peers N]     (default 0.0.0.0:9000, 2 peers per room)
+```
+
+Clients connect to `ws://host:port/<room>`. The relay forwards messages
+between the peers in a room and announces joins and leaves. It knows nothing
+about the games.
+
+## 8. Which ROMs work
+
+The NES game uses tetanes-core, an accurate, cycle-based emulator that supports
+the common mappers (NROM, MMC1, UxROM, CNROM, MMC3, MMC5, AxROM, and many
+more; see the [tetanes project](https://github.com/lukexor/tetanes)). Use
+iNES `.nes` files. It passes the blargg CPU, timing and APU test
+ROMs. Battery saves are **not persisted yet**. For commercial games, use dumps
+of cartridges you own.
+
+## 9. Troubleshooting
+
+| Symptom | Fix |
+|---|---|
+| `rustup toolchain 'stable' not found` | Install rustup and run `rustup toolchain install stable`. |
+| `no asset named "rom"` | Pass `--rom file.nes` (native) or choose a ROM (web). |
+| `cannot load rom` | Not a valid iNES file, or an unsupported mapper. |
+| sumo: *network not allowed?* | Add `--allow-net` (native). |
+| sumo: *waiting for an opponent* forever | Both players need the same relay URL **and** room; check the relay's log for joins. |
+| sumo: *room is full* | Two players are already in that room; pick another room name. |
+| Web: `WebGPU is not available` | Use a WebGPU-capable browser, or enable it (Firefox: `dom.webgpu.enabled`; Linux Chrome: `--enable-unsafe-webgpu`). |
+| Web: `HTTP 404` for `build/*.wasm` | Serve the **repo root** (`make web`), not `runners/web/`. Build the games first. |
+| No sound (native) | Check `[gasm] audio:` on stderr; `audio disabled: …` explains why. |
+| No sound (web) | Click the page / **start** button; autoplay policies block audio before interaction. |
+| `.cwasm` fails to load | It was built by a different `gasm-run` version; recompile it. |
+| macOS: "developer cannot be verified" for wasi-sdk | `xattr -dr com.apple.quarantine tools/wasi-sdk` (the fetch script does this). |

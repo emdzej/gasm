@@ -1,0 +1,142 @@
+name: Release
+
+# Push a tag like v0.1.0 to build runners for macOS/Linux/Windows, package them
+# with the games (and macOS .app wrappers), and publish a GitHub Release.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing tag to (re)build a release for
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  TAG: ${{ inputs.tag || github.ref_name }}
+
+jobs:
+  games:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+      - name: Rust toolchain
+        run: rustup toolchain install stable --profile minimal --target wasm32-unknown-unknown
+      - name: Build games
+        run: make guests
+      - uses: actions/upload-artifact@v4
+        with:
+          name: games
+          path: build/*.wasm
+
+  native:
+    needs: games
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: macos-14, platform: macos-universal }
+          - { os: ubuntu-22.04, platform: linux-x86_64 }
+          - { os: windows-2022, platform: windows-x86_64 }
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: games
+          path: build
+
+      - name: System packages
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libasound2-dev libudev-dev pkg-config
+
+      - name: Build (macOS universal)
+        if: runner.os == 'macOS'
+        working-directory: runners/native
+        run: |
+          rustup target add aarch64-apple-darwin x86_64-apple-darwin
+          cargo build --release --target aarch64-apple-darwin
+          cargo build --release --target x86_64-apple-darwin
+          mkdir -p ../../dist/bin
+          for b in gasm-run gasm-relay; do
+            lipo -create -output ../../dist/bin/$b target/aarch64-apple-darwin/release/$b target/x86_64-apple-darwin/release/$b
+          done
+
+      - name: Build (Linux / Windows)
+        if: runner.os != 'macOS'
+        working-directory: runners/native
+        run: |
+          cargo build --release
+          mkdir -p ../../dist/bin
+          cp target/release/gasm-run* target/release/gasm-relay* ../../dist/bin/ 2>/dev/null || true
+          rm -f ../../dist/bin/*.d ../../dist/bin/*.pdb
+
+      - name: Package
+        run: |
+          VERSION=${TAG#v}
+          PKG=$(scripts/package-cli.sh "$VERSION" "${{ matrix.platform }}" dist/bin)
+          cd dist
+          NAME=$(basename "$PKG")
+          if [ "${{ runner.os }}" = Windows ]; then
+            7z a -tzip "$NAME.zip" "$NAME" >/dev/null
+          else
+            tar czf "$NAME.tar.gz" "$NAME"
+          fi
+
+      - name: macOS apps
+        if: runner.os == 'macOS'
+        run: |
+          VERSION=${TAG#v}
+          scripts/package-macos.sh dist/bin/gasm-run "dist/gasm-$VERSION-macos-apps" "$VERSION"
+          cd dist && ditto -c -k --keepParent "gasm-$VERSION-macos-apps" "gasm-$VERSION-macos-apps.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: package-${{ matrix.platform }}
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
+
+  release:
+    needs: native
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION=${TAG#v}
+          (cd artifacts/games && zip -q "../gasm-$VERSION-games-wasm.zip" *.wasm)
+          mapfile -t FILES < <(find artifacts -maxdepth 2 -type f \( -name '*.tar.gz' -o -name '*.zip' \))
+          cat > notes.md <<NOTES
+          ## Downloads
+
+          | File | What |
+          |---|---|
+          | \`gasm-$VERSION-macos-apps.zip\` | **Sumo.app, NES.app, Triangle.app, Test Pattern.app**, double-click to play (unsigned: right-click, then Open the first time) |
+          | \`gasm-$VERSION-macos-universal.tar.gz\` | gasm-run + gasm-relay (Apple Silicon + Intel) with games and launch scripts |
+          | \`gasm-$VERSION-linux-x86_64.tar.gz\` | same for Linux |
+          | \`gasm-$VERSION-windows-x86_64.zip\` | same for Windows |
+          | \`gasm-$VERSION-games-wasm.zip\` | just the games: the same .wasm files run on every runner and at https://gasm.emdzej.pl/demos/ |
+          NOTES
+          sed -i 's/^          //' notes.md
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "${FILES[@]}" --clobber
+          else
+            gh release create "$TAG" "${FILES[@]}" --title "gasm $VERSION" --notes-file notes.md --generate-notes
+          fi

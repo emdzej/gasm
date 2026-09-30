@@ -1,0 +1,16 @@
+# Rust guests (games) for gasm. Build: make guests  (wasm32-unknown-unknown)
+[workspace]
+resolver = "3"
+members = ["gasm", "sumo", "nes", "triangle", "parity"]
+
+[workspace.package]
+edition = "2024"
+license = "MIT"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+debug = false
+strip = "debuginfo"   # keep the name section for readable wasm backtraces

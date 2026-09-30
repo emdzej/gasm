@@ -1,0 +1,4 @@
+--target=wasm32-wasip1
+--sysroot=tools/wasi-sdk/share/wasi-sysroot
+-Ispec
+-Iguests/test-pattern

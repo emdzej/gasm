@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>gasm — web runner</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="gasm-root" content="../../">
+<style>
+  :root { color-scheme: dark; --fg: #d8dee9; --dim: #7b8494; --accent: #88c0d0; }
+  * { box-sizing: border-box; }
+  body { margin: 0; min-height: 100vh; display: grid; grid-template-rows: auto 1fr auto;
+         background: #0e1116; color: var(--fg); font: 14px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; }
+  header { display: flex; flex-wrap: wrap; gap: .75rem; align-items: center; padding: .75rem 1rem; border-bottom: 1px solid #222832; }
+  header b { color: var(--accent); letter-spacing: .05em; }
+  input { background: #1a1f27; color: var(--fg); border: 1px solid #2c3440; border-radius: 4px; padding: .35rem .5rem; font: inherit; }
+  [hidden] { display: none !important; }
+  select, button, label.file { background: #1a1f27; color: var(--fg); border: 1px solid #2c3440; border-radius: 4px;
+         padding: .35rem .6rem; font: inherit; cursor: pointer; }
+  button.primary { border-color: var(--accent); color: var(--accent); }
+  label.file input { display: none; }
+  main { display: grid; place-items: center; padding: 1rem; min-height: 0; }
+  canvas { image-rendering: pixelated; background: #000; max-width: 100%; max-height: calc(100vh - 12rem);
+           aspect-ratio: 256 / 240; height: calc(100vh - 12rem); }
+  canvas.gpu { image-rendering: auto; aspect-ratio: 16 / 9; width: min(100%, calc((100vh - 12rem) * 16 / 9)); height: auto; }
+  main.drag canvas { outline: 2px dashed var(--accent); }
+  footer { display: flex; justify-content: space-between; gap: 1rem; padding: .5rem 1rem; color: var(--dim);
+           border-top: 1px solid #222832; font-size: 12px; }
+  #log { white-space: pre; overflow: hidden; text-overflow: ellipsis; max-width: 70vw; }
+</style>
+</head>
+<body>
+<header>
+  <b>gasm</b>
+  <select id="game" title="guest module"></select>
+  <select id="rom" title="ROM (asset &quot;rom&quot;)"></select>
+  <label class="file" id="romlabel">open .nes…<input id="romfile" type="file" accept=".nes"></label>
+  <span id="netfields">
+    <input id="relay" size="34" title="gasm-relay URL (empty = offline vs. bot)">
+    <input id="room" size="8" title="room name (both players use the same)">
+  </span>
+  <button id="start" class="primary">▶ start</button>
+  <button id="pause">❚❚ pause</button>
+</header>
+<main id="stage"><canvas id="screen" width="256" height="240"></canvas></main>
+<footer>
+  <span id="log">drop a .nes file on the screen, or pick one above</span>
+  <span>arrows · X=A · Z=B · S=X · A=Y · Q/W=L/R · Enter=Start · Shift=Select · gamepad ok · <span id="fps"></span></span>
+</footer>
+<script type="module" src="app.js"></script>
+</body>
+</html>
