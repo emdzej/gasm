@@ -41,12 +41,12 @@ are not free; use your own copies.
 |---|---|---|---|---|
 | D-pad | arrows | move and turn | navigate | |
 | A | X | fire | select | yes |
-| B | Z | use (doors, switches) | back | no |
+| B | Z | use (doors, switches) | back (closes the main menu) | no |
 | X | S | next weapon | | |
 | Y | A | run (hold) | | |
 | L / R | Q / W | strafe left / right | | |
-| Start | Enter | menu | close menu | cancel |
-| Select | Right Shift | automap | | |
+| Start | Enter | menu | select | cancel |
+| Select | Right Shift | automap | close menu | |
 
 There is no keyboard for naming save games, so an empty slot is named
 `SLOT n`. Esc belongs to the runner (it quits); use **Quit Game** in DOOM's

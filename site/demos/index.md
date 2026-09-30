@@ -19,8 +19,8 @@ DOOM runs everywhere, so it had to run on gasm. [`doom.wasm`](https://github.com
 is [doomgeneric](https://github.com/ozkl/doomgeneric) compiled with wasi-sdk,
 with Chocolate Doom's OPL music player, and the demo plays the shareware
 episode. Arrows move, **X** fires, **Z** opens doors, **A** runs, **Q**/**W**
-strafe, **S** switches weapons, **Enter** opens the menu and **Right Shift**
-the map. Saves stay in your browser. Press **start** in the frame (it loads
+strafe, **S** switches weapons, **Right Shift** shows the map. **Enter** opens
+the menu and selects in it; **Z** goes back. Saves stay in your browser. Press **start** in the frame (it loads
 the 4 MB WAD).
 
 <iframe class="demo-frame" src="/play/?game=doom.wasm" title="gasm DOOM demo" allow="gamepad; autoplay"></iframe>

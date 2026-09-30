@@ -166,11 +166,11 @@ $R build/sumo.wasm --allow-net --param relay=ws://RELAY_HOST:9000 --param room=f
 |---|---|---|---|---|---|
 | D-pad | Arrow keys | D-pad / left stick | D-pad | move | move, turn |
 | A | X | East (right face) | A | dash | fire; select in menus |
-| B | Z | South (bottom face) | B | dash | use (doors); back |
+| B | Z | South (bottom face) | B | dash | use (doors); back in menus |
 | X | S | North (top face) | — | — | next weapon |
 | Y | A | West (left face) | — | — | run |
 | L / R | Q / W | LB / RB | — | — | strafe |
-| Start | Enter | Start | Start | — | menu |
+| Start | Enter | Start | Start | — | menu; select in menus |
 | Select | Right Shift (web: either Shift) | Select/Back | Select | — | automap |
 
 Keyboard and the first gamepad both drive player 1. **Player 2 has its own

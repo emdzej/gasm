@@ -90,6 +90,8 @@ extern int saveStringEnter;
 extern int saveSlot;
 extern int messageToPrint;
 extern char savegamestrings[10][SAVESTRINGSIZE];
+struct menu_s;
+extern struct menu_s MainDef, *currentMenu;
 
 static uint16_t queue[QUEUE_SIZE];
 static unsigned int queue_head, queue_tail;
@@ -160,10 +162,12 @@ static unsigned char key_for(int button) {
         }
     }
     if (menuactive) {
+        /* Start (Enter) selects like A; B goes back, and closes the menu from the top */
         switch (button) {
         case BTN_A: return KEY_ENTER;
-        case BTN_B: return KEY_BACKSPACE;
-        case BTN_START: return KEY_ESCAPE;
+        case BTN_START: return KEY_ENTER;
+        case BTN_B: return currentMenu == &MainDef ? KEY_ESCAPE : KEY_BACKSPACE;
+        case BTN_SELECT: return KEY_ESCAPE;
         case BTN_UP: return KEY_UPARROW;
         case BTN_DOWN: return KEY_DOWNARROW;
         case BTN_LEFT: return KEY_LEFTARROW;
