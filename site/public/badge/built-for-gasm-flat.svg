@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="118" height="20" viewBox="0 0 118 20" role="img" aria-label="built for: gasm">
+  <title>built for: gasm</title>
+  <clipPath id="r"><rect width="118" height="20" rx="3"/></clipPath>
+  <g clip-path="url(#r)">
+    <rect width="76" height="20" fill="#0e1116"/>
+    <rect x="76" width="42" height="20" fill="#3f8ea3"/>
+  </g>
+  <svg x="3" y="2" width="16" height="16" viewBox="0 0 64 64"><rect x="2" y="2" width="60" height="60" rx="13" fill="#0e1116"/><g fill="#3a4250"><rect x="30.5" y="9" width="3" height="5"/><rect x="30.5" y="18" width="3" height="5"/><rect x="30.5" y="27" width="3" height="5"/><rect x="30.5" y="36" width="3" height="5"/><rect x="30.5" y="45" width="3" height="5"/></g><rect x="9" y="15" width="5" height="18" rx="1" fill="#e8554e"/><rect x="50" y="29" width="5" height="18" rx="1" fill="#3b7ff5"/><rect x="38" y="22" width="6" height="6" fill="#f2f4f8"/></svg>
+  <g font-family="Verdana,DejaVu Sans,Geneva,sans-serif" font-size="11" fill="#fff">
+    <text x="22" y="14" textLength="48">built for</text>
+    <text x="82" y="14" textLength="30">gasm</text>
+  </g>
+</svg>
