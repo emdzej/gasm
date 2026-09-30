@@ -120,6 +120,8 @@ lot of time.
 - Generated or downloaded content (`build/`, `tools/`, `roms/`, `target/`,
   `site/node_modules`, `site/.vitepress/dist`, `site/public/play`) is git-ignored.
   Never commit ROMs.
+- **Releases:** push a version tag without a `v` prefix (`git tag 0.2.0 && git push origin 0.2.0`).
+- **Agents:** [`AGENTS.md`](https://github.com/emdzej/gasm/blob/main/AGENTS.md) lists build traps, invariants and conventions for coding agents.
 - **Docs** live in `site/` (VitePress) and are published to
   [gasm.emdzej.pl](https://gasm.emdzej.pl) by GitHub Actions. `spec/ABI.md` is
   included into the site, not copied.

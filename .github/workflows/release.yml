@@ -1,10 +1,10 @@
 name: Release
 
-# Push a tag like v0.1.0 to build runners for macOS/Linux/Windows, package them
+# Push a version tag like 0.1.0 (no "v" prefix) to build runners for macOS/Linux/Windows, package them
 # with the games (and macOS .app wrappers), and publish a GitHub Release.
 on:
   push:
-    tags: ['v*']
+    tags: ['[0-9]+.[0-9]+.[0-9]+*']
   workflow_dispatch:
     inputs:
       tag:
@@ -83,7 +83,7 @@ jobs:
 
       - name: Package
         run: |
-          VERSION=${TAG#v}
+          VERSION=$TAG
           PKG=$(scripts/package-cli.sh "$VERSION" "${{ matrix.platform }}" dist/bin)
           cd dist
           NAME=$(basename "$PKG")
@@ -96,7 +96,7 @@ jobs:
       - name: macOS apps
         if: runner.os == 'macOS'
         run: |
-          VERSION=${TAG#v}
+          VERSION=$TAG
           scripts/package-macos.sh dist/bin/gasm-run "dist/gasm-$VERSION-macos-apps" "$VERSION"
           cd dist && ditto -c -k --keepParent "gasm-$VERSION-macos-apps" "gasm-$VERSION-macos-apps.zip"
 
@@ -121,7 +121,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          VERSION=${TAG#v}
+          VERSION=$TAG
           (cd artifacts/games && zip -q "../gasm-$VERSION-games-wasm.zip" *.wasm)
           mapfile -t FILES < <(find artifacts -maxdepth 2 -type f \( -name '*.tar.gz' -o -name '*.zip' \))
           cat > notes.md <<NOTES
