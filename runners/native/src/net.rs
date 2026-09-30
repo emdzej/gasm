@@ -119,7 +119,9 @@ fn run(url: &str, state: &AtomicU32, outgoing: Receiver<Vec<u8>>, incoming: Send
             return;
         }
     };
-    // Short read timeouts let one thread alternate between sending and receiving.
+    // Non-blocking after the handshake: one thread alternates between sending and
+    // receiving. (Not read timeouts: on Windows a timed-out receive leaves the
+    // socket in an indeterminate state.)
     let tcp = match ws.get_mut() {
         MaybeTlsStream::Plain(s) => Some(&*s),
         MaybeTlsStream::Rustls(s) => Some(&s.sock),
@@ -127,10 +129,17 @@ fn run(url: &str, state: &AtomicU32, outgoing: Receiver<Vec<u8>>, incoming: Send
     };
     if let Some(tcp) = tcp {
         let _ = tcp.set_nodelay(true);
-        let _ = tcp.set_read_timeout(Some(Duration::from_millis(2)));
+        if let Err(e) = tcp.set_nonblocking(true) {
+            eprintln!("[gasm] net: {url}: {e}");
+            state.store(ERROR, Ordering::Release);
+            return;
+        }
     }
     state.store(OPEN, Ordering::Release);
     let end = pump(&mut ws, &outgoing, &incoming);
+    if let Err(e) = &end {
+        eprintln!("[gasm] net: {url}: {e}");
+    }
     state.store(if end.is_ok() { CLOSED } else { ERROR }, Ordering::Release);
     close_gracefully(&mut ws);
 }
@@ -146,7 +155,7 @@ fn close_gracefully(ws: &mut WebSocket<MaybeTlsStream<std::net::TcpStream>>) {
     while std::time::Instant::now() < deadline {
         match ws.read() {
             Ok(_) => {}
-            Err(tungstenite::Error::Io(e)) if matches!(e.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => {}
+            Err(e) if would_block(&e) => std::thread::sleep(Duration::from_millis(1)),
             Err(_) => break, // ConnectionClosed: handshake complete
         }
     }
@@ -160,33 +169,72 @@ pub fn install_crypto_provider() {
     });
 }
 
+fn would_block(e: &tungstenite::Error) -> bool {
+    matches!(e, tungstenite::Error::Io(e) if matches!(e.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut | ErrorKind::Interrupted))
+}
+
+/// Non-blocking pump: flush outgoing messages, read what's there, and sleep
+/// briefly only when idle. A send that can't complete now stays buffered in
+/// tungstenite and goes out with the next flush.
 pub(crate) fn pump(
     ws: &mut WebSocket<MaybeTlsStream<std::net::TcpStream>>,
     outgoing: &Receiver<Vec<u8>>,
     incoming: &Sender<Vec<u8>>,
 ) -> Result<(), String> {
     loop {
+        let mut busy = false;
         loop {
             match outgoing.try_recv() {
-                Ok(m) => ws.send(Message::Binary(m.into())).map_err(|e| e.to_string())?,
+                Ok(m) => {
+                    busy = true;
+                    match ws.send(Message::Binary(m.into())) {
+                        Ok(()) => {}
+                        Err(e) if would_block(&e) => {}
+                        Err(e) => return Err(e.to_string()),
+                    }
+                }
                 Err(TryRecvError::Empty) => break,
-                Err(TryRecvError::Disconnected) => return Ok(()), // guest closed it
+                Err(TryRecvError::Disconnected) => {
+                    flush_all(ws);
+                    return Ok(()); // guest closed it
+                }
             }
+        }
+        match ws.flush() {
+            Ok(()) => {}
+            Err(e) if would_block(&e) => {}
+            Err(e) => return Err(e.to_string()),
         }
         match ws.read() {
             Ok(Message::Binary(b)) => {
+                busy = true;
                 if incoming.send(b.to_vec()).is_err() {
                     return Ok(());
                 }
             }
             Ok(Message::Text(t)) => {
+                busy = true;
                 let _ = incoming.send(t.as_bytes().to_vec());
             }
             Ok(Message::Close(_)) => return Ok(()),
-            Ok(_) => {}
-            Err(tungstenite::Error::Io(e)) if matches!(e.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => {}
+            Ok(_) => busy = true,
+            Err(e) if would_block(&e) => {}
             Err(tungstenite::Error::ConnectionClosed | tungstenite::Error::AlreadyClosed) => return Ok(()),
             Err(e) => return Err(e.to_string()),
+        }
+        if !busy {
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    }
+}
+
+/// Push out anything still buffered (bounded), e.g. before closing.
+fn flush_all(ws: &mut WebSocket<MaybeTlsStream<std::net::TcpStream>>) {
+    let deadline = std::time::Instant::now() + Duration::from_secs(1);
+    while std::time::Instant::now() < deadline {
+        match ws.flush() {
+            Err(e) if would_block(&e) => std::thread::sleep(Duration::from_millis(1)),
+            _ => return,
         }
     }
 }

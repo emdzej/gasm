@@ -94,9 +94,9 @@ fn load_tls(cert: &str, key: &str) -> Result<Arc<rustls::ServerConfig>, String> 
     Ok(Arc::new(cfg))
 }
 
-/// The TCP socket under a (possibly TLS) stream: timeouts must be set on the
-/// socket actually in use. (A try_clone()'d handle doesn't share SO_RCVTIMEO
-/// on Windows, which deadlocked relay threads in read.)
+/// The TCP socket under a (possibly TLS) stream, to switch it to non-blocking
+/// after the handshakes. (Read timeouts are unreliable on Windows: a timed-out
+/// receive leaves the socket indeterminate, and cloned handles don't share them.)
 trait Socket: Read + Write {
     fn tcp(&self) -> &TcpStream;
 }
@@ -145,9 +145,9 @@ fn client<S: Socket>(stream: S, rooms: &Rooms, max_peers: usize) -> Result<(), S
         "" => "lobby".to_string(),
         r => r.to_string(),
     };
-    // After the (blocking) handshakes: short read timeouts let one thread alternate
+    // After the (blocking) handshakes: non-blocking, so one thread alternates
     // between forwarding queued messages and reading.
-    ws.get_ref().tcp().set_read_timeout(Some(Duration::from_millis(2))).map_err(|e| e.to_string())?;
+    ws.get_ref().tcp().set_nonblocking(true).map_err(|e| e.to_string())?;
 
     // Join: take the lowest free index, tell the others while holding the lock
     // so membership events are ordered before any data from this peer.
@@ -195,27 +195,48 @@ fn client<S: Socket>(stream: S, rooms: &Rooms, max_peers: usize) -> Result<(), S
     result
 }
 
+fn would_block(e: &tungstenite::Error) -> bool {
+    matches!(e, tungstenite::Error::Io(e) if matches!(e.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut | ErrorKind::Interrupted))
+}
+
 fn pump<S: Read + Write>(ws: &mut WebSocket<S>, rx: &Receiver<Vec<u8>>, rooms: &Rooms, room: &str, index: usize) -> Result<(), String> {
     loop {
+        let mut busy = false;
         loop {
             match rx.try_recv() {
-                Ok(m) => ws.send(Message::Binary(m.into())).map_err(|e| e.to_string())?,
+                Ok(m) => {
+                    busy = true;
+                    match ws.send(Message::Binary(m.into())) {
+                        Ok(()) => {}
+                        Err(e) if would_block(&e) => {} // buffered; flushed below
+                        Err(e) => return Err(e.to_string()),
+                    }
+                }
                 Err(TryRecvError::Empty) => break,
                 Err(TryRecvError::Disconnected) => return Ok(()),
             }
         }
+        match ws.flush() {
+            Ok(()) => {}
+            Err(e) if would_block(&e) => {}
+            Err(e) => return Err(e.to_string()),
+        }
         match ws.read() {
             Ok(Message::Binary(b)) if b.first() == Some(&DATA) => {
+                busy = true;
                 let mut out = Vec::with_capacity(b.len() + 1);
                 out.extend_from_slice(&[DATA, index as u8]);
                 out.extend_from_slice(&b[1..]);
                 broadcast(rooms, room, index, &out);
             }
             Ok(Message::Close(_)) => return Ok(()),
-            Ok(_) => {}
-            Err(tungstenite::Error::Io(e)) if matches!(e.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => {}
+            Ok(_) => busy = true,
+            Err(e) if would_block(&e) => {}
             Err(tungstenite::Error::ConnectionClosed | tungstenite::Error::AlreadyClosed) => return Ok(()),
             Err(e) => return Err(e.to_string()),
+        }
+        if !busy {
+            std::thread::sleep(Duration::from_millis(1));
         }
     }
 }
