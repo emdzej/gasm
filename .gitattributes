@@ -1,0 +1,2 @@
+# Test fixtures are byte-exact (hashes depend on them): never convert line endings.
+tests/fixtures/** -text
