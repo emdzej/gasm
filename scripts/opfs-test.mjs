@@ -135,7 +135,11 @@ try {
   failed = true;
   console.error(`FAIL  ${e.message}`);
 } finally {
+  // Wait for Chrome to exit before deleting its profile (it writes while shutting down);
+  // cleanup problems never fail the test.
+  const exited = new Promise((r) => chrome.once('exit', r));
   chrome.kill(); server.kill();
-  rmSync(PROFILE, { recursive: true, force: true });
+  await Promise.race([exited, sleep(5000)]);
+  try { rmSync(PROFILE, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }); } catch (e) { console.error(`(cleanup: ${e.message})`); }
 }
 process.exit(failed ? 1 : 0);
