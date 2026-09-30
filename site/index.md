@@ -25,7 +25,7 @@ features:
   - title: A small, stable ABI
     details: A small core (video, audio, input, assets, params), plus optional GPU, network and storage modules. A new runner is weeks of work, not years.
   - title: 3D via WebGPU
-    details: gasm:gfx is a compact WebGPU subset with WGSL shaders. Browsers forward it almost 1:1; natively it runs on Metal, Vulkan and D3D12 through wgpu.
+    details: gasm:gfx is a compact WebGPU subset with WGSL shaders, textures and samplers. Browsers forward it almost 1:1; natively it runs on Metal, Vulkan and D3D12 through wgpu.
   - title: Online multiplayer
     details: gasm:net gives every runner WebSocket-style messaging. The sumo demo plays lockstep matches between native and browser players through a tiny relay.
   - title: Bit-exact determinism
@@ -52,5 +52,5 @@ built natively. That's about 9× faster than the console itself. Sumo holds
 ## Status
 
 gasm is a **proof of concept**. ABI v0 is experimental and will change. See the
-[roadmap](/docs/abi#roadmap-not-in-v0): rollback netplay, storage, textures,
+[roadmap](/docs/abi#roadmap-not-in-v0): rollback netplay, render targets,
 and a wasm2c runner for consoles.

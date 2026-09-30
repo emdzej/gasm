@@ -13,13 +13,20 @@ It has three import modules:
 
 | Module | Status | Contents |
 |---|---|---|
-| `gasm` | core | log, time, frame rate, 2D video, audio, input, assets, params |
+| `gasm` | core | log, time, frame rate, 2D video, audio, input, text input, assets, params |
 | `gasm:gfx` | optional | GPU rendering: a WebGPU subset |
 | `gasm:net` | optional | message connections (WebSocket semantics) |
 | `gasm:storage` | optional | persistent per-game key/value store (saves, settings) |
 
 Games import only what they use. A runner that lacks an optional module can
 still run games that don't import it.
+
+**Versioning.** `GASM_ABI_VERSION` changes only for breaking changes.
+Additions (new imports, new descriptor fields) keep it: runners link unknown
+imports as traps, so an older runner still loads a newer guest and fails only
+if the guest calls something it lacks, and an older guest never calls the
+new imports. Textures, samplers, explicit layouts, viewport/scissor, text
+input and asset enumeration were added this way; the version is still 0.
 
 ## Module shape
 
@@ -72,9 +79,12 @@ All pointers are `i32` offsets into guest memory. Strings are UTF-8 `(ptr, len)`
 | `audio_config` | `(rate, channels)` | Format for `audio_push`: 8–192 kHz, 1 or 2 channels. Default 44100/2. |
 | `audio_push` | `(ptr, frames)` | `frames × channels` interleaved `f32` in [-1, 1]. The runner resamples and buffers (~60 ms target latency). It drops the oldest audio if the guest runs ahead and plays silence on underrun. |
 | `input_pad` | `(player) -> u32` | Bitmask of buttons for virtual pad 0–3, stable within one `gasm_frame`. |
+| `text_input` | `(dst, cap) -> i32` | UTF-8 text typed since the previous frame, stable within one `gasm_frame`: backspace is `\b` (0x08), enter is `\n`. Returns its length (copied only if length ≤ `cap`; `cap = 0` queries), or `-1` if the runner has no keyboard. Keys bound to pads still produce text; the guest decides what it wants. Headless: from the `--input` script (`FRAME:"text"`). |
 | `asset_size` | `(name_ptr, name_len) -> i32` | Byte size, or `-1` if missing. |
 | `asset_read` | `(name_ptr, name_len, dst, cap) -> i32` | Copy ≤ `cap` bytes, return count or `-1`. |
 | `asset_read_at` | `(name_ptr, name_len, offset, dst, len) -> i32` | Copy up to `len` bytes starting at byte `offset` (streaming large assets). Returns bytes copied (0 at or after the end), or `-1` if missing. |
+| `asset_count` | `() -> u32` | Number of assets. |
+| `asset_name` | `(index, dst, cap) -> i32` | Name of asset `index` (0 … `asset_count`−1), sorted by UTF-8 bytes; folder entries as named on disk. Returns its length (copied only if length ≤ `cap`; `cap = 0` queries), or `-1` if `index` is out of range. |
 | `param` | `(name_ptr, name_len, dst, cap) -> i32` | Launch parameter value: returns its byte length, or `-1` if unset. Copied only if length ≤ `cap`; call with `cap = 0` to query the length. |
 
 Button bits: `A=0 B=1 X=2 Y=3 L=4 R=5 SELECT=6 START=7 UP=8 DOWN=9 LEFT=10 RIGHT=11`.
@@ -105,13 +115,20 @@ Per-frame calls take only scalars.
 |---|---|---|
 | `width` / `height` | `() -> u32` | Current drawable size in pixels (changes on resize). |
 | `create_shader` | `(ptr, len) -> u32` | WGSL source. |
-| `create_buffer` | `(size, usage) -> u32` | `size` a non-zero multiple of 4; `usage` = WebGPU `GPUBufferUsage` bits (`COPY_DST` 0x08 is always added; `INDEX` 0x10, `VERTEX` 0x20, `UNIFORM` 0x40). |
+| `create_buffer` | `(size, usage) -> u32` | `size` a non-zero multiple of 4; `usage` = WebGPU `GPUBufferUsage` bits (`COPY_DST` 0x08 is always added; `INDEX` 0x10, `VERTEX` 0x20, `UNIFORM` 0x40, `STORAGE` 0x80). |
 | `write_buffer` | `(buf, offset, ptr, len)` | Queue a write; `offset`, `len` multiples of 4. All writes made before `end_frame` land before that frame's draws, so give each object its own buffer region. |
+| `create_texture` | `(ptr, len) -> u32` | `{"size":[w,h],"format":"rgba8unorm","mipLevelCount":n}`. 2D; `w`, `h` 1–8192; `format` `rgba8unorm` (default) or `rgba8unorm-srgb`; `mipLevelCount` 1 (default) up to a full chain. Usage is `TEXTURE_BINDING` \| `COPY_DST`. |
+| `write_texture` | `(tex, mip, x, y, w, h, ptr, len)` | Upload a `w×h` RGBA8 region of level `mip` at (`x`, `y`), tightly packed (`len = w*h*4`, 4 bytes per texel, rows top to bottom). Queued like `write_buffer`; valid inside and outside a frame. Runners don't generate mipmaps: upload every level you use. |
+| `create_sampler` | `(ptr, len) -> u32` | `GPUSamplerDescriptor` subset: `addressModeU`/`V` (`clamp-to-edge`, `repeat`, `mirror-repeat`), `magFilter`, `minFilter`, `mipmapFilter` (`nearest`, `linear`), `lodMinClamp`, `lodMaxClamp`, `maxAnisotropy` (1–16; above 1 all three filters must be `linear`). Omitted fields take WebGPU defaults. |
+| `create_bind_group_layout` | `(ptr, len) -> u32` | `GPUBindGroupLayoutDescriptor` subset, see below. |
 | `create_pipeline` | `(ptr, len) -> u32` | `GPURenderPipelineDescriptor` JSON, see below. |
-| `create_bind_group` | `(ptr, len) -> u32` | `{"pipeline":P,"group":G,"entries":[{"binding":B,"buffer":H,"offset":O,"size":S}]}`. Uses the pipeline's automatic layout for group `G`. |
-| `begin_frame` | `(r, g, b, a: f32) -> u32` | Start the frame's render pass, clearing color and depth. Returns `1` if the frame will be shown, `0` if the runner will discard it (catch-up frame, headless); the guest may then skip its draw calls. |
+| `create_bind_group` | `(ptr, len) -> u32` | `{"layout":L,"entries":[…]}` (explicit layout) or `{"pipeline":P,"group":G,"entries":[…]}` (that pipeline's automatic layout). Entries: `{"binding":B,"buffer":H,"offset":O,"size":S}`, `{"binding":B,"texture":T}` (all mip levels), `{"binding":B,"sampler":S}`. |
+| `begin_frame` | `(r, g, b, a: f32) -> u32` | Start the frame's render pass, clearing color and depth. Viewport and scissor are the whole drawable. Returns `1` if the frame will be shown, `0` if the runner will discard it (catch-up frame, headless); the guest may then skip its draw calls. |
 | `set_pipeline` | `(p)` | |
 | `set_bind_group` | `(index, bg)` | |
+| `set_bind_group_offsets` | `(index, bg, ptr, count)` | Like `set_bind_group`, with `count` `u32` dynamic offsets read from guest memory: one per dynamic-offset entry of the bind group's layout, in binding order, each a multiple of 256, and the bound range must stay inside the buffer. |
+| `set_viewport` | `(x, y, w, h, min_depth, max_depth: f32)` | Viewport in drawable pixels, clamped to the drawable; depth range within 0–1. |
+| `set_scissor_rect` | `(x, y, w, h)` | Scissor rectangle in drawable pixels, clamped to the drawable. |
 | `set_vertex_buffer` | `(slot, buf, offset)` | |
 | `set_index_buffer` | `(buf, format, offset)` | `format`: 0 = uint16, 1 = uint32. |
 | `draw` | `(vertex_count, instance_count, first_vertex, first_instance)` | |
@@ -119,13 +136,19 @@ Per-frame calls take only scalars.
 | `end_frame` | `()` | Submit and present. |
 
 Draw and set calls outside `begin_frame`/`end_frame`, or after `begin_frame`
-returned 0, are validated and then ignored.
+returned 0, are validated and then ignored. If a viewport or scissor
+rectangle is empty after clamping, draws are skipped until it is set again.
 
 **Pipeline descriptor.** It is WebGPU's, with these rules:
 
-- `layout` is always `"auto"` (omit it). Automatic layouts belong to one
-  pipeline: create a bind group per pipeline, even if two pipelines declare
-  the same bindings.
+- `layout` is `"auto"` (or omitted), or an array of bind group layout
+  handles, one per group (`"layout":[L0,L1]`).
+  - **Automatic layouts belong to one pipeline:** create their bind groups
+    with `"pipeline"`/`"group"`, one set per pipeline, even if two pipelines
+    declare the same bindings.
+  - **Explicit layouts are shared:** a bind group made with `"layout":L`
+    works with every pipeline whose `layout` lists `L` at that index. Use them
+    for per-material texture groups and for dynamic offsets.
 - Color targets use `"format": "surface"` (the runner's swapchain format).
 - `depthStencil.format` must be `"depth24plus"` (the runner owns the depth buffer).
   Omitting `depthStencil` is fine: the runner then adds one that neither tests
@@ -134,15 +157,46 @@ returned 0, are validated and then ignored.
 - Supported: `vertex {module, entryPoint, buffers[{arrayStride, stepMode, attributes[{format, offset, shaderLocation}]}]}`,
   `fragment {module, entryPoint, targets[{format, blend{color,alpha}{srcFactor,dstFactor,operation}, writeMask}]}`,
   `primitive {topology, cullMode, frontFace, stripIndexFormat}`,
-  `depthStencil {format, depthWriteEnabled, depthCompare}`.
+  `depthStencil {format, depthWriteEnabled, depthCompare, depthBias, depthBiasSlopeScale, depthBiasClamp}`.
   Common vertex formats (`float32…x4`, `uint32…x4`, `sint32…x4`, `unorm8x4`, `uint8x4`, `uint16x2/x4`, `float16x2/x4`).
 
-Invalid descriptors and WGSL errors trap the guest with the validation message.
-Textures, samplers, storage buffers and compute are **not in v0**.
+**Bind group layouts.** `{"entries":[{"binding":B,"visibility":V, …}]}` with
+`visibility` = `GASM_STAGE_VERTEX` (1) and/or `GASM_STAGE_FRAGMENT` (2), and
+exactly one of:
 
-Hashing: headless runners fold every `write_buffer` payload into the video
-hash. Uniforms carry the scene state, so deterministic GPU games get checked
-too, without comparing pixels (GPU output isn't bit-exact across vendors).
+- `"buffer":{"type":"uniform"|"read-only-storage","hasDynamicOffset":bool,"minBindingSize":N}`.
+  The buffer bound there needs `UNIFORM` or `STORAGE` usage.
+- `"texture":{"sampleType":"float"|"unfilterable-float","viewDimension":"2d"}`
+- `"sampler":{"type":"filtering"|"non-filtering"}`
+
+A bind group for an explicit layout must provide every binding with the
+matching resource kind.
+
+**Colour.** The surface is a non-sRGB format on both runners (natively
+`bgra8unorm`/`rgba8unorm`, in browsers `getPreferredCanvasFormat()`), so
+shader output is written as is, without gamma conversion. Sampling an
+`rgba8unorm-srgb` texture decodes to linear; `rgba8unorm` does not.
+
+**Limits.** Textures up to 8192×8192 with full mip chains, `maxAnisotropy`
+up to 16 (the device may clamp it), dynamic offsets aligned to 256. These are
+WebGPU's default limits, so every WebGPU device provides them.
+
+**Validation.** Invalid descriptors, WGSL errors, out-of-range mip levels or
+regions, a `len` that doesn't match `w*h*4`, handles of the wrong kind,
+misaligned or out-of-bounds dynamic offsets, and bind groups that don't match
+their layout all trap the guest with a message. The runners check textures,
+samplers, layouts and offsets against their own record of every object, so
+this happens identically with the null GPU of headless runs. Not in this
+subset: render targets, cube maps, storage textures, compute, stencil.
+
+**Hashing.** Headless runners fold every `write_buffer` payload into the video
+hash, and for `write_texture` first a header (`tex, mip, x, y, w, h` as
+little-endian `u32`s) and then the payload, so the same texels written to a
+different place change the hash. Uniforms and textures carry the scene state,
+so deterministic GPU games get checked too, without comparing pixels (GPU
+output isn't bit-exact across vendors). Handles are numbered 1, 2, 3, … in
+creation order on every runner. Draw calls, offsets, viewports and scissors
+aren't hashed.
 
 ## `gasm:net` (optional): message connections
 
@@ -202,7 +256,7 @@ return `ENOSYS` (52). There is **no filesystem**; use assets.
 
 Given the same module, assets, params and per-frame input, a guest that only
 uses `gasm.*` (no WASI clocks or random) must produce bit-identical
-`video_present`/`audio_push`/`write_buffer` streams on every runner. The
+`video_present`/`audio_push`/`write_buffer`/`write_texture` streams on every runner. The
 runners verify this with FNV-1a-32 hashes (`make test`). One caveat: wasm NaN
 bit patterns are nondeterministic by spec. Guests that hash or store NaN
 payloads can diverge.
@@ -245,16 +299,22 @@ same everywhere.
 
 ### Worker mode (browser runner)
 
-Games that don't import `gasm:gfx` can run in a dedicated Worker
-(`@emdzej/gasm-host/worker`). The page keeps input, display and audio.
-- **Per frame:** input for each frame is sent before it runs and is stable
-  within it. The worker returns the latest RGBA frame and the audio.
-  Buffers are *transferred*, so there's no `SharedArrayBuffer` and no
-  COOP/COEP requirement (GitHub Pages works).
+Games can run in a dedicated Worker (`@emdzej/gasm-host/worker`). The page
+keeps input, display and audio.
+- **Per frame:** input (pads and typed text) for each frame is sent before
+  it runs and is stable within it. The worker returns the latest RGBA frame
+  and the audio. Buffers are *transferred*, so there's no
+  `SharedArrayBuffer` and no COOP/COEP requirement (GitHub Pages works).
 - **Unchanged:** frame pacing, the catch-up rule (only the last frame of a
   batch is shown) and `begin_frame` semantics.
 - **Storage and net:** `gasm:storage` (IndexedDB) and `gasm:net` (WebSocket)
   run inside the worker.
+- **`gasm:gfx` games:** the page transfers its canvas
+  (`transferControlToOffscreen`) and reports its display size with each
+  batch; the worker renders with WebGPU into the `OffscreenCanvas` (and blits
+  `video_present` frames there too). This needs WebGPU in workers, which
+  Chromium has; where it's missing the worker says so and the page runs the
+  game on the main thread instead.
 - **Lazy asset providers,** only available in workers:
   - **OPFS**, via `FileSystemSyncAccessHandle`: reads go straight from OPFS
     into guest memory. Handles are opened while loading, because
@@ -262,10 +322,11 @@ Games that don't import `gasm:gfx` can run in a dedicated Worker
     synchronous read.
   - **`File`/`Blob`**, via `FileReaderSync`.
 
-  Main-thread mode remains the default; `gasm:gfx` games always use it.
+  Main-thread mode remains the default.
 
 Measured (Chrome, macOS): streaming 10 GB of random 64 KB reads from a
-200 MB OPFS file in Worker mode, the renderer's resident memory grew 4 MB,
+200 MB OPFS file in Worker mode, the renderer's resident memory grew about
+20 MB (about 40 MB with a 1 MB file: it doesn't grow with the data read),
 and the hashes matched the Node runner reading the same files from disk.
 
 ### Keyboard layouts
@@ -288,9 +349,7 @@ one binding per line, `<pad 1-4> <button> <key code>...`. Buttons are
 
 - `.gasm` packages: one file bundling `game.wasm`, assets and a manifest.
 - `gasm:files`: a runner-provided file picker (the game only sees what the player picks).
-- Asset enumeration (`asset_count`, `asset_name`), if a game needs to discover a folder's contents.
-- `gasm:gfx` v1: textures and samplers, storage buffers, instancing examples,
-  render bundles.
+- `gasm:gfx`: render targets (render-to-texture), cube maps, render bundles.
 - Capabilities manifest (custom section `gasm.manifest`) that declares required
   and optional imports, network hosts, and platform extensions (`gasm:ext/*`).
 - Runner-level rollback netplay (snapshot/restore guest memory).

@@ -124,6 +124,15 @@ static inline uint32_t gasm_gfx_create_pipeline_str(const char *json) {
 static inline uint32_t gasm_gfx_create_bind_group_str(const char *json) {
     return gasm_gfx_create_bind_group(json, gasm__strlen(json));
 }
+static inline uint32_t gasm_gfx_create_bind_group_layout_str(const char *json) {
+    return gasm_gfx_create_bind_group_layout(json, gasm__strlen(json));
+}
+static inline uint32_t gasm_gfx_create_texture_str(const char *json) {
+    return gasm_gfx_create_texture(json, gasm__strlen(json));
+}
+static inline uint32_t gasm_gfx_create_sampler_str(const char *json) {
+    return gasm_gfx_create_sampler(json, gasm__strlen(json));
+}
 static inline int32_t gasm_net_open_str(const char *url) { return gasm_net_open(url, gasm__strlen(url)); }
 
 #endif /* GASM_H */

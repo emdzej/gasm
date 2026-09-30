@@ -34,6 +34,11 @@ hid=$("$NATIVE" $G --asset-dir $CD --headless 1000 --param read=.DS_Store --para
 check "hidden files skipped" ".DS_Store: missing" "$hid"
 ovr=$("$NATIVE" $G --asset-dir $CD --asset README.TXT=$CD/ART/ART.CAR --headless 1000 --param read=README.TXT --param frames=1 2>&1 | grep -o 'README.TXT: [0-9]* bytes')
 check "explicit --asset wins" "README.TXT: 16 bytes" "$ovr"
+# enumeration (asset_count/asset_name): same sorted list natively and in Node, hidden files absent
+lst() { "$@" $G --asset-dir $CD --asset extra=$CD/README.TXT --headless 5 --param list=1 --param frames=1 2>&1 | grep -o '\[assetcheck\] [0-9]* assets: .*'; }
+nl=$(lst "$NATIVE"); jl=$(lst $NODE)
+check "asset enumeration: native == node" "$nl" "$jl"
+case "$nl" in *".DS_Store"*|"") check "asset enumeration: hidden files skipped" "no .DS_Store" "$nl" ;; *) check "asset enumeration: hidden files skipped" ok ok ;; esac
 
 # ---- R1: a large asset streamed at random offsets costs no RAM ----------------------
 # (LARGE_MB=0 to skip). Same hash as an in-memory run (Node, --asset); resident memory

@@ -139,7 +139,7 @@ dependencies = [
 
 [[package]]
 name = "gasm-sdk"
-version = "0.3.0"
+version = "0.4.0"
 
 [[package]]
 name = "getrandom"
@@ -384,6 +384,13 @@ dependencies = [
  "tracing",
  "web-sys",
  "web-time",
+]
+
+[[package]]
+name = "textured"
+version = "0.1.0"
+dependencies = [
+ "gasm-sdk",
 ]
 
 [[package]]

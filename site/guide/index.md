@@ -121,7 +121,9 @@ parameter.
 - **open folder…** gives the game a folder as assets, named like
   `--asset-dir`. It uses the folder picker in Chromium and falls back to
   `webkitdirectory` elsewhere.
-- **worker** runs the game in a Worker (not for 3D games). Assets are then
+- **worker** runs the game in a Worker. 3D games move there too where the
+  browser has WebGPU in workers (Chromium); elsewhere they fall back to the
+  main thread. Assets are then
   read on demand instead of loaded into memory first.
 - For data you use repeatedly (a game CD), import it once on the **OPFS**
   page, `…/opfs.html`. It copies the folder into the site's private

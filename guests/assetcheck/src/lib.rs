@@ -6,6 +6,7 @@
 //! - `read=a,b,c`: read these assets in full at start (any case; logs size + hash)
 //! - `stream=name`: read `reads` chunks of `chunk` bytes per frame at pseudo-random offsets
 //! - `reads=64`, `chunk=4096`, `frames=120`: then log totals and exit
+//! - `list=1`: enumerate assets (asset_count/asset_name), log and hash the names
 
 use gasm::log;
 
@@ -34,6 +35,13 @@ impl gasm::Game for Check {
         let num = |k: &str, d: u32| gasm::param(k).and_then(|v| v.parse().ok()).unwrap_or(d);
         let mut hash = 0x811c_9dc5u32;
         let mut bytes = 0u64;
+        if gasm::param("list").is_some() {
+            let names = gasm::asset_names();
+            log!("[assetcheck] {} assets: {}", names.len(), names.join(" "));
+            for n in &names {
+                hash = fnv(fnv(hash, n.as_bytes()), &[0]);
+            }
+        }
         for name in gasm::param("read").unwrap_or_default().split(',').filter(|n| !n.is_empty()) {
             match gasm::asset(name) {
                 Some(data) => {

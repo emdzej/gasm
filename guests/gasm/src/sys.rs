@@ -24,12 +24,18 @@ mod imports {
         pub fn audio_push(samples: *const f32, frames: u32);
         /// Bitmask of GASM_BTN_* held on virtual pad player (0..3), stable within a frame.
         pub fn input_pad(player: u32) -> u32;
+        /// UTF-8 text typed since the previous frame (backspace = \b, enter = \n), stable within a frame. Returns its length (copied only if length <= cap; cap = 0 queries), or -1 if the runner has no keyboard.
+        pub fn text_input(dst: *mut u8, cap: u32) -> i32;
         /// Size in bytes of asset name, or -1 if it does not exist.
         pub fn asset_size(name: *const u8, name_len: u32) -> i32;
         /// Copy up to cap bytes of asset name into dst. Bytes copied, or -1 if missing.
         pub fn asset_read(name: *const u8, name_len: u32, dst: *mut u8, cap: u32) -> i32;
         /// Copy up to len bytes of asset name starting at offset (streaming). Bytes copied (0 at the end), or -1 if missing.
         pub fn asset_read_at(name: *const u8, name_len: u32, offset: u32, dst: *mut u8, len: u32) -> i32;
+        /// Number of assets.
+        pub fn asset_count() -> u32;
+        /// Name of asset index (0 .. asset_count-1, sorted by UTF-8 bytes; folder entries as named on disk). Its length (copied only if length <= cap; cap = 0 queries), or -1 if index is out of range.
+        pub fn asset_name(index: u32, dst: *mut u8, cap: u32) -> i32;
         /// Launch parameter value length, or -1 if unset. Copied only if length <= cap (cap = 0 queries the length).
         pub fn param(name: *const u8, name_len: u32, dst: *mut u8, cap: u32) -> i32;
     }
@@ -48,12 +54,24 @@ mod imports {
         /// size: non-zero multiple of 4; usage: GASM_BUF_* (WebGPU GPUBufferUsage bits; COPY_DST always added).
         #[link_name = "create_buffer"]
         pub fn gfx_create_buffer(size: u32, usage: u32) -> u32;
-        /// GPURenderPipelineDescriptor as JSON (layout auto).
+        /// GPURenderPipelineDescriptor as JSON. layout: "auto" (default) or an array of bind group layout handles.
         #[link_name = "create_pipeline"]
         pub fn gfx_create_pipeline(json: *const u8, json_len: u32) -> u32;
-        /// {"pipeline":P,"group":G,"entries":[{"binding":B,"buffer":H,"offset":O,"size":S}]}
+        /// {"layout":L,"entries":[...]} or {"pipeline":P,"group":G,"entries":[...]}; entries {"binding":B,"buffer":H,"offset":O,"size":S}, {"binding":B,"texture":T} or {"binding":B,"sampler":S}.
         #[link_name = "create_bind_group"]
         pub fn gfx_create_bind_group(json: *const u8, json_len: u32) -> u32;
+        /// GPUBindGroupLayoutDescriptor subset: {"entries":[{"binding":B,"visibility":GASM_STAGE_*,"buffer":{"type":"uniform"|"read-only-storage","hasDynamicOffset":bool,"minBindingSize":N} | "texture":{"sampleType":"float"} | "sampler":{"type":"filtering"}}]}.
+        #[link_name = "create_bind_group_layout"]
+        pub fn gfx_create_bind_group_layout(json: *const u8, json_len: u32) -> u32;
+        /// 2D texture: {"size":[w,h],"format":"rgba8unorm"|"rgba8unorm-srgb","mipLevelCount":n}, w,h 1-8192. Usage is TEXTURE_BINDING | COPY_DST.
+        #[link_name = "create_texture"]
+        pub fn gfx_create_texture(json: *const u8, json_len: u32) -> u32;
+        /// Upload a tightly packed RGBA8 region (len = width*height*4) of mip level mip at (x, y). Queued like write_buffer.
+        #[link_name = "write_texture"]
+        pub fn gfx_write_texture(texture: u32, mip: u32, x: u32, y: u32, width: u32, height: u32, data: *const u8, len: u32);
+        /// GPUSamplerDescriptor subset: addressModeU/V, magFilter, minFilter, mipmapFilter, lodMinClamp, lodMaxClamp, maxAnisotropy (1-16).
+        #[link_name = "create_sampler"]
+        pub fn gfx_create_sampler(json: *const u8, json_len: u32) -> u32;
         /// Queue a write, applied before the frame's draws. offset/len: multiples of 4.
         #[link_name = "write_buffer"]
         pub fn gfx_write_buffer(buffer: u32, offset: u32, data: *const u8, len: u32);
@@ -64,6 +82,15 @@ mod imports {
         pub fn gfx_set_pipeline(pipeline: u32);
         #[link_name = "set_bind_group"]
         pub fn gfx_set_bind_group(index: u32, bind_group: u32);
+        /// set_bind_group with count dynamic offsets (multiples of 256), one per dynamic-offset entry of the layout, in binding order.
+        #[link_name = "set_bind_group_offsets"]
+        pub fn gfx_set_bind_group_offsets(index: u32, bind_group: u32, offsets: *const u32, count: u32);
+        /// Viewport in drawable pixels (clamped to the drawable), depth range 0-1. Reset to the whole drawable by begin_frame.
+        #[link_name = "set_viewport"]
+        pub fn gfx_set_viewport(x: f32, y: f32, width: f32, height: f32, min_depth: f32, max_depth: f32);
+        /// Scissor rectangle in drawable pixels (clamped to the drawable). Reset to the whole drawable by begin_frame.
+        #[link_name = "set_scissor_rect"]
+        pub fn gfx_set_scissor_rect(x: u32, y: u32, width: u32, height: u32);
         #[link_name = "set_vertex_buffer"]
         pub fn gfx_set_vertex_buffer(slot: u32, buffer: u32, offset: u32);
         /// format: GASM_INDEX_U16 or GASM_INDEX_U32.

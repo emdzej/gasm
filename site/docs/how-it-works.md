@@ -21,7 +21,7 @@ are. For the normative interface, see the [ABI spec](/docs/abi).
 A **guest** (game) is a single WebAssembly module. A **runner** (host) is a
 native or web program that loads the module, provides the functions the guest
 imports, and drives it frame by frame. The **ABI** is the contract between them.
-Its core is small (11 imports, 3 exports), and GPU, network and storage are
+Its core is small (14 imports, 3 exports), and GPU, network and storage are
 optional modules on top.
 
 ## Components in this repository
@@ -47,7 +47,7 @@ exports                          imports
 ─────────────────────            ──────────────────────────────────────────────
 memory                           gasm.log / time_ms / set_frame_rate / param
 gasm_abi_version() -> 0          gasm.video_present / audio_config / audio_push
-gasm_init() -> 0 = ok            gasm.input_pad / asset_size / asset_read
+gasm_init() -> 0 = ok            gasm.input_pad / text_input / asset_size / asset_read
 gasm_frame()                     gasm:gfx.*   (optional: WebGPU subset)
 _initialize()  (optional)        gasm:net.*   (optional: message connections)
                                  wasi_snapshot_preview1.proc_exit (and libc subset)

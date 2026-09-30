@@ -15,6 +15,7 @@ struct State {
     params: Vec<(String, String)>,
     storage: Vec<(String, Vec<u8>)>,
     pads: [u32; 4],
+    text: String,
     channels: u32,
     hashing: bool,
     video_hash: u32,
@@ -32,6 +33,7 @@ static STATE: Mutex<State> = Mutex::new(State {
     params: Vec::new(),
     storage: Vec::new(),
     pads: [0; 4],
+    text: String::new(),
     channels: 2,
     hashing: true,
     video_hash: FNV_INIT,
@@ -64,12 +66,19 @@ pub fn set_param(name: &str, value: &str) {
 pub fn set_pad(player: usize, buttons: u32) {
     with(|s| s.pads[player] = buttons);
 }
+/// Text returned by `text_input` until the next [`end_frame`].
+pub fn set_text(text: &str) {
+    with(|s| s.text = text.into());
+}
 pub fn set_hashing(on: bool) {
     with(|s| s.hashing = on);
 }
 /// Call after each gasm_frame so time_ms advances.
 pub fn end_frame() {
-    with(|s| s.frames += 1);
+    with(|s| {
+        s.frames += 1;
+        s.text.clear();
+    });
 }
 
 pub struct Stats {
@@ -148,9 +157,25 @@ pub mod abi {
     pub unsafe fn input_pad(player: u32) -> u32 {
         with(|s| s.pads.get(player as usize).copied().unwrap_or(0))
     }
+    pub unsafe fn text_input(dst: *mut u8, cap: u32) -> i32 {
+        with(|s| unsafe { copy_out(s.text.as_bytes(), dst, cap) })
+    }
     pub unsafe fn asset_size(name: *const u8, len: u32) -> i32 {
         let n = unsafe { text(name, len) };
         with(|s| s.assets.iter().find(|a| a.0 == n).map_or(-1, |a| a.1.len() as i32))
+    }
+    pub unsafe fn asset_count() -> u32 {
+        with(|s| s.assets.len() as u32)
+    }
+    pub unsafe fn asset_name(index: u32, dst: *mut u8, cap: u32) -> i32 {
+        with(|s| {
+            let mut names: Vec<&str> = s.assets.iter().map(|a| a.0.as_str()).collect();
+            names.sort();
+            match names.get(index as usize) {
+                Some(n) => unsafe { copy_out(n.as_bytes(), dst, cap) },
+                None => -1,
+            }
+        })
     }
     pub unsafe fn asset_read(name: *const u8, len: u32, dst: *mut u8, cap: u32) -> i32 {
         let n = unsafe { text(name, len) };
@@ -223,6 +248,23 @@ pub mod abi {
     pub unsafe fn gfx_create_buffer(_: u32, _: u32) -> u32 { handle() }
     pub unsafe fn gfx_create_pipeline(_: *const u8, _: u32) -> u32 { handle() }
     pub unsafe fn gfx_create_bind_group(_: *const u8, _: u32) -> u32 { handle() }
+    pub unsafe fn gfx_create_bind_group_layout(_: *const u8, _: u32) -> u32 { handle() }
+    pub unsafe fn gfx_create_texture(_: *const u8, _: u32) -> u32 { handle() }
+    pub unsafe fn gfx_create_sampler(_: *const u8, _: u32) -> u32 { handle() }
+    #[allow(clippy::too_many_arguments)]
+    pub unsafe fn gfx_write_texture(t: u32, mip: u32, x: u32, y: u32, w: u32, h: u32, ptr: *const u8, len: u32) {
+        with(|s| {
+            if s.hashing {
+                for v in [t, mip, x, y, w, h] {
+                    s.video_hash = fnv(s.video_hash, &v.to_le_bytes());
+                }
+                s.video_hash = fnv(s.video_hash, unsafe { bytes(ptr, len) });
+            }
+        })
+    }
+    pub unsafe fn gfx_set_bind_group_offsets(_: u32, _: u32, _: *const u32, _: u32) {}
+    pub unsafe fn gfx_set_viewport(_: f32, _: f32, _: f32, _: f32, _: f32, _: f32) {}
+    pub unsafe fn gfx_set_scissor_rect(_: u32, _: u32, _: u32, _: u32) {}
     pub unsafe fn gfx_write_buffer(_: u32, _: u32, ptr: *const u8, len: u32) {
         with(|s| {
             if s.hashing {

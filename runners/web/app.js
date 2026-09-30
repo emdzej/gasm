@@ -12,7 +12,7 @@ import { WebGpuGfx } from './webgpu-gfx.js';
 const ROOT = new URL(document.querySelector('meta[name=gasm-root]')?.content ?? '../../', import.meta.url);
 const GAMES = {
   'sumo.wasm': '3D sumo (2 players)', 'nes.wasm': 'NES (tetanes-core)', 'doom.wasm': 'DOOM (doomgeneric)',
-  'triangle.wasm': 'GPU triangle', 'test-pattern.wasm': 'test pattern (C)',
+  'triangle.wasm': 'GPU triangle', 'textured.wasm': 'GPU textures (test)', 'test-pattern.wasm': 'test pattern (C)',
   'assetcheck.wasm': 'asset check (test)',
 };
 // Games that take a content file from roms/ (or an opened/dropped file) as an asset.
@@ -51,11 +51,18 @@ function loadKeymap(text) {
 }
 const held = new Set();
 const typing = (e) => e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement;
+// Text for text_input: characters typed since the last frame (also for keys bound to pads).
+let typed = '';
 addEventListener('keydown', (e) => {
-  if (typing(e) || !keymap.has(e.code)) return;
+  if (typing(e)) return;
+  if (e.key === 'Enter') typed += '\n';
+  else if (e.key === 'Backspace') typed += '\b';
+  else if (e.key.length === 1 && !e.ctrlKey && !e.metaKey) typed += e.key;
+  if (!keymap.has(e.code)) return;
   held.add(e.code);
   e.preventDefault();
 });
+const takeTyped = () => { const t = typed; typed = ''; return t; };
 addEventListener('keyup', (e) => { held.delete(e.code); });
 addEventListener('blur', () => held.clear());
 
@@ -136,10 +143,14 @@ async function initAudio() {
 // ---- game loop -------------------------------------------------------------
 // Two runtimes behind one loop: main thread (default; required for gasm:gfx) and
 // Worker mode (gasm-worker.js; lazy OPFS / File assets, guest off the main thread).
-let host = null, worker = null, inflight = false, running = false, rafId = 0;
+let host = null, worker = null, gpu = null, inflight = false, running = false, rafId = 0;
+// The canvas' display size in device pixels (Worker mode: the OffscreenCanvas can't measure itself).
+const canvasSize = () => [Math.round(canvas.clientWidth * (devicePixelRatio || 1)) || canvas.width,
+                          Math.round(canvas.clientHeight * (devicePixelRatio || 1)) || canvas.height];
 let folder = null; // { name, entries: [[relative name, File]] } from "open folder..."
 
 function present(rgba, w, h) {
+  if (gpu) return;                    // gfx guests: shown by the tick loop (WebGPU blit)
   ctx ??= canvas.getContext('2d');
   if (canvas.width !== w || canvas.height !== h) {
     canvas.width = w; canvas.height = h;
@@ -175,20 +186,26 @@ function tick(now) {
       const pads = readPads();
       inflight = true;
       acc -= due * period;
-      worker.frames(Array.from({ length: due }, () => pads), true).then((r) => {
+      const texts = Array.from({ length: due }, (_, k) => (k === 0 ? takeTyped() : ''));
+      worker.frames(Array.from({ length: due }, () => pads), true, { texts, size: canvasSize() }).then((r) => {
         inflight = false;
         fpsN += due;
         if (r.frame) present(r.frame.rgba, r.frame.width, r.frame.height);
       }, stopped);
     }
   } else {
+    let presented = host.framesPresented;
     for (let steps = 0; steps < due; steps++) {
       const pads = readPads();
       host.getPad = (p) => pads[p] ?? 0;
+      host.text = steps === 0 ? takeTyped() : '';
       host.showFrame = steps === due - 1;
+      if (gpu) gpu.used = false;
       try { host.frame(); } catch (e) { return stopped(e); }
       acc -= period; fpsN++;
     }
+    // A gfx canvas can't take 2D frames: blit video_present output with WebGPU instead.
+    if (gpu && !gpu.used && host.width && host.framesPresented !== presented) gpu.presentVideo(host.rgba, host.width, host.height);
   }
   if (acc > period * 4) acc = 0; // fell far behind: resync
   if (now - fpsT >= 1000) { $('fps').textContent = `${fpsN} fps${worker ? ' (worker)' : ''}`; fpsN = 0; fpsT = now; }
@@ -241,9 +258,13 @@ async function start({ romBytes } = {}) {
   try {
     const bytes = await fetchBytes(game.includes('/') ? new URL(game, location.href) : new URL(`build/${game}`, ROOT));
     const usesGfx = WebAssembly.Module.imports(await WebAssembly.compile(bytes)).some((i) => i.module === 'gasm:gfx');
-    const useWorker = !usesGfx && ($('worker').checked || url.has('opfs'));
-    const c = freshCanvas();
+    // gfx guests go to the worker only if the canvas can be transferred (OffscreenCanvas);
+    // the worker then needs WebGPU too, otherwise we fall back to the main thread below.
+    const offscreenOk = typeof HTMLCanvasElement !== 'undefined' && 'transferControlToOffscreen' in HTMLCanvasElement.prototype;
+    let useWorker = ($('worker').checked || url.has('opfs')) && (!usesGfx || offscreenOk);
+    let c = freshCanvas();
     c.classList.toggle('gpu', usesGfx);
+    gpu = null;
     const namespace = game.split('/').pop().replace(/\.wasm$/, ''); // saves: one namespace per game file
     const prefix = url.get('prefix') ?? '';
     if (useWorker) {
@@ -251,12 +272,26 @@ async function start({ romBytes } = {}) {
       const specs = [{ kind: 'memory', record }];
       if (url.has('opfs')) specs.push({ kind: 'opfs', dir: url.get('opfs'), prefix });
       if (folder) specs.push({ kind: 'files', entries: folder.entries, prefix });
-      worker = await GasmWorker.start({
-        wasm: bytes, assets: specs, params, storage: namespace, allowNet: true,
-        hashing: hashFrames > 0, virtualTime: hashFrames > 0, onLog: log, onAudio,
+      const start = (canvasOpt) => GasmWorker.start({
+        wasm: bytes.slice(), assets: specs, params, storage: namespace, allowNet: true, keyboard: true,
+        hashing: hashFrames > 0, virtualTime: hashFrames > 0, onLog: log, onAudio, ...canvasOpt,
       });
-    } else {
-      if (usesGfx && $('worker').checked) log('gasm:gfx games run on the main thread (worker mode needs OffscreenCanvas)');
+      if (usesGfx) {
+        const size = canvasSize();
+        try {
+          worker = await start({ canvas: c.transferControlToOffscreen(), size });
+        } catch (e) {
+          if (!/WebGPU/.test(e.message)) throw e;
+          log(`${e.message}: running on the main thread`);
+          useWorker = false;
+          c = freshCanvas(); c.classList.add('gpu');
+        }
+      } else {
+        worker = await start({});
+      }
+    }
+    if (!useWorker) {
+      if (usesGfx && $('worker').checked && !offscreenOk) log('gasm:gfx games run on the main thread here (no OffscreenCanvas)');
       let assets = record;
       if (folder) {  // main thread: preload the folder into memory, with progress
         const t = new AssetTable(log);
@@ -266,12 +301,14 @@ async function start({ romBytes } = {}) {
         assets = t;
       }
       const gfx = usesGfx ? await WebGpuGfx.create(c, log) : undefined;
+      gpu = gfx ?? null;
       const storage = await IdbStorage.open(namespace).catch((e) => {
         log(`storage unavailable (${e.message}); saves won't persist`);
         return new MemoryStorage();
       });
       host = new GasmHost({ assets, params, gfx, storage, allowNet: true, onPresent: present, onAudio, onLog: log,
                             virtualTime: hashFrames > 0 });
+      host.text = '';     // the page has a keyboard
       await host.load(bytes);
     }
   } catch (e) {

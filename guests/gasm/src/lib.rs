@@ -113,6 +113,38 @@ pub fn pad(player: u32) -> Buttons {
     Buttons(unsafe { sys::input_pad(player) })
 }
 
+/// Text typed since the previous frame (`'\u{8}'` = backspace, `'\n'` = enter),
+/// or `None` if the runner has no keyboard.
+pub fn text_input() -> Option<String> {
+    let len = unsafe { sys::text_input(std::ptr::null_mut(), 0) };
+    if len < 0 {
+        return None;
+    }
+    let mut buf = vec![0u8; len as usize];
+    if len > 0 {
+        unsafe { sys::text_input(buf.as_mut_ptr(), len as u32) };
+    }
+    Some(String::from_utf8_lossy(&buf).into_owned())
+}
+
+/// All asset names, sorted (by UTF-8 bytes). Folder entries keep their on-disk case.
+pub fn asset_names() -> Vec<String> {
+    let n = unsafe { sys::asset_count() };
+    (0..n)
+        .filter_map(|i| {
+            let len = unsafe { sys::asset_name(i, std::ptr::null_mut(), 0) };
+            if len < 0 {
+                return None;
+            }
+            let mut buf = vec![0u8; len as usize];
+            if len > 0 {
+                unsafe { sys::asset_name(i, buf.as_mut_ptr(), len as u32) };
+            }
+            Some(String::from_utf8_lossy(&buf).into_owned())
+        })
+        .collect()
+}
+
 /// Read a whole asset.
 pub fn asset(name: &str) -> Option<Vec<u8>> {
     let n = unsafe { sys::asset_size(name.as_ptr(), name.len() as u32) };
@@ -178,11 +210,24 @@ pub mod gfx {
     pub struct Pipeline(pub u32);
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     pub struct BindGroup(pub u32);
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub struct BindGroupLayout(pub u32);
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub struct Texture(pub u32);
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub struct Sampler(pub u32);
 
     pub const COPY_DST: u32 = 0x08;
     pub const INDEX: u32 = 0x10;
     pub const VERTEX: u32 = 0x20;
     pub const UNIFORM: u32 = 0x40;
+    pub const STORAGE: u32 = 0x80;
+
+    /// Bind group layout entry visibility.
+    pub const STAGE_VERTEX: u32 = 0x1;
+    pub const STAGE_FRAGMENT: u32 = 0x2;
+    /// Dynamic offsets must be multiples of this.
+    pub const OFFSET_ALIGNMENT: u32 = 256;
 
     #[derive(Clone, Copy)]
     pub enum IndexFormat {
@@ -220,9 +265,27 @@ pub mod gfx {
     pub fn create_pipeline(json: &str) -> Pipeline {
         Pipeline(unsafe { sys::gfx_create_pipeline(json.as_ptr(), json.len() as u32) })
     }
-    /// `{"pipeline":P,"group":0,"entries":[{"binding":0,"buffer":B,"offset":0,"size":N}]}`
+    /// `{"layout":L,"entries":[...]}` or `{"pipeline":P,"group":0,"entries":[...]}`; entries
+    /// `{"binding":0,"buffer":B,"offset":0,"size":N}`, `{"binding":1,"texture":T}`, `{"binding":2,"sampler":S}`.
     pub fn create_bind_group(json: &str) -> BindGroup {
         BindGroup(unsafe { sys::gfx_create_bind_group(json.as_ptr(), json.len() as u32) })
+    }
+    /// `{"entries":[{"binding":0,"visibility":STAGE_VERTEX,"buffer":{"type":"uniform","hasDynamicOffset":true}}, ...]}`.
+    /// Bind groups made from it work with every pipeline whose `"layout":[...]` lists it.
+    pub fn create_bind_group_layout(json: &str) -> BindGroupLayout {
+        BindGroupLayout(unsafe { sys::gfx_create_bind_group_layout(json.as_ptr(), json.len() as u32) })
+    }
+    /// `{"size":[w,h],"format":"rgba8unorm","mipLevelCount":n}`
+    pub fn create_texture(json: &str) -> Texture {
+        Texture(unsafe { sys::gfx_create_texture(json.as_ptr(), json.len() as u32) })
+    }
+    /// Upload a tightly packed RGBA8 region (`rgba.len() == w * h * 4`) of mip level `mip`.
+    pub fn write_texture(t: Texture, mip: u32, x: u32, y: u32, w: u32, h: u32, rgba: &[u8]) {
+        unsafe { sys::gfx_write_texture(t.0, mip, x, y, w, h, rgba.as_ptr(), rgba.len() as u32) }
+    }
+    /// `{"addressModeU":"repeat","magFilter":"linear","minFilter":"linear","mipmapFilter":"linear"}`
+    pub fn create_sampler(json: &str) -> Sampler {
+        Sampler(unsafe { sys::gfx_create_sampler(json.as_ptr(), json.len() as u32) })
     }
     /// Offset and byte length must be multiples of 4.
     pub fn write_buffer<T: Pod>(buf: Buffer, offset: u32, data: &[T]) {
@@ -238,6 +301,18 @@ pub mod gfx {
     }
     pub fn set_bind_group(index: u32, bg: BindGroup) {
         unsafe { sys::gfx_set_bind_group(index, bg.0) }
+    }
+    /// One offset (multiple of [`OFFSET_ALIGNMENT`]) per dynamic-offset entry, in binding order.
+    pub fn set_bind_group_offsets(index: u32, bg: BindGroup, offsets: &[u32]) {
+        unsafe { sys::gfx_set_bind_group_offsets(index, bg.0, offsets.as_ptr(), offsets.len() as u32) }
+    }
+    /// Viewport in drawable pixels (clamped to the drawable), depth range 0..=1.
+    pub fn set_viewport(x: f32, y: f32, w: f32, h: f32, min_depth: f32, max_depth: f32) {
+        unsafe { sys::gfx_set_viewport(x, y, w, h, min_depth, max_depth) }
+    }
+    /// Scissor rectangle in drawable pixels (clamped to the drawable).
+    pub fn set_scissor_rect(x: u32, y: u32, w: u32, h: u32) {
+        unsafe { sys::gfx_set_scissor_rect(x, y, w, h) }
     }
     pub fn set_vertex_buffer(slot: u32, buf: Buffer, offset: u32) {
         unsafe { sys::gfx_set_vertex_buffer(slot, buf.0, offset) }

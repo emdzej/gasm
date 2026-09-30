@@ -82,6 +82,13 @@ const r = await w.frames([[pad0, pad1, 0, 0]]);               // one entry per f
 if (r.frame) ctx.putImageData(new ImageData(r.frame.rgba, r.frame.width, r.frame.height), 0, 0);
 ```
 
+3D (`gasm:gfx`) games can run in a Worker too, where the browser has WebGPU in
+workers: pass `canvas: canvasElement.transferControlToOffscreen()` and
+`size: [w, h]` (device pixels) to `start`, and `{ size }` to `frames`. The
+worker renders straight into the canvas. If `start` rejects with a WebGPU
+error, run the game on the main thread. `keyboard: true` plus
+`frames(steps, true, { texts })` forwards typed text for `text_input`.
+
 Embedding natively:
 
 ```rust

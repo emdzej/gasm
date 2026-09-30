@@ -12,7 +12,7 @@ scripts/vendor-web.sh >/dev/null   # csfs for the OPFS import page
 cp runners/web/index.html runners/web/app.js runners/web/gasm-host.js runners/web/webgpu-gfx.js \
    runners/web/gasm-worker.js runners/web/opfs.html runners/web/opfs.js runners/web/testdata.js "$PLAY/"
 cp -R runners/web/vendor "$PLAY/"
-for g in sumo triangle nes doom test-pattern assetcheck; do
+for g in sumo triangle textured nes doom test-pattern assetcheck; do
   [ -f "build/$g.wasm" ] || { echo "missing build/$g.wasm; run 'make guests' first" >&2; exit 1; }
   cp "build/$g.wasm" "$PLAY/build/"
 done

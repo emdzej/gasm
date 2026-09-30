@@ -7,7 +7,7 @@ cd "$(dirname "$0")/.."
 NATIVE=runners/native/target/release/gasm-run
 NODE="node runners/web/headless.mjs"
 [ -d roms ] && [ -n "$(ls roms/*.nes 2>/dev/null)" ] && [ -f roms/freedoom2.wad ] && [ -f roms/doom1.wad ] || scripts/fetch-roms.sh
-for g in nes test-pattern sumo doom; do "$NATIVE" build/$g.wasm --compile build/$g.cwasm 2>/dev/null; done
+for g in nes test-pattern sumo textured doom; do "$NATIVE" build/$g.wasm --compile build/$g.cwasm 2>/dev/null; done
 
 pass=0; fail=0
 check() { # <name> <guest-basename> <frames> [runner args...]
@@ -25,6 +25,9 @@ check() { # <name> <guest-basename> <frames> [runner args...]
 
 check test-pattern       test-pattern 300 --input "30-200:RIGHT+A,100-150:DOWN"
 # sumo: gfx null backend hashes every GPU buffer upload (uniforms = full scene state)
+# textured: texture uploads (full mip chain + a region per frame), dynamic offsets,
+# storage buffer, and scripted text input (commas and escapes inside quotes)
+check textured-text       textured 600 --input '100:"hi",150:"\b!\n",200:"x,y",400-450:A'
 check sumo-vs-bot         sumo 3000 --input "130-900:RIGHT+A,900-1800:UP+B,1800-3000:LEFT+DOWN"
 check cpu_instr_test     nes 3000 --rom roms/cpu_instr_test.nes
 check cpu_timing_test    nes 1200 --rom roms/cpu_timing_test.nes

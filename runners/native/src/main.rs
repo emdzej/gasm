@@ -12,7 +12,7 @@ use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
 use winit::event::{ElementState, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
-use winit::keyboard::{KeyCode, PhysicalKey};
+use winit::keyboard::{Key, KeyCode, NamedKey, PhysicalKey};
 use winit::window::{Window, WindowId};
 
 use gfx::Gfx;
@@ -45,7 +45,8 @@ options:
   --headless <frames>      run N frames without window/audio, print hashes
   --screenshot <out.png>   (headless) write the last frame as PNG (renders gfx on the GPU)
   --input <script>         (headless) scripted input: FROM-TO:BTN+BTN,... (frame ranges,
-                           buttons A B X Y L R SELECT START UP DOWN LEFT RIGHT)
+                           buttons A B X Y L R SELECT START UP DOWN LEFT RIGHT), and
+                           FRAME:\"text\" for text_input (escapes \\n enter, \\b backspace, \\\\ \\\")
   --realtime               (headless) pace frames at the guest's rate
   --no-hash                (headless) skip hashing, for benchmarking
 
@@ -73,6 +74,8 @@ struct Args {
     screenshot: Option<String>,
     compile: Option<String>,
     input: Vec<(u64, u64, u32)>,
+    /// (frame, text) typed in headless runs
+    text: Vec<(u64, String)>,
     realtime: bool,
     mute: bool,
     no_hash: bool,
@@ -95,6 +98,7 @@ fn parse_args() -> Result<Args, String> {
         screenshot: None,
         compile: None,
         input: Vec::new(),
+        text: Vec::new(),
         realtime: false,
         mute: false,
         no_hash: false,
@@ -139,7 +143,7 @@ fn parse_args() -> Result<Args, String> {
             }
             "--screenshot" => args.screenshot = Some(val("--screenshot")?),
             "--compile" => args.compile = Some(val("--compile")?),
-            "--input" => args.input = parse_input_script(&val("--input")?)?,
+            "--input" => (args.input, args.text) = parse_input_script(&val("--input")?)?,
             "--realtime" => args.realtime = true,
             "--mute" => args.mute = true,
             "--no-hash" => args.no_hash = true,
@@ -154,22 +158,61 @@ fn parse_args() -> Result<Args, String> {
     Ok(args)
 }
 
-/// Parse `FROM-TO:BTN+BTN,...` into (from, to_inclusive, mask) ranges.
-fn parse_input_script(spec: &str) -> Result<Vec<(u64, u64, u32)>, String> {
+/// Parse `FROM-TO:BTN+BTN,...` into (from, to_inclusive, mask) ranges, and
+/// `FRAME:"text"` items into typed text (commas inside quotes are literal).
+type InputScript = (Vec<(u64, u64, u32)>, Vec<(u64, String)>);
+fn parse_input_script(spec: &str) -> Result<InputScript, String> {
     const NAMES: [&str; 12] = ["A", "B", "X", "Y", "L", "R", "SELECT", "START", "UP", "DOWN", "LEFT", "RIGHT"];
-    spec.split(',')
-        .map(|item| {
-            let bad = || format!("bad --input item {item:?}");
-            let (range, buttons) = item.split_once(':').ok_or_else(bad)?;
-            let (from, to) = range.split_once('-').unwrap_or((range, range));
-            let mut mask = 0;
-            for b in buttons.split('+') {
-                let bit = NAMES.iter().position(|n| n.eq_ignore_ascii_case(b)).ok_or_else(bad)?;
-                mask |= 1 << bit;
+    // split on commas outside quotes
+    let (mut items, mut cur, mut quoted, mut escaped) = (Vec::new(), String::new(), false, false);
+    for ch in spec.chars() {
+        if escaped {
+            cur.push(ch);
+            escaped = false;
+        } else if ch == '\\' && quoted {
+            cur.push(ch);
+            escaped = true;
+        } else if ch == '"' {
+            quoted = !quoted;
+            cur.push(ch);
+        } else if ch == ',' && !quoted {
+            items.push(std::mem::take(&mut cur));
+        } else {
+            cur.push(ch);
+        }
+    }
+    items.push(cur);
+    let (mut pads, mut text) = (Vec::new(), Vec::new());
+    for item in items {
+        let bad = || format!("bad --input item {item:?}");
+        let (range, rest) = item.split_once(':').ok_or_else(bad)?;
+        if let Some(q) = rest.strip_prefix('"') {
+            let body = q.strip_suffix('"').ok_or_else(bad)?;
+            let mut t = String::new();
+            let mut chars = body.chars();
+            while let Some(c) = chars.next() {
+                t.push(if c != '\\' {
+                    c
+                } else {
+                    match chars.next().ok_or_else(bad)? {
+                        'n' => '\n',
+                        'b' => '\u{8}',
+                        other => other,
+                    }
+                });
             }
-            Ok((from.parse().map_err(|_| bad())?, to.parse().map_err(|_| bad())?, mask))
-        })
-        .collect()
+            text.push((range.parse().map_err(|_| bad())?, t));
+            continue;
+        }
+        let (from, to) = range.split_once('-').unwrap_or((range, range));
+        let mut mask = 0;
+        for b in rest.split('+') {
+            let bit = NAMES.iter().position(|n| n.eq_ignore_ascii_case(b)).ok_or_else(bad)?;
+            mask |= 1 << bit;
+        }
+        pads.push((from.parse().map_err(|_| bad())?, to.parse().map_err(|_| bad())?, mask));
+    }
+    Ok((pads, text))
 }
 
 fn main() -> ExitCode {
@@ -304,6 +347,7 @@ fn headless(args: &Args, loaded: Loaded, frames: u64) -> Result<i32, String> {
         let host = game.host_mut();
         host.virtual_time_ms = Some(i as f64 * 1000.0 / rate);
         host.pads = [pad, 0, 0, 0];
+        host.text = Some(args.text.iter().filter(|(f, _)| *f == i).map(|(_, t)| t.as_str()).collect());
         host.show_frame = args.screenshot.is_some() && i + 1 == frames;
         ran = i + 1;
         match game.frame() {
@@ -399,6 +443,8 @@ struct App {
     window: Option<Arc<Window>>,
     game: Option<Game>,
     keys: HashSet<KeyCode>,
+    /// text typed since the last frame (for text_input)
+    typed: String,
     gilrs: Option<Gilrs>,
     next: Instant,
     fps_t: Instant,
@@ -436,6 +482,8 @@ impl App {
                 }
                 let host = game.host_mut();
                 host.pads = pads;
+                // typed text goes to the first frame of a catch-up batch
+                host.text = Some(if k == 0 { std::mem::take(&mut self.typed) } else { String::new() });
                 host.show_frame = k + 1 == steps;
                 host.gfx.used = false;
                 match game.frame() {
@@ -528,6 +576,17 @@ impl ApplicationHandler for App {
                         ElementState::Released => self.keys.remove(&code),
                     };
                 }
+                if event.state == ElementState::Pressed {
+                    match &event.logical_key {
+                        Key::Named(NamedKey::Enter) => self.typed.push('\n'),
+                        Key::Named(NamedKey::Backspace) => self.typed.push('\u{8}'),
+                        _ => {
+                            if let Some(t) = &event.text {
+                                self.typed.extend(t.chars().filter(|c| !c.is_control()));
+                            }
+                        }
+                    }
+                }
             }
             WindowEvent::RedrawRequested => self.tick(el),
             _ => {}
@@ -550,6 +609,7 @@ fn windowed(args: Args, loaded: Loaded) -> Result<i32, String> {
         window: None,
         game: None,
         keys: HashSet::new(),
+        typed: String::new(),
         gilrs: Gilrs::new().ok(),
         next: Instant::now(),
         fps_t: Instant::now(),

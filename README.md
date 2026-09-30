@@ -14,6 +14,7 @@ Games in this repo (Rust, plus two in C):
 | `nes.wasm` | NES emulator on [tetanes-core](https://crates.io/crates/tetanes-core): 2D video, audio, input, assets | 1.5 MB |
 | `doom.wasm` | DOOM ([doomgeneric](https://github.com/ozkl/doomgeneric), C) with OPL music, saves in `gasm:storage`, any IWAD as an asset ([guests/doom](guests/doom/README.md)) | 750 KB |
 | `triangle.wasm` | Smallest `gasm:gfx` program (about 50 lines of Rust) | 25 KB |
+| `textured.wasm` | Textures with mipmaps, two samplers, explicit layouts, dynamic offsets, a storage buffer, 4:3 viewport and text input | 57 KB |
 | `test-pattern.wasm` | Minimal C guest (proves the ABI is language-agnostic) | 87 KB |
 | `assetcheck.wasm` | Test guest for asset providers (folders, streaming, OPFS) | 34 KB |
 
@@ -94,8 +95,8 @@ ball off the platform. First to 5 wins.
 
 ## Results (Apple M1 Pro, this commit)
 
-**Portability.** `make test` checks 11 single-player cases (test pattern, sumo
-vs. bot, 5 NES test ROMs/demos, scripted Blade Buster gameplay, the DOOM and
+**Portability.** `make test` checks 12 single-player cases (test pattern, the
+textured GPU test, sumo vs. bot, 5 NES test ROMs/demos, scripted Blade Buster gameplay, the DOOM and
 Freedoom attract-mode demos, and a scripted DOOM game that saves and loads). Each produces
 **bit-identical video, audio and GPU-upload streams** on wasmtime JIT,
 wasmtime AOT and V8. It also plays 3,600-frame online sumo matches through
@@ -131,6 +132,7 @@ guests/                      Rust workspace (wasm32-unknown-unknown)
   nes/                         NES emulator on tetanes-core
   doom/                        DOOM: gasm platform layer for doomgeneric (engine fetched at build)
   triangle/                    smallest GPU example
+  textured/                    textures, samplers, explicit layouts, dynamic offsets
   parity/                      runs the NES game natively (parity + benchmarks)
   test-pattern/                C guest (wasi-sdk)
 runners/native/              Rust: wasmtime + wasmtime-wasi, wgpu, winit, cpal, gilrs, tungstenite
@@ -160,5 +162,5 @@ site/                        website (VitePress): docs, dev guides, demos → ga
    makes online play feel lag-free and works for NES too.
 2. `gasm:storage` for saves; a manifest custom section for capabilities and
    network hosts.
-3. `gasm:gfx` v1: textures, samplers, instancing.
+3. `gasm:gfx`: render targets, cube maps, render bundles.
 4. A **wasm2c** runner, to show the no-runtime/no-JIT path (iOS, consoles).

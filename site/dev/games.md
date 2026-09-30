@@ -6,6 +6,7 @@ with the `gasm` crate. C also works (see [C and other languages](#c-and-other-la
 
 - Contract: [ABI v0](/docs/abi)
 - Examples: [`guests/triangle`](https://github.com/emdzej/gasm/tree/main/guests/triangle) (smallest GPU game),
+  [`guests/textured`](https://github.com/emdzej/gasm/tree/main/guests/textured) (textures, samplers, explicit layouts, dynamic offsets, storage buffer, viewport),
   [`guests/sumo`](https://github.com/emdzej/gasm/tree/main/guests/sumo) (3D + networking),
   [`guests/nes`](https://github.com/emdzej/gasm/tree/main/guests/nes) (wrapping an existing Rust crate),
   [`guests/doom`](https://github.com/emdzej/gasm/tree/main/guests/doom) (porting an existing C game, [play it](/play/?game=doom.wasm&autostart))
@@ -115,6 +116,7 @@ gasm::log!("score {}", score);       // runner log / browser console
 let t = gasm::time_ms();             // monotonic (virtual in headless runs)
 let relay = gasm::param("relay");    // Option<String>: --param relay=… / ?relay=…
 let rom = gasm::asset("level1");     // Option<Vec<u8>>: --asset level1=path
+let all = gasm::asset_names();       // Vec<String>, sorted: discover a folder's contents
 gasm::exit(0);                       // end the game (WASI proc_exit)
 ```
 
@@ -127,6 +129,12 @@ if pad.held(Buttons::A | Buttons::B) { … }   // any of
 ```
 
 Buttons are positional: `A` is the east face button, `B` south, `X` north, `Y` west.
+
+For names and chat, `gasm::text_input()` returns the text typed since the last
+frame (`'\u{8}'` = backspace, `'\n'` = enter), or `None` if the runner has no
+keyboard. Keys bound to pads produce text too, so read it only while a text
+field is focused. Headless runs type it from the input script:
+`--input '120:"ANNA\n"'`.
 
 ### 2D video and audio
 
@@ -169,12 +177,13 @@ Rules that matter (details in the [ABI spec](/docs/abi#gasm-gfx-optional-gpu-ren
 - Color targets say `"format": "surface"`. Depth is `"depth24plus"` or
   omitted. Never set `multisample`: the runner owns the swapchain, depth
   buffer and MSAA.
-- Automatic layouts belong to one pipeline: **create a bind group per
-  pipeline**, even when two pipelines use the same uniform struct.
+- Automatic layouts (`"layout"` omitted) belong to one pipeline: **create a
+  bind group per pipeline**, even when two pipelines use the same uniform
+  struct. Explicit layouts (below) are shared.
 - `write_buffer` calls take effect before the frame's draws, so writing one
   uniform buffer twice in a frame means both draws see the second value. Use one
   slot per object instead (sumo uses 256-byte slots in one buffer, one bind group per
-  slot, and writes the whole buffer once per frame).
+  slot, and writes the whole buffer once per frame; with dynamic offsets it's one bind group).
 - Offsets and sizes are multiples of 4. Uniform slot offsets must be multiples
   of 256.
 - Validation errors trap with the wgpu/WebGPU message: check the runner log.
@@ -182,6 +191,47 @@ Rules that matter (details in the [ABI spec](/docs/abi#gasm-gfx-optional-gpu-ren
 [`guests/sumo/src/render.rs`](https://github.com/emdzej/gasm/blob/main/guests/sumo/src/render.rs)
 is a complete lit 3D renderer on this API: procedural meshes, two pipelines,
 per-object uniforms and alpha-blended shadows, in about 300 lines.
+
+#### Textures, explicit layouts and dynamic offsets
+
+```rust
+// a texture with a full mip chain: the runner never generates mipmaps
+let tex = gfx::create_texture(r#"{"size":[256,256],"format":"rgba8unorm","mipLevelCount":9}"#);
+for mip in 0..9 { gfx::write_texture(tex, mip, 0, 0, 256 >> mip, 256 >> mip, &levels[mip]); }
+let smp = gfx::create_sampler(r#"{"addressModeU":"repeat","addressModeV":"repeat",
+    "magFilter":"linear","minFilter":"linear","mipmapFilter":"linear"}"#);
+
+// explicit layouts: one per-object group (dynamic offset) and one per-material group
+let obj = gfx::create_bind_group_layout(r#"{"entries":[{"binding":0,"visibility":1,
+    "buffer":{"type":"uniform","hasDynamicOffset":true,"minBindingSize":96}}]}"#);
+let mat = gfx::create_bind_group_layout(r#"{"entries":[
+    {"binding":0,"visibility":2,"texture":{}},{"binding":1,"visibility":2,"sampler":{}}]}"#);
+// pipelines list them: "layout":[obj, mat]; any number of pipelines can share them
+let objects = gfx::create_bind_group(&format!(
+    r#"{{"layout":{},"entries":[{{"binding":0,"buffer":{},"size":96}}]}}"#, obj.0, uniforms.0));
+let material = gfx::create_bind_group(&format!(
+    r#"{{"layout":{},"entries":[{{"binding":0,"texture":{}}},{{"binding":1,"sampler":{}}}]}}"#, mat.0, tex.0, smp.0));
+
+// frame: 4:3 image in any window, one bind group for every object
+gfx::set_viewport(vx, vy, vw, vh, 0.0, 1.0);
+gfx::set_scissor_rect(vx as u32, vy as u32, vw as u32, vh as u32);
+gfx::set_bind_group(1, material);
+for i in 0..n {
+    gfx::set_bind_group_offsets(0, objects, &[i * 256]);
+    gfx::draw_indexed(6, 1, 0, 0, 0);
+}
+```
+
+- `write_texture` takes tightly packed RGBA8 rows (`w * h * 4` bytes) and
+  can update any region every frame (a video, a scrolling texture).
+- Storage buffers (`gfx::STORAGE` usage, `"type":"read-only-storage"`) carry
+  per-instance data for instanced draws.
+- Pipelines can set `depthBias`, `depthBiasSlopeScale` and `depthBiasClamp`
+  for decals drawn over a surface.
+- The surface isn't sRGB: colours are written as the shader returns them.
+
+[`guests/textured`](https://github.com/emdzej/gasm/blob/main/guests/textured/src/lib.rs)
+uses all of this in about 300 lines.
 
 ### Storage (`gasm:storage`)
 

@@ -18,7 +18,7 @@ machine-readable ABI ([`spec/abi.json`](https://github.com/emdzej/gasm/blob/main
 lists every function to implement; `scripts/gen-abi.mjs --check` verifies the
 reference runners against it.
 
-A minimal runner implements only the core `gasm` module (11 functions).
+A minimal runner implements only the core `gasm` module (14 functions).
 `gasm:gfx` and `gasm:net` are optional: games that don't import them run
 anyway.
 
@@ -82,6 +82,8 @@ ignore silently.
 | `audio_config(rate,ch)` | Accept 8000–192000 Hz, 1–2 channels. |
 | `audio_push(ptr,frames)` | Read `frames*ch*4` bytes of little-endian f32. Resample to the device rate and enqueue. |
 | `input_pad(player)` | Return the mask sampled *before* this `gasm_frame`. `0` for players ≥ 4. |
+| `text_input(dst, cap)` | Text typed since the previous frame (backspace `\b`, enter `\n`), collected before this `gasm_frame`; length, copied if it fits. `-1` without a keyboard. |
+| `asset_count()` / `asset_name(i, dst, cap)` | The asset names sorted by UTF-8 bytes (compute once; the set is fixed at start-up). |
 | `asset_size/read` | Flat map; `-1` if missing; copy `min(len, cap)`. |
 | `param(name, dst, cap)` | String map (CLI `--param`, URL query); return length, copy only if it fits; `-1` if unset. |
 
@@ -114,13 +116,20 @@ frame.
 
 Map the calls onto WebGPU (browser) or a WebGPU implementation (wgpu, Dawn):
 
-1. **Handle table**: one array of objects (shader, buffer, pipeline, bind group);
-   handle = index + 1. Type-check every handle on use and trap on mismatch.
+1. **Handle table**: one array of objects (shader, buffer, pipeline, bind
+   group, bind group layout, texture, sampler); handle = index + 1, numbered
+   in creation order. Type-check every handle on use and trap on mismatch.
+   Keep a small record per object (buffer size and usage, texture size and
+   mip count, layout entries, a bind group's dynamic entries) and validate
+   `write_texture` regions, dynamic offsets and bind groups against it, so
+   your null backend traps exactly like the GPU one.
 2. **Creation JSON**: parse, replace handle numbers with objects, then apply the
    runner-owned parts: `"surface"` → your swapchain format; add depth
    `depth24plus` (a no-op one if the guest omitted `depthStencil`); add your
-   MSAA sample count; `layout: "auto"`. Bind groups use
-   `pipeline.getBindGroupLayout(group)`.
+   MSAA sample count. `layout` is `"auto"` or a list of layout handles (build a
+   pipeline layout). Bind groups use the given `"layout"`, or
+   `pipeline.getBindGroupLayout(group)`. Textures get usage
+   `TEXTURE_BINDING | COPY_DST` and one default view (all mips).
 3. **Errors**: capture validation errors (wgpu: `push_error_scope` +
    `pop`) and trap with the message; don't let them panic the runner.
 4. **Frames**: `begin_frame` acquires the swapchain texture and opens a pass with
@@ -130,7 +139,11 @@ Map the calls onto WebGPU (browser) or a WebGPU implementation (wgpu, Dawn):
 5. **Colors**: prefer a non-sRGB 8-bit swapchain (`bgra8unorm`), as browsers use,
    so guests look the same everywhere.
 6. **Headless**: a null backend that allocates handles and validates, but draws
-   nothing. Fold every `write_buffer` payload into the video hash.
+   nothing. Fold every `write_buffer` payload into the video hash, and for
+   `write_texture` the header (`tex, mip, x, y, w, h`, little-endian `u32`)
+   followed by the payload.
+7. **Viewport and scissor**: clamp to the drawable; skip draws while either is
+   empty. `begin_frame` resets both to the whole drawable.
 
 ### Step 6: network (`gasm:net`, optional)
 
@@ -237,7 +250,7 @@ cases in `scripts/determinism-test.sh`.
 
 ## 3. Conformance checklist
 
-- [ ] Loads `build/test-pattern.wasm`, `build/nes.wasm` (with a ROM), `build/triangle.wasm`, `build/sumo.wasm`
+- [ ] Loads `build/test-pattern.wasm`, `build/nes.wasm` (with a ROM), `build/triangle.wasm`, `build/textured.wasm`, `build/sumo.wasm`
 - [ ] Rejects a guest whose `gasm_abi_version` isn't 0
 - [ ] Traps (doesn't crash) on out-of-bounds pointers
 - [ ] Calls `gasm_frame` at the guest's rate, independent of display refresh

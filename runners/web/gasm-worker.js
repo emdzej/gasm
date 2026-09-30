@@ -1,8 +1,13 @@
-// gasm-worker.js — run a gasm guest in a dedicated Worker (for guests that don't
-// import gasm:gfx). The page keeps input, display and audio; the worker runs the
-// guest with lazy synchronous asset providers (OPFS, File/Blob) that only exist
-// in workers. Messages carry transferables, so no SharedArrayBuffer and therefore
-// no cross-origin isolation (COOP/COEP) is needed: works on GitHub Pages.
+// gasm-worker.js — run a gasm guest in a dedicated Worker. The page keeps input,
+// display and audio; the worker runs the guest with lazy synchronous asset providers
+// (OPFS, File/Blob) that only exist in workers. Messages carry transferables, so no
+// SharedArrayBuffer and therefore no cross-origin isolation (COOP/COEP) is needed:
+// works on GitHub Pages.
+//
+// gasm:gfx guests: pass `canvas` (from canvas.transferControlToOffscreen()) and its
+// display `size`; the worker renders with WebGPU into it. Start rejects with an error
+// mentioning "WebGPU" if the worker has none (e.g. browsers without WebGPU in
+// workers); run the guest on the main thread then.
 //
 // Page side:
 //   import { GasmWorker } from '@emdzej/gasm-host/worker';
@@ -13,7 +18,8 @@
 //     onLog, onAudio: (samples, rate, channels) => …,
 //   });
 //   const r = await w.frames([pads0, pads1, …], true);  // one entry per frame: [p0,p1,p2,p3]
-//   if (r.frame) draw(r.frame.rgba, r.frame.width, r.frame.height);
+//   if (r.frame) draw(r.frame.rgba, r.frame.width, r.frame.height);   // 2D guests only
+//   // optional per batch: { texts: [text per frame] (text_input), size: [w, h] (gfx canvas) }
 //
 // Asset specs (in order; the first 'memory' entries are explicit, the rest are folder entries):
 //   { kind: 'memory', record: { name: Uint8Array } }
@@ -23,6 +29,7 @@
 import {
   AssetTable, GasmHost, IdbStorage, MemoryStorage, ProcExit, bytesSource, fileAssets, opfsAssets,
 } from './gasm-host.js';
+import { WebGpuGfx } from './webgpu-gfx.js';
 
 const inWorker = typeof WorkerGlobalScope !== 'undefined' && globalThis instanceof WorkerGlobalScope;
 
@@ -30,17 +37,24 @@ const inWorker = typeof WorkerGlobalScope !== 'undefined' && globalThis instance
 
 export class GasmWorker {
   static async start({
-    wasm, assets = [], params = {}, storage = null, allowNet = false,
+    wasm, assets = [], params = {}, storage = null, allowNet = false, keyboard = false,
     hashing = false, virtualTime = false, onLog = console.log, onAudio = () => {},
+    canvas = null, size = null,
     url = new URL('./gasm-worker.js', import.meta.url),
   }) {
     const w = new GasmWorker(new Worker(url, { type: 'module', name: 'gasm-guest' }), onLog, onAudio);
     const bytes = wasm instanceof ArrayBuffer ? wasm : wasm.buffer.slice(wasm.byteOffset, wasm.byteOffset + wasm.byteLength);
     const ready = w.next('ready');
-    w.worker.postMessage({ type: 'init', wasm: bytes, assets, params, storage, allowNet, hashing, virtualTime }, [bytes]);
-    const r = await ready;
-    w.frameRate = r.frameRate;
-    return w;
+    w.worker.postMessage({ type: 'init', wasm: bytes, assets, params, storage, allowNet, keyboard, hashing, virtualTime, canvas, size },
+      canvas ? [bytes, canvas] : [bytes]);
+    try {
+      const r = await ready;
+      w.frameRate = r.frameRate;
+      return w;
+    } catch (e) {
+      w.worker.terminate();
+      throw e;
+    }
   }
 
   constructor(worker, onLog, onAudio) {
@@ -83,10 +97,10 @@ export class GasmWorker {
    * last is shown (catch-up rule) if `show`. Resolves with { frame?, stats, frameIndex }.
    * Rejects with ProcExit when the guest exits.
    */
-  frames(steps, show = true) {
+  frames(steps, show = true, { texts = null, size = null } = {}) {
     if (this.failed) return Promise.reject(this.failed);
     const done = this.next('done');
-    this.worker.postMessage({ type: 'frames', steps, show });
+    this.worker.postMessage({ type: 'frames', steps, show, texts, size });
     return done;
   }
 
@@ -120,7 +134,7 @@ async function buildAssets(specs, log) {
 }
 
 if (inWorker) {
-  let host = null, audio = [], presented = 0;
+  let host = null, gfx = null, keyboard = false, audio = [], presented = 0;
   const post = (m, transfer = []) => globalThis.postMessage(m, transfer);
   const log = (msg) => post({ type: 'log', msg });
   const stats = () => ({
@@ -136,9 +150,14 @@ if (inWorker) {
         const storage = m.storage
           ? await IdbStorage.open(m.storage).catch((err) => { log(`storage unavailable (${err.message})`); return new MemoryStorage(); })
           : new MemoryStorage();
+        if (m.canvas) {
+          gfx = await WebGpuGfx.create(m.canvas, log);
+          if (m.size) gfx.setSize(...m.size);
+        }
+        keyboard = m.keyboard;
         host = new GasmHost({
           assets, params: m.params, storage, allowNet: m.allowNet, virtualTime: m.virtualTime, onLog: log,
-          onAudio: (samples, rate, channels) => audio.push({ samples, rate, channels }),
+          onAudio: (samples, rate, channels) => audio.push({ samples, rate, channels }), ...(gfx ? { gfx } : {}),
         });
         host.hashing = m.hashing;
         await host.load(m.wasm);
@@ -148,18 +167,25 @@ if (inWorker) {
       }
     } else if (m.type === 'frames') {
       let exit = null, error = null;
+      if (gfx && m.size) gfx.setSize(...m.size);
       for (let i = 0; i < m.steps.length; i++) {
         const pads = m.steps[i];
         host.getPad = (p) => pads[p] ?? 0;
+        host.text = keyboard ? (m.texts?.[i] ?? '') : null;
         host.showFrame = m.show && i === m.steps.length - 1;
+        if (gfx) gfx.used = false;
         try { host.frame(); } catch (err) {
           if (err instanceof ProcExit) exit = err.code; else error = err.message;
           break;
         }
       }
       // Send the latest 2D frame only if a new one was presented (transfer, no copy on arrival).
+      // With a gfx canvas (it belongs to WebGPU here), blit it in the worker instead.
       let frame = null;
-      if (host.framesPresented !== presented && host.width) {
+      if (gfx) {
+        if (m.show && !gfx.used && host.width && host.framesPresented !== presented) gfx.presentVideo(host.rgba, host.width, host.height);
+        presented = host.framesPresented;
+      } else if (host.framesPresented !== presented && host.width) {
         presented = host.framesPresented;
         const rgba = host.rgba.slice();
         frame = { rgba, width: host.width, height: host.height };

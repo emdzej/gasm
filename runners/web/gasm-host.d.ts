@@ -18,6 +18,15 @@ export interface GfxBackend {
   createBuffer(size: number, usage: number): number;
   createPipeline(descriptor: object): number;
   createBindGroup(descriptor: object): number;
+  createBindGroupLayout(descriptor: object): number;
+  /** `meta` is the validated descriptor ({ width, height, mips, format }). */
+  createTexture(descriptor: object, meta: { width: number; height: number; mips: number; format: string }): number;
+  createSampler(descriptor: object): number;
+  writeTexture(texture: number, mip: number, x: number, y: number, width: number, height: number, rgba: Uint8Array): void;
+  setBindGroupOffsets(index: number, bindGroup: number, offsets: Uint32Array): void;
+  /** Rectangles arrive clamped to the drawable. */
+  setViewport(x: number, y: number, width: number, height: number, minDepth: number, maxDepth: number): void;
+  setScissorRect(x: number, y: number, width: number, height: number): void;
   writeBuffer(buffer: number, offset: number, bytes: Uint8Array): void;
   beginFrame(r: number, g: number, b: number, a: number, show: boolean): boolean;
   setPipeline(pipeline: number): void;
@@ -29,6 +38,16 @@ export interface GfxBackend {
   endFrame(): void;
 }
 
+/**
+ * Backend-independent record of gfx objects: validates textures, samplers, layouts and
+ * dynamic offsets for any backend (GasmHost uses it), like the native runner.
+ */
+export declare class GfxModel {
+  constructor(backend: GfxBackend);
+}
+export declare const MAX_TEXTURE_SIZE: number;
+export declare const OFFSET_ALIGNMENT: number;
+
 /** Draws nothing; allocates handles so guests behave identically (headless, tests). */
 export declare class NullGfx implements GfxBackend {
   constructor(width?: number, height?: number);
@@ -38,6 +57,15 @@ export declare class NullGfx implements GfxBackend {
   createBuffer(size: number, usage: number): number;
   createPipeline(descriptor: object): number;
   createBindGroup(descriptor: object): number;
+  createBindGroupLayout(descriptor: object): number;
+  /** `meta` is the validated descriptor ({ width, height, mips, format }). */
+  createTexture(descriptor: object, meta: { width: number; height: number; mips: number; format: string }): number;
+  createSampler(descriptor: object): number;
+  writeTexture(texture: number, mip: number, x: number, y: number, width: number, height: number, rgba: Uint8Array): void;
+  setBindGroupOffsets(index: number, bindGroup: number, offsets: Uint32Array): void;
+  /** Rectangles arrive clamped to the drawable. */
+  setViewport(x: number, y: number, width: number, height: number, minDepth: number, maxDepth: number): void;
+  setScissorRect(x: number, y: number, width: number, height: number): void;
   writeBuffer(buffer: number, offset: number, bytes: Uint8Array): void;
   beginFrame(r: number, g: number, b: number, a: number, show: boolean): boolean;
   setPipeline(pipeline: number): void;
@@ -116,6 +144,8 @@ export declare class GasmHost {
   gfx: GfxBackend;
   storage: StorageBackend;
   getPad: (player: number) => number;
+  /** Text typed since the previous frame, for text_input; set it before each frame. null = no keyboard (-1). */
+  text: string | null;
   /** false during catch-up frames: gfx begin_frame then returns 0. */
   showFrame: boolean;
   /** Set by the guest (gasm.set_frame_rate). */

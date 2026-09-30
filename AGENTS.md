@@ -19,7 +19,7 @@ property: most tests assert bit-identical hashes.
 | `spec/abi.json` | **Machine-readable ABI, source of truth.** `node scripts/gen-abi.mjs` regenerates `spec/gasm.h` + `guests/gasm/src/sys.rs`; `--check` verifies runners |
 | `spec/ABI.md`, `spec/gasm.h` | Normative prose + generated C header (don't edit `gasm.h` or `sys.rs` by hand) |
 | `sdk/c/` | C/C++ SDK: CMake toolchain (wraps wasi-sdk) + `Gasm.cmake` + example |
-| `guests/` | Rust workspace (`wasm32-unknown-unknown`): `gasm` (SDK + native stub host), `sumo`, `nes` (tetanes-core), `triangle`, `parity` (native harness) |
+| `guests/` | Rust workspace (`wasm32-unknown-unknown`): `gasm` (SDK + native stub host), `sumo`, `nes` (tetanes-core), `triangle`, `textured` (textures/layouts/offsets test), `assetcheck`, `parity` (native harness) |
 | `guests/test-pattern/` | C guest (wasi-sdk) |
 | `guests/doom/` | DOOM: gasm platform layer (MIT) for doomgeneric. `scripts/fetch-doom.sh` puts the GPL-2.0 engine (+ chocolate-doom OPL music) in `tools/doom-src` and applies `engine.patch`; `scripts/package-doom-src.sh` packs the complete source shipped with releases and the site |
 | `runners/native/` | crate `gasm-host`: library (`src/lib.rs`) + bins `gasm-run` (`src/main.rs`) and `gasm-relay` (`src/bin/`); `relay.Dockerfile` |
@@ -34,7 +34,7 @@ property: most tests assert bit-identical hashes.
 ```sh
 make                          # games -> build/*.wasm, native runner + relay
 make roms                     # test ROMs, Freedoom, shareware doom1.wad into roms/ (needed by the determinism test)
-scripts/determinism-test.sh   # 11 cases: wasmtime JIT == AOT == V8 (must pass)
+scripts/determinism-test.sh   # 12 cases: wasmtime JIT == AOT == V8 (must pass)
 scripts/net-test.sh           # lockstep sumo via gasm-relay, 3 runner pairs + TLS (must pass)
 scripts/asset-test.sh         # folders, case-insensitive names, 200 MB streaming + RSS (must pass)
 node scripts/opfs-test.mjs    # Chrome: OPFS + Worker mode == Node, memory flat
@@ -98,7 +98,14 @@ Headless runs with `--screenshot` render GPU games offscreen: look at the PNG.
 - **Security:** guests get no filesystem, env or args. Network is opt-in natively
   (`--allow-net`). Storage namespaces are chosen by the runner, never the guest.
   Every guest pointer and handle is validated; violations trap, never panic.
-- **gfx:** "auto" layouts are pipeline-exclusive (one bind group per pipeline).
+- **gfx:** "auto" layouts are pipeline-exclusive (one bind group per pipeline);
+  explicit layouts (`create_bind_group_layout`) are shared across pipelines.
+  Both runners keep a per-object record (`Meta` in `gfx.rs`, `GfxModel` in
+  `gasm-host.js`) and validate textures, samplers, layouts and dynamic offsets
+  against it, so the null GPU traps exactly like the real one. Runners never
+  decode images or generate mipmaps. `write_texture` hashes a header
+  (`tex, mip, x, y, w, h`) before the payload; handles are numbered in
+  creation order on every runner (hashes depend on it).
   The render pass always has depth24plus + 4× MSAA; pipelines without
   `depthStencil` get a no-op one. Validation errors become traps via error
   scopes.
@@ -108,7 +115,9 @@ Headless runs with `--screenshot` render GPU games offscreen: look at the PNG.
   and symlinks skipped, 2 GiB limit). `@emdzej/gasm-host` stays
   dependency-free: csfs belongs to pages (e.g. `opfs.html`), not the host.
 - **Worker mode:** transferables only (no SharedArrayBuffer/COOP/COEP); main
-  thread stays the default; `gasm:gfx` guests never go to a worker.
+  thread stays the default. `gasm:gfx` guests go to a worker only through a
+  transferred `OffscreenCanvas` with WebGPU in the worker; otherwise they run
+  on the main thread (the page falls back automatically).
 - **net:** runners flush queued messages and do a WebSocket close handshake on
   exit. Lockstep peers finish the frames they have inputs for after a leave notice.
   TLS is rustls with the **ring** backend (no cmake/NASM on CI); the crypto

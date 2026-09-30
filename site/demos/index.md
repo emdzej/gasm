@@ -7,6 +7,7 @@ host with WebGPU for 3D.
 <div class="demo-grid">
   <a class="demo-card" href="/play/?game=sumo.wasm&autostart" target="_blank"><strong>Sumo (3D)</strong><span>Push the other ball off the platform. Arrows move, X or Z dashes. Plays a bot, or a friend online through a relay.</span></a>
   <a class="demo-card" href="/play/?game=triangle.wasm&autostart" target="_blank"><strong>GPU triangle</strong><span>The smallest gasm:gfx program: one shader, one vertex buffer, about 50 lines of Rust.</span></a>
+  <a class="demo-card" href="/play/?game=textured.wasm&autostart" target="_blank"><strong>GPU textures</strong><span>Mipmapped textures, two samplers, shared bind groups, dynamic offsets and instancing, pillarboxed to 4:3. Type to tint the quad.</span></a>
   <a class="demo-card" href="/play/?game=nes.wasm" target="_blank"><strong>NES emulator</strong><span>tetanes-core compiled to wasm. Open or drop your own <code>.nes</code> file; nothing is uploaded.</span></a>
   <a class="demo-card" href="/play/?game=doom.wasm&autostart" target="_blank"><strong>DOOM</strong><span>The shareware episode, with AdLib music and saves. Drop your own <code>.wad</code> (DOOM II, Freedoom, ...) to play that instead.</span></a>
   <a class="demo-card" href="/play/opfs.html" target="_blank"><strong>Game data in OPFS</strong><span>Import a folder (a mounted CD) into this site's private storage once, using csfs; games then read it on demand in a Worker.</span></a>

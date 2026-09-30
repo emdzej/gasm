@@ -66,6 +66,14 @@ enum {
     GASM_BUF_INDEX = 0x10,
     GASM_BUF_VERTEX = 0x20,
     GASM_BUF_UNIFORM = 0x40,
+    GASM_BUF_STORAGE = 0x80,
+};
+
+/* ---- shader stages ----------------------------------------------------------- */
+/* Bind group layout entry visibility (WebGPU GPUShaderStage bits). */
+enum {
+    GASM_STAGE_VERTEX = 0x1,
+    GASM_STAGE_FRAGMENT = 0x2,
 };
 
 /* ---- index formats ----------------------------------------------------------- */
@@ -101,6 +109,10 @@ GASM_IMPORT("audio_push") void gasm_audio_push(const float *samples, uint32_t fr
 /* Bitmask of GASM_BTN_* held on virtual pad player (0..3), stable within a
  * frame. */
 GASM_IMPORT("input_pad") uint32_t gasm_input_pad(uint32_t player);
+/* UTF-8 text typed since the previous frame (backspace = \b, enter = \n),
+ * stable within a frame. Returns its length (copied only if length <= cap; cap
+ * = 0 queries), or -1 if the runner has no keyboard. */
+GASM_IMPORT("text_input") int32_t gasm_text_input(char *dst, uint32_t cap);
 /* Size in bytes of asset name, or -1 if it does not exist. */
 GASM_IMPORT("asset_size") int32_t gasm_asset_size(const char *name, uint32_t name_len);
 /* Copy up to cap bytes of asset name into dst. Bytes copied, or -1 if missing. */
@@ -108,6 +120,12 @@ GASM_IMPORT("asset_read") int32_t gasm_asset_read(const char *name, uint32_t nam
 /* Copy up to len bytes of asset name starting at offset (streaming). Bytes
  * copied (0 at the end), or -1 if missing. */
 GASM_IMPORT("asset_read_at") int32_t gasm_asset_read_at(const char *name, uint32_t name_len, uint32_t offset, void *dst, uint32_t len);
+/* Number of assets. */
+GASM_IMPORT("asset_count") uint32_t gasm_asset_count(void);
+/* Name of asset index (0 .. asset_count-1, sorted by UTF-8 bytes; folder
+ * entries as named on disk). Its length (copied only if length <= cap; cap = 0
+ * queries), or -1 if index is out of range. */
+GASM_IMPORT("asset_name") int32_t gasm_asset_name(uint32_t index, char *dst, uint32_t cap);
 /* Launch parameter value length, or -1 if unset. Copied only if length <= cap
  * (cap = 0 queries the length). */
 GASM_IMPORT("param") int32_t gasm_param(const char *name, uint32_t name_len, char *dst, uint32_t cap);
@@ -126,11 +144,27 @@ GASM_GFX_IMPORT("create_shader") uint32_t gasm_gfx_create_shader(const char *wgs
 /* size: non-zero multiple of 4; usage: GASM_BUF_* (WebGPU GPUBufferUsage bits;
  * COPY_DST always added). */
 GASM_GFX_IMPORT("create_buffer") uint32_t gasm_gfx_create_buffer(uint32_t size, uint32_t usage);
-/* GPURenderPipelineDescriptor as JSON (layout auto). */
+/* GPURenderPipelineDescriptor as JSON. layout: "auto" (default) or an array of
+ * bind group layout handles. */
 GASM_GFX_IMPORT("create_pipeline") uint32_t gasm_gfx_create_pipeline(const char *json, uint32_t json_len);
-/* 
- * {"pipeline":P,"group":G,"entries":[{"binding":B,"buffer":H,"offset":O,"size":S}]} */
+/* {"layout":L,"entries":[...]} or {"pipeline":P,"group":G,"entries":[...]};
+ * entries {"binding":B,"buffer":H,"offset":O,"size":S},
+ * {"binding":B,"texture":T} or {"binding":B,"sampler":S}. */
 GASM_GFX_IMPORT("create_bind_group") uint32_t gasm_gfx_create_bind_group(const char *json, uint32_t json_len);
+/* GPUBindGroupLayoutDescriptor subset:
+ * {"entries":[{"binding":B,"visibility":GASM_STAGE_*,"buffer":{"type":"uniform"|"read-only-storage","hasDynamicOffset":bool,"minBindingSize":N}
+ * | "texture":{"sampleType":"float"} | "sampler":{"type":"filtering"}}]}. */
+GASM_GFX_IMPORT("create_bind_group_layout") uint32_t gasm_gfx_create_bind_group_layout(const char *json, uint32_t json_len);
+/* 2D texture:
+ * {"size":[w,h],"format":"rgba8unorm"|"rgba8unorm-srgb","mipLevelCount":n},
+ * w,h 1-8192. Usage is TEXTURE_BINDING | COPY_DST. */
+GASM_GFX_IMPORT("create_texture") uint32_t gasm_gfx_create_texture(const char *json, uint32_t json_len);
+/* Upload a tightly packed RGBA8 region (len = width*height*4) of mip level mip
+ * at (x, y). Queued like write_buffer. */
+GASM_GFX_IMPORT("write_texture") void gasm_gfx_write_texture(uint32_t texture, uint32_t mip, uint32_t x, uint32_t y, uint32_t width, uint32_t height, const void *data, uint32_t len);
+/* GPUSamplerDescriptor subset: addressModeU/V, magFilter, minFilter,
+ * mipmapFilter, lodMinClamp, lodMaxClamp, maxAnisotropy (1-16). */
+GASM_GFX_IMPORT("create_sampler") uint32_t gasm_gfx_create_sampler(const char *json, uint32_t json_len);
 /* Queue a write, applied before the frame's draws. offset/len: multiples of 4. */
 GASM_GFX_IMPORT("write_buffer") void gasm_gfx_write_buffer(uint32_t buffer, uint32_t offset, const void *data, uint32_t len);
 /* Start the frame (clears color and depth). 1 = will be shown, 0 = discarded
@@ -138,6 +172,15 @@ GASM_GFX_IMPORT("write_buffer") void gasm_gfx_write_buffer(uint32_t buffer, uint
 GASM_GFX_IMPORT("begin_frame") uint32_t gasm_gfx_begin_frame(float r, float g, float b, float a);
 GASM_GFX_IMPORT("set_pipeline") void gasm_gfx_set_pipeline(uint32_t pipeline);
 GASM_GFX_IMPORT("set_bind_group") void gasm_gfx_set_bind_group(uint32_t index, uint32_t bind_group);
+/* set_bind_group with count dynamic offsets (multiples of 256), one per
+ * dynamic-offset entry of the layout, in binding order. */
+GASM_GFX_IMPORT("set_bind_group_offsets") void gasm_gfx_set_bind_group_offsets(uint32_t index, uint32_t bind_group, const uint32_t *offsets, uint32_t count);
+/* Viewport in drawable pixels (clamped to the drawable), depth range 0-1.
+ * Reset to the whole drawable by begin_frame. */
+GASM_GFX_IMPORT("set_viewport") void gasm_gfx_set_viewport(float x, float y, float width, float height, float min_depth, float max_depth);
+/* Scissor rectangle in drawable pixels (clamped to the drawable). Reset to the
+ * whole drawable by begin_frame. */
+GASM_GFX_IMPORT("set_scissor_rect") void gasm_gfx_set_scissor_rect(uint32_t x, uint32_t y, uint32_t width, uint32_t height);
 GASM_GFX_IMPORT("set_vertex_buffer") void gasm_gfx_set_vertex_buffer(uint32_t slot, uint32_t buffer, uint32_t offset);
 /* format: GASM_INDEX_U16 or GASM_INDEX_U32. */
 GASM_GFX_IMPORT("set_index_buffer") void gasm_gfx_set_index_buffer(uint32_t buffer, uint32_t format, uint32_t offset);
@@ -206,6 +249,15 @@ static inline uint32_t gasm_gfx_create_pipeline_str(const char *json) {
 }
 static inline uint32_t gasm_gfx_create_bind_group_str(const char *json) {
     return gasm_gfx_create_bind_group(json, gasm__strlen(json));
+}
+static inline uint32_t gasm_gfx_create_bind_group_layout_str(const char *json) {
+    return gasm_gfx_create_bind_group_layout(json, gasm__strlen(json));
+}
+static inline uint32_t gasm_gfx_create_texture_str(const char *json) {
+    return gasm_gfx_create_texture(json, gasm__strlen(json));
+}
+static inline uint32_t gasm_gfx_create_sampler_str(const char *json) {
+    return gasm_gfx_create_sampler(json, gasm__strlen(json));
 }
 static inline int32_t gasm_net_open_str(const char *url) { return gasm_net_open(url, gasm__strlen(url)); }
 

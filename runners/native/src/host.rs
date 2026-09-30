@@ -42,7 +42,12 @@ pub struct Host {
     pub virtual_time_ms: Option<f64>,
     pub frame_rate: f64,
     pub pads: [u32; 4],
+    /// UTF-8 typed since the previous frame (set by the runner before each frame);
+    /// None: no keyboard, text_input returns -1
+    pub text: Option<String>,
     pub assets: Assets,
+    /// sorted asset names, computed on first asset_count/asset_name
+    asset_names: Option<Vec<String>>,
     pub params: HashMap<String, String>,
     pub audio: Option<AudioSink>,
     pub gfx: Gfx,
@@ -80,7 +85,9 @@ impl Host {
             virtual_time_ms: None,
             frame_rate: 60.0,
             pads: [0; 4],
+            text: None,
             assets: assets.into(),
+            asset_names: None,
             params,
             audio,
             gfx,
@@ -201,6 +208,22 @@ fn add_gasm_imports(linker: &mut Linker<Host>) -> wasmtime::Result<()> {
 
     linker.func_wrap(
         "gasm",
+        "text_input",
+        |mut caller: Caller<'_, Host>, dst: u32, cap: u32| -> wasmtime::Result<i32> {
+            let mem = memory(&caller)?;
+            let (data, host) = mem.data_and_store_mut(&mut caller);
+            let Some(t) = &host.text else { return Ok(-1) };
+            let t = t.as_bytes();
+            if t.len() <= cap as usize {
+                guest_slice(data, dst, t.len() as u64)?;
+                data[dst as usize..dst as usize + t.len()].copy_from_slice(t);
+            }
+            Ok(t.len() as i32)
+        },
+    )?;
+
+    linker.func_wrap(
+        "gasm",
         "param",
         |mut caller: Caller<'_, Host>, ptr: u32, len: u32, dst: u32, cap: u32| -> wasmtime::Result<i32> {
             let name = guest_str(&caller, ptr, len)?;
@@ -228,6 +251,28 @@ fn add_gasm_imports(linker: &mut Linker<Host>) -> wasmtime::Result<()> {
             guest_slice(data, dst, n)?; // bounds check before touching guest memory
             let dst = &mut data[dst as usize..dst as usize + n as usize];
             Ok(host.assets.read_at(&name, offset as u64, dst).map_or(-1, |k| k as i32))
+        },
+    )?;
+
+    linker.func_wrap("gasm", "asset_count", |mut caller: Caller<'_, Host>| -> u32 {
+        let h = caller.data_mut();
+        h.asset_names.get_or_insert_with(|| h.assets.names()).len() as u32
+    })?;
+
+    linker.func_wrap(
+        "gasm",
+        "asset_name",
+        |mut caller: Caller<'_, Host>, index: u32, dst: u32, cap: u32| -> wasmtime::Result<i32> {
+            let mem = memory(&caller)?;
+            let (data, host) = mem.data_and_store_mut(&mut caller);
+            let names = host.asset_names.get_or_insert_with(|| host.assets.names());
+            let Some(n) = names.get(index as usize) else { return Ok(-1) };
+            let n = n.as_bytes();
+            if n.len() <= cap as usize {
+                guest_slice(data, dst, n.len() as u64)?;
+                data[dst as usize..dst as usize + n.len()].copy_from_slice(n);
+            }
+            Ok(n.len() as i32)
         },
     )?;
 
@@ -298,6 +343,36 @@ fn add_gfx_imports(linker: &mut Linker<Host>) -> wasmtime::Result<()> {
             host.gfx.write_buffer(buf, offset, bytes).map_err(trap)
         },
     )?;
+    linker.func_wrap(M, "create_bind_group_layout", |mut c: Caller<'_, Host>, ptr: u32, len: u32| -> wasmtime::Result<u32> {
+        let json = guest_str(&c, ptr, len)?;
+        c.data_mut().gfx.create_bind_group_layout(&json).map_err(trap)
+    })?;
+    linker.func_wrap(M, "create_texture", |mut c: Caller<'_, Host>, ptr: u32, len: u32| -> wasmtime::Result<u32> {
+        let json = guest_str(&c, ptr, len)?;
+        c.data_mut().gfx.create_texture(&json).map_err(trap)
+    })?;
+    linker.func_wrap(M, "create_sampler", |mut c: Caller<'_, Host>, ptr: u32, len: u32| -> wasmtime::Result<u32> {
+        let json = guest_str(&c, ptr, len)?;
+        c.data_mut().gfx.create_sampler(&json).map_err(trap)
+    })?;
+    linker.func_wrap(
+        M,
+        "write_texture",
+        |mut c: Caller<'_, Host>, tex: u32, mip: u32, x: u32, y: u32, w: u32, h: u32, ptr: u32, len: u32| -> wasmtime::Result<()> {
+            let mem = memory(&c)?;
+            let (data, host) = mem.data_and_store_mut(&mut c);
+            let bytes = guest_slice(data, ptr, len as u64)?;
+            host.gfx.write_texture(tex, mip, x, y, w, h, bytes).map_err(trap)?;
+            if host.hashing {
+                // header (little-endian u32s) + payload, so the target region counts too
+                for v in [tex, mip, x, y, w, h] {
+                    host.video_hash.update(&v.to_le_bytes());
+                }
+                host.video_hash.update(bytes);
+            }
+            Ok(())
+        },
+    )?;
     linker.func_wrap(M, "begin_frame", |mut c: Caller<'_, Host>, r: f32, g: f32, b: f32, a: f32| -> wasmtime::Result<u32> {
         let h = c.data_mut();
         let show = h.show_frame;
@@ -308,6 +383,27 @@ fn add_gfx_imports(linker: &mut Linker<Host>) -> wasmtime::Result<()> {
     })?;
     linker.func_wrap(M, "set_bind_group", |mut c: Caller<'_, Host>, i: u32, bg: u32| -> wasmtime::Result<()> {
         c.data_mut().gfx.set_bind_group(i, bg).map_err(trap)
+    })?;
+    linker.func_wrap(
+        M,
+        "set_bind_group_offsets",
+        |mut c: Caller<'_, Host>, i: u32, bg: u32, ptr: u32, count: u32| -> wasmtime::Result<()> {
+            let mem = memory(&c)?;
+            let (data, host) = mem.data_and_store_mut(&mut c);
+            let bytes = guest_slice(data, ptr, count as u64 * 4)?;
+            let offsets: Vec<u32> = bytes.chunks_exact(4).map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]])).collect();
+            host.gfx.set_bind_group_offsets(i, bg, &offsets).map_err(trap)
+        },
+    )?;
+    linker.func_wrap(
+        M,
+        "set_viewport",
+        |mut c: Caller<'_, Host>, x: f32, y: f32, w: f32, h: f32, min: f32, max: f32| -> wasmtime::Result<()> {
+            c.data_mut().gfx.set_viewport(x, y, w, h, min, max).map_err(trap)
+        },
+    )?;
+    linker.func_wrap(M, "set_scissor_rect", |mut c: Caller<'_, Host>, x: u32, y: u32, w: u32, h: u32| -> wasmtime::Result<()> {
+        c.data_mut().gfx.set_scissor_rect(x, y, w, h).map_err(trap)
     })?;
     linker.func_wrap(M, "set_vertex_buffer", |mut c: Caller<'_, Host>, slot: u32, b: u32, off: u32| -> wasmtime::Result<()> {
         c.data_mut().gfx.set_vertex_buffer(slot, b, off).map_err(trap)

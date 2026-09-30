@@ -38,6 +38,7 @@ export class GasmHost {
     this.onAudio = onAudio;          // (samples: Float32Array interleaved, rate, channels)
     this.onLog = onLog;
     this.getPad = getPad;            // (player) -> bitmask
+    this.text = null;                // text typed since the previous frame (set per frame); null = no keyboard
     this.virtualTime = virtualTime;  // true: time_ms derived from frame count
     this.frameRate = 60;
     this.audioRate = 44100;
@@ -95,6 +96,12 @@ export class GasmHost {
         this.onAudio(samples, this.audioRate, this.audioChannels);
       },
       input_pad: (player) => player < 4 ? (this.getPad(player) >>> 0) : 0,
+      text_input: (dst, cap) => {
+        if (this.text === null) return -1;
+        const b = new TextEncoder().encode(this.text);
+        if (b.length <= cap >>> 0) this.bytes(dst, b.length).set(b);
+        return b.length;
+      },
       param: (ptr, len, dst, cap) => {
         const v = this.params[this.str(ptr, len)];
         if (v === undefined) return -1;
@@ -110,6 +117,14 @@ export class GasmHost {
         return this.assets.readAt(name, offset >>> 0, this.bytes(dst, n));
       },
       asset_size: (ptr, len) => this.assets.size(this.str(ptr, len)),
+      asset_count: () => this.assetNames().length,
+      asset_name: (index, dst, cap) => {
+        const n = this.assetNames()[index >>> 0];
+        if (n === undefined) return -1;
+        const b = new TextEncoder().encode(n);
+        if (b.length <= cap >>> 0) this.bytes(dst, b.length).set(b);
+        return b.length;
+      },
       asset_read: (ptr, len, dst, cap) => {
         const name = this.str(ptr, len);
         const size = this.assets.size(name);
@@ -119,29 +134,65 @@ export class GasmHost {
     };
   }
 
+  /** Asset names sorted by UTF-8 bytes (= code point order), like the native runner. */
+  assetNames() {
+    if (!this._assetNames) {
+      const cp = (s) => Array.from(s, (c) => c.codePointAt(0));
+      const cmp = (a, b) => { const x = cp(a), y = cp(b); for (let i = 0; i < Math.min(x.length, y.length); i++) if (x[i] !== y[i]) return x[i] - y[i]; return x.length - y.length; };
+      this._assetNames = (typeof this.assets.names === 'function' ? this.assets.names() : []).slice().sort(cmp);
+    }
+    return this._assetNames;
+  }
+
   // ---- gasm:gfx --------------------------------------------------------------
   gfxImports() {
     const g = this.gfx;
+    const m = new GfxModel(g);   // validation shared by every backend (matches the native runner)
     const json = (ptr, len) => {
       const text = this.str(ptr, len);
       try { return JSON.parse(text); } catch (e) { throw new Error(`gfx: invalid JSON descriptor: ${e.message}: ${text.slice(0, 200)}`); }
     };
+    const u32le = (vals) => { const b = new Uint8Array(vals.length * 4), dv = new DataView(b.buffer); vals.forEach((v, i) => dv.setUint32(i * 4, v >>> 0, true)); return b; };
     return {
       width: () => g.width(),
       height: () => g.height(),
-      create_shader: (ptr, len) => g.createShader(this.str(ptr, len)),
-      create_buffer: (size, usage) => g.createBuffer(size >>> 0, usage >>> 0),
-      create_pipeline: (ptr, len) => g.createPipeline(json(ptr, len)),
-      create_bind_group: (ptr, len) => g.createBindGroup(json(ptr, len)),
+      create_shader: (ptr, len) => m.add(g.createShader(this.str(ptr, len)), { kind: 'shader' }),
+      create_buffer: (size, usage) => {
+        const h = g.createBuffer(size >>> 0, usage >>> 0);
+        return m.add(h, { kind: 'buffer', size: size >>> 0, usage: (usage | 0x08) >>> 0 });
+      },
+      create_pipeline: (ptr, len) => { const d = json(ptr, len); m.pipelineLayouts(d); return m.add(g.createPipeline(d), { kind: 'pipeline' }); },
+      create_bind_group: (ptr, len) => { const d = json(ptr, len); const meta = m.bindGroup(d); return m.add(g.createBindGroup(d), meta); },
+      create_bind_group_layout: (ptr, len) => { const d = json(ptr, len); const meta = m.layout(d); return m.add(g.createBindGroupLayout(d), meta); },
+      create_texture: (ptr, len) => { const d = json(ptr, len); const meta = m.texture(d); return m.add(g.createTexture(d, meta), meta); },
+      create_sampler: (ptr, len) => { const d = json(ptr, len); m.sampler(d); return m.add(g.createSampler(d), { kind: 'sampler' }); },
       write_buffer: (buf, offset, ptr, len) => {
         if ((offset | len) & 3) throw new Error(`gfx.write_buffer: offset ${offset} and length ${len} must be multiples of 4`);
         const bytes = this.bytes(ptr, len);
         if (this.hashing) this.videoHash = fnv32(this.videoHash, bytes);
         g.writeBuffer(buf, offset >>> 0, bytes);
       },
+      write_texture: (tex, mip, x, y, w, h, ptr, len) => {
+        const bytes = this.bytes(ptr, len);
+        m.writeTexture(tex, mip >>> 0, x >>> 0, y >>> 0, w >>> 0, h >>> 0, bytes.length);
+        g.writeTexture(tex, mip >>> 0, x >>> 0, y >>> 0, w >>> 0, h >>> 0, bytes);
+        if (this.hashing) this.videoHash = fnv32(fnv32(this.videoHash, u32le([tex, mip, x, y, w, h])), bytes);
+      },
       begin_frame: (r, gr, b, a) => (g.beginFrame(r, gr, b, a, this.showFrame) ? 1 : 0),
       set_pipeline: (p) => g.setPipeline(p),
       set_bind_group: (i, bg) => g.setBindGroup(i, bg),
+      set_bind_group_offsets: (i, bg, ptr, count) => {
+        const b = this.bytes(ptr, (count >>> 0) * 4), dv = new DataView(b.buffer, b.byteOffset, b.byteLength);
+        const offsets = Uint32Array.from({ length: count >>> 0 }, (_, k) => dv.getUint32(k * 4, true));
+        m.offsets(bg, offsets);
+        g.setBindGroupOffsets(i, bg, offsets);
+      },
+      set_viewport: (x, y, w, h, min, max) => {
+        if (![x, y, w, h, min, max].every(Number.isFinite) || w < 0 || h < 0) throw new Error(`gfx.set_viewport: invalid rectangle ${x},${y} ${w}x${h}`);
+        if (min < 0 || max > 1 || min > max) throw new Error(`gfx.set_viewport: depth range ${min}..${max} must be within 0..1`);
+        g.setViewport(...clampRect(x, y, w, h, g.width(), g.height()), min, max);
+      },
+      set_scissor_rect: (x, y, w, h) => g.setScissorRect(...clampRect(x >>> 0, y >>> 0, w >>> 0, h >>> 0, g.width(), g.height())),
       set_vertex_buffer: (slot, buf, off) => g.setVertexBuffer(slot, buf, off >>> 0),
       set_index_buffer: (buf, fmt, off) => g.setIndexBuffer(buf, fmt, off >>> 0),
       draw: (vc, ic, fv, fi) => g.draw(vc >>> 0, ic >>> 0, fv >>> 0, fi >>> 0),
@@ -293,6 +344,141 @@ export class Resampler {
   }
 }
 
+// Clamp [x, x+w) x [y, y+h) to a width x height drawable -> [x, y, w, h].
+function clampRect(x, y, w, h, width, height) {
+  const cl = (v, hi) => Math.min(Math.max(v, 0), hi);
+  const x0 = cl(x, width), y0 = cl(y, height);
+  return [x0, y0, cl(x + w, width) - x0, cl(y + h, height) - y0];
+}
+
+export const MAX_TEXTURE_SIZE = 8192;   // WebGPU's default maxTextureDimension2D
+export const OFFSET_ALIGNMENT = 256;    // dynamic offsets (WebGPU's default alignment limits)
+
+// Backend-independent record of every gfx object, so textures, samplers, layouts and
+// dynamic offsets are validated (and trap) the same way on WebGPU, the null backend
+// and the native runner (runners/native/src/gfx.rs, Meta).
+export class GfxModel {
+  constructor(backend) { this.backend = backend; this.meta = new Map(); }
+  add(h, meta) { this.meta.set(h, meta); return h; }
+  expect(h, kind) {
+    const m = this.meta.get(h);
+    if (!m) throw new Error(`gfx: invalid handle ${h}`);
+    if (m.kind !== kind) throw new Error(`gfx: handle ${h} is a ${m.kind}, not a ${kind}`);
+    return m;
+  }
+  pipelineLayouts(d) {
+    if (d.layout === undefined || d.layout === 'auto') return;
+    if (!Array.isArray(d.layout)) throw new Error(`pipeline: layout must be "auto" or an array of bind group layout handles`);
+    for (const h of d.layout) this.expect(h, 'bind group layout');
+  }
+  layout(d) {
+    const entries = [];
+    for (const e of d.entries ?? []) {
+      const b = e.binding;
+      if (!Number.isInteger(b) || b < 0) throw new Error('descriptor: missing number "binding"');
+      if (entries.some((x) => x.binding === b)) throw new Error(`bind group layout: binding ${b} appears twice`);
+      const v = e.visibility;
+      if (!Number.isInteger(v) || v === 0 || (v & ~3)) throw new Error(`bind group layout: binding ${b}: visibility ${v} must be GASM_STAGE_VERTEX (1) and/or GASM_STAGE_FRAGMENT (2)`);
+      if (e.buffer) {
+        const t = e.buffer.type ?? 'uniform';
+        if (t !== 'uniform' && t !== 'read-only-storage') throw new Error(`bind group layout: binding ${b}: unsupported buffer type ${JSON.stringify(t)}`);
+        entries.push({ binding: b, slot: t === 'uniform' ? 'uniform' : 'storage', dynamic: !!e.buffer.hasDynamicOffset, minBindingSize: e.buffer.minBindingSize ?? 0 });
+      } else if (e.texture) {
+        const st = e.texture.sampleType ?? 'float';
+        if (st !== 'float' && st !== 'unfilterable-float') throw new Error(`bind group layout: binding ${b}: unsupported sampleType ${JSON.stringify(st)}`);
+        if ((e.texture.viewDimension ?? '2d') !== '2d') throw new Error(`bind group layout: binding ${b}: only viewDimension "2d" is supported`);
+        if (e.texture.multisampled) throw new Error(`bind group layout: binding ${b}: multisampled textures are not supported`);
+        entries.push({ binding: b, slot: 'texture' });
+      } else if (e.sampler) {
+        const st = e.sampler.type ?? 'filtering';
+        if (st !== 'filtering' && st !== 'non-filtering') throw new Error(`bind group layout: binding ${b}: unsupported sampler type ${JSON.stringify(st)}`);
+        entries.push({ binding: b, slot: 'sampler' });
+      } else {
+        throw new Error(`bind group layout: binding ${b} needs "buffer", "texture" or "sampler"`);
+      }
+    }
+    entries.sort((a, b) => a.binding - b.binding);
+    return { kind: 'bind group layout', entries };
+  }
+  bindGroup(d) {
+    const resolved = [];
+    for (const e of d.entries ?? []) {
+      const b = e.binding;
+      if (!Number.isInteger(b) || b < 0) throw new Error('descriptor: missing number "binding"');
+      if (resolved.some((r) => r.binding === b)) throw new Error(`bind group: binding ${b} appears twice`);
+      if (e.buffer !== undefined) {
+        const buf = this.expect(e.buffer, 'buffer'), offset = e.offset ?? 0;
+        if (offset + (e.size ?? 0) > buf.size || offset > buf.size) throw new Error(`bind group: binding ${b}: range ${offset}+${e.size ?? 0} exceeds buffer size ${buf.size}`);
+        resolved.push({ binding: b, slot: 'buffer', buf, offset, size: e.size ?? buf.size - offset, handle: e.buffer });
+      } else if (e.texture !== undefined) {
+        this.expect(e.texture, 'texture'); resolved.push({ binding: b, slot: 'texture' });
+      } else if (e.sampler !== undefined) {
+        this.expect(e.sampler, 'sampler'); resolved.push({ binding: b, slot: 'sampler' });
+      } else {
+        throw new Error(`bind group: binding ${b} needs a "buffer", "texture" or "sampler"`);
+      }
+    }
+    const dynamic = [];
+    if (d.layout !== undefined) {
+      const { entries } = this.expect(d.layout, 'bind group layout');
+      if (resolved.length !== entries.length) throw new Error(`bind group: layout ${d.layout} has ${entries.length} entries, got ${resolved.length}`);
+      for (const le of entries) {
+        const r = resolved.find((x) => x.binding === le.binding);
+        if (!r) throw new Error(`bind group: missing binding ${le.binding}`);
+        const isBuffer = le.slot === 'uniform' || le.slot === 'storage';
+        if ((isBuffer && r.slot !== 'buffer') || (!isBuffer && r.slot !== le.slot)) throw new Error(`bind group: binding ${le.binding} has the wrong resource kind for its layout`);
+        if (isBuffer) {
+          const need = le.slot === 'uniform' ? 0x40 : 0x80;
+          if (!(r.buf.usage & need)) throw new Error(`bind group: binding ${le.binding}: buffer ${r.handle} lacks ${need === 0x40 ? 'UNIFORM' : 'STORAGE'} usage`);
+          if (r.size < le.minBindingSize) throw new Error(`bind group: binding ${le.binding}: size ${r.size} is below minBindingSize ${le.minBindingSize}`);
+          if (le.dynamic) dynamic.push({ bufferSize: r.buf.size, offset: r.offset, size: r.size });
+        }
+      }
+    } else {
+      if (d.pipeline === undefined) throw new Error('bind group: needs "layout" or "pipeline"');
+      this.expect(d.pipeline, 'pipeline');
+    }
+    return { kind: 'bind group', dynamic };
+  }
+  texture(d) {
+    const [w, h] = Array.isArray(d.size) ? d.size : [];
+    const ok = (v) => Number.isInteger(v) && v >= 1 && v <= MAX_TEXTURE_SIZE;
+    if (!Array.isArray(d.size) || d.size.length !== 2 || !ok(w) || !ok(h)) throw new Error(`texture: size must be [width, height], each 1-${MAX_TEXTURE_SIZE}`);
+    const format = d.format ?? 'rgba8unorm';
+    if (format !== 'rgba8unorm' && format !== 'rgba8unorm-srgb') throw new Error(`texture: unsupported format ${JSON.stringify(format)} (rgba8unorm, rgba8unorm-srgb)`);
+    const maxMips = 32 - Math.clz32(Math.max(w, h)), mips = d.mipLevelCount ?? 1;
+    if (!Number.isInteger(mips) || mips < 1 || mips > maxMips) throw new Error(`texture: mipLevelCount ${mips} must be 1-${maxMips} for ${w}x${h}`);
+    return { kind: 'texture', width: w, height: h, mips, format };
+  }
+  writeTexture(h, mip, x, y, w, ht, len) {
+    const t = this.expect(h, 'texture');
+    if (mip >= t.mips) throw new Error(`gfx.write_texture: mip ${mip} out of range (texture has ${t.mips})`);
+    const lw = Math.max(1, t.width >> mip), lh = Math.max(1, t.height >> mip);
+    if (!w || !ht || x + w > lw || y + ht > lh) throw new Error(`gfx.write_texture: region ${x},${y} ${w}x${ht} is outside mip ${mip} (${lw}x${lh})`);
+    if (len !== w * ht * 4) throw new Error(`gfx.write_texture: len ${len} must be width*height*4 = ${w * ht * 4}`);
+  }
+  sampler(d) {
+    const addr = (k) => { const v = d[k] ?? 'clamp-to-edge'; if (!['clamp-to-edge', 'repeat', 'mirror-repeat'].includes(v)) throw new Error(`sampler: unsupported ${k} ${JSON.stringify(v)}`); };
+    const lin = (k) => { const v = d[k] ?? 'nearest'; if (v !== 'nearest' && v !== 'linear') throw new Error(`sampler: unsupported ${k} ${JSON.stringify(v)}`); return v === 'linear'; };
+    addr('addressModeU'); addr('addressModeV');
+    const all = [lin('magFilter'), lin('minFilter'), lin('mipmapFilter')].every(Boolean);
+    const lmin = d.lodMinClamp ?? 0, lmax = d.lodMaxClamp ?? 32;
+    if (!(lmin >= 0 && lmax >= lmin)) throw new Error(`sampler: lodMinClamp ${lmin} / lodMaxClamp ${lmax} must satisfy 0 <= min <= max`);
+    const a = d.maxAnisotropy ?? 1;
+    if (!Number.isInteger(a) || a < 1 || a > 16) throw new Error(`sampler: maxAnisotropy ${a} must be 1-16`);
+    if (a > 1 && !all) throw new Error('sampler: maxAnisotropy > 1 needs linear magFilter, minFilter and mipmapFilter');
+  }
+  offsets(h, offsets) {
+    const { dynamic } = this.expect(h, 'bind group');
+    if (offsets.length !== dynamic.length) throw new Error(`gfx.set_bind_group_offsets: bind group ${h} has ${dynamic.length} dynamic entries, got ${offsets.length} offsets`);
+    offsets.forEach((o, i) => {
+      const e = dynamic[i];
+      if (o % OFFSET_ALIGNMENT) throw new Error(`gfx.set_bind_group_offsets: offset ${o} is not a multiple of ${OFFSET_ALIGNMENT}`);
+      if (o + e.offset + e.size > e.bufferSize) throw new Error(`gfx.set_bind_group_offsets: offset ${o} + binding ${e.offset}+${e.size} exceeds buffer size ${e.bufferSize}`);
+    });
+  }
+}
+
 // gfx backend that draws nothing: headless runs and tests. Handles are real so
 // guests behave identically; writes are hashed by GasmHost.
 export class NullGfx {
@@ -303,9 +489,14 @@ export class NullGfx {
   createBuffer() { return this.next++; }
   createPipeline() { return this.next++; }
   createBindGroup() { return this.next++; }
+  createBindGroupLayout() { return this.next++; }
+  createTexture() { return this.next++; }
+  createSampler() { return this.next++; }
   writeBuffer() {}
+  writeTexture() {}
   beginFrame() { return false; }
-  setPipeline() {} setBindGroup() {} setVertexBuffer() {} setIndexBuffer() {}
+  setPipeline() {} setBindGroup() {} setBindGroupOffsets() {} setVertexBuffer() {} setIndexBuffer() {}
+  setViewport() {} setScissorRect() {}
   draw() {} drawIndexed() {}
   endFrame() {}
 }

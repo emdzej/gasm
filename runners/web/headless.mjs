@@ -16,17 +16,41 @@ import { AssetTable, GasmHost, ProcExit, bytesSource } from './gasm-host.js';
 const argv = process.argv.slice(2);
 let wasm, frames = 600, screenshot, input = [], noHash = false, allowNet = false, realtime = false;
 const BUTTONS = ['A', 'B', 'X', 'Y', 'L', 'R', 'SELECT', 'START', 'UP', 'DOWN', 'LEFT', 'RIGHT'];
-// FROM-TO:BTN+BTN,...  (same syntax as gasm-run --input)
-const parseInput = (spec) => spec.split(',').map((item) => {
-  const [range, buttons] = item.split(':');
-  const [from, to = from] = range.split('-').map(Number);
-  const mask = buttons.split('+').reduce((m, b) => {
-    const bit = BUTTONS.indexOf(b.toUpperCase());
-    if (bit < 0) throw new Error(`bad --input item ${item}`);
-    return m | (1 << bit);
-  }, 0);
-  return { from, to, mask };
-});
+// FROM-TO:BTN+BTN,... and FRAME:"text" (same syntax as gasm-run --input; commas
+// inside quotes are literal; escapes \n enter, \b backspace, \\ and \")
+const texts = [];
+const parseInput = (spec) => {
+  const items = [];
+  let cur = '', quoted = false, escaped = false;
+  for (const ch of spec) {
+    if (escaped) { cur += ch; escaped = false; }
+    else if (ch === '\\' && quoted) { cur += ch; escaped = true; }
+    else if (ch === '"') { quoted = !quoted; cur += ch; }
+    else if (ch === ',' && !quoted) { items.push(cur); cur = ''; }
+    else cur += ch;
+  }
+  items.push(cur);
+  const out = [];
+  for (const item of items) {
+    const i = item.indexOf(':');
+    if (i < 0) throw new Error(`bad --input item ${item}`);
+    const range = item.slice(0, i), rest = item.slice(i + 1);
+    if (rest.startsWith('"')) {
+      if (!rest.endsWith('"') || rest.length < 2) throw new Error(`bad --input item ${item}`);
+      const text = rest.slice(1, -1).replace(/\\(.)/g, (_, c) => (c === 'n' ? '\n' : c === 'b' ? '\b' : c));
+      texts.push({ frame: Number(range), text });
+      continue;
+    }
+    const [from, to = from] = range.split('-').map(Number);
+    const mask = rest.split('+').reduce((m, b) => {
+      const bit = BUTTONS.indexOf(b.toUpperCase());
+      if (bit < 0) throw new Error(`bad --input item ${item}`);
+      return m | (1 << bit);
+    }, 0);
+    out.push({ from, to, mask });
+  }
+  return out;
+};
 const assets = {}, params = {}, assetDirs = [];
 for (let i = 0; i < argv.length; i++) {
   const a = argv[i];
@@ -93,6 +117,7 @@ const t1 = performance.now();
 let ran = 0, exitCode = null;
 try {
   for (; ran < frames; ran++) {
+    host.text = texts.filter((t) => t.frame === ran).map((t) => t.text).join('');
     host.frame();
     if (realtime) {
       const due = t1 + (ran + 1) * 1000 / host.frameRate;
