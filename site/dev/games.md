@@ -182,6 +182,36 @@ Rules that matter (details in the [ABI spec](/docs/abi#gasm-gfx-optional-gpu-ren
 is a complete lit 3D renderer on this API: procedural meshes, two pipelines,
 per-object uniforms and alpha-blended shadows, in about 300 lines.
 
+### Storage (`gasm:storage`)
+
+```rust
+use gasm::storage;
+
+let best = storage::get("best-score").map(|b| u32::from_le_bytes(b[..4].try_into().unwrap()));
+storage::set("best-score", &score.to_le_bytes());   // false: invalid key / too big / quota / I/O
+storage::delete("best-score");
+```
+
+Keys are 1–128 characters of `[A-Za-z0-9._-]`, values up to 1 MiB, 16 MiB
+per game. The runner chooses the namespace, and headless runs start empty.
+Save when something changes, not every frame. For state that changes
+constantly (like NES battery RAM), check a hash every few seconds and write
+only on change.
+
+To flush on quit, implement `Game::exit` (exported as `gasm_exit`). It's
+best effort: it doesn't run after a crash, so don't rely on it alone.
+
+```rust
+impl gasm::Game for MyGame {
+    fn init() -> Result<Self, String> { … }
+    fn frame(&mut self) { … }
+    fn exit(&mut self) { self.save(); }
+}
+```
+
+For large assets, `gasm::asset_read_at(name, offset, &mut buf)` reads a window
+instead of the whole file.
+
 ### Network (`gasm:net`)
 
 ```rust

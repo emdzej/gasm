@@ -125,6 +125,45 @@ pub fn asset(name: &str) -> Option<Vec<u8>> {
     Some(buf)
 }
 
+/// Read up to `buf.len()` bytes of an asset starting at `offset` (for streaming
+/// large assets). Returns bytes read (0 at the end), or `None` if missing.
+pub fn asset_read_at(name: &str, offset: u32, buf: &mut [u8]) -> Option<usize> {
+    let n = unsafe {
+        sys::asset_read_at(name.as_ptr(), name.len() as u32, offset, buf.as_mut_ptr(), buf.len() as u32)
+    };
+    (n >= 0).then_some(n as usize)
+}
+
+// ---- storage ------------------------------------------------------------------------
+
+/// Persistent per-game key/value store (`gasm:storage`): saves, settings, scores.
+///
+/// Keys: 1–128 bytes of `[A-Za-z0-9._-]`. Values up to 1 MiB, 16 MiB per game.
+/// The runner picks the namespace; headless runs start with an empty store.
+pub mod storage {
+    use crate::sys;
+
+    pub fn get(key: &str) -> Option<Vec<u8>> {
+        let n = unsafe { sys::storage_get(key.as_ptr(), key.len() as u32, std::ptr::null_mut(), 0) };
+        if n < 0 {
+            return None;
+        }
+        let mut buf = vec![0u8; n as usize];
+        unsafe { sys::storage_get(key.as_ptr(), key.len() as u32, buf.as_mut_ptr(), n as u32) };
+        Some(buf)
+    }
+
+    /// Store a value. False on invalid key, size/quota limits or I/O error.
+    pub fn set(key: &str, value: &[u8]) -> bool {
+        unsafe { sys::storage_set(key.as_ptr(), key.len() as u32, value.as_ptr(), value.len() as u32) == 0 }
+    }
+
+    /// Delete a key. False if it didn't exist.
+    pub fn delete(key: &str) -> bool {
+        unsafe { sys::storage_delete(key.as_ptr(), key.len() as u32) == 0 }
+    }
+}
+
 // ---- gfx ---------------------------------------------------------------------------
 
 /// GPU rendering through `gasm:gfx` (a WebGPU subset; descriptors are JSON).
@@ -288,6 +327,9 @@ pub mod net {
 pub trait Game: Sized + 'static {
     fn init() -> Result<Self, String>;
     fn frame(&mut self);
+    /// Called (best effort) when the player closes the game: flush saves here.
+    /// Not called after `gasm::exit`, a trap, or a crash, so also save periodically.
+    fn exit(&mut self) {}
 }
 
 #[doc(hidden)]
@@ -317,6 +359,13 @@ pub fn __frame<G: Game>(cell: &GameCell<G>) {
     }
 }
 
+#[doc(hidden)]
+pub fn __exit<G: Game>(cell: &GameCell<G>) {
+    if let Some(g) = unsafe { (*cell.0.get()).as_mut() } {
+        g.exit();
+    }
+}
+
 /// Export the gasm entry points for a [`Game`] type.
 #[macro_export]
 macro_rules! game {
@@ -334,6 +383,10 @@ macro_rules! game {
         #[unsafe(no_mangle)]
         pub extern "C" fn gasm_frame() {
             $crate::__frame::<$t>(&__GASM_GAME)
+        }
+        #[unsafe(no_mangle)]
+        pub extern "C" fn gasm_exit() {
+            $crate::__exit::<$t>(&__GASM_GAME)
         }
     };
 }

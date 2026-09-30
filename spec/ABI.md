@@ -16,6 +16,7 @@ It has three import modules:
 | `gasm` | core | log, time, frame rate, 2D video, audio, input, assets, params |
 | `gasm:gfx` | optional | GPU rendering: a WebGPU subset |
 | `gasm:net` | optional | message connections (WebSocket semantics) |
+| `gasm:storage` | optional | persistent per-game key/value store (saves, settings) |
 
 Games import only what they use. A runner that lacks an optional module can
 still run games that don't import it.
@@ -29,7 +30,8 @@ still run games that don't import it.
 | export | `gasm_init() -> i32`                | yes      | `0` = ok, anything else aborts |
 | export | `gasm_frame()`                      | yes      | one simulation + render step |
 | export | `_initialize()`                     | no       | WASI reactor ctor hook; called first if present |
-| import | `gasm.*`, `gasm:gfx.*`, `gasm:net.*` | —      | see below |
+| export | `gasm_exit()`                       | no       | the player is quitting: flush saves (best effort) |
+| import | `gasm.*`, `gasm:gfx.*`, `gasm:net.*`, `gasm:storage.*` | — | see below |
 | import | `wasi_snapshot_preview1.*`          | —        | libc support subset, see below |
 
 **Unknown imports.** Runners link imports they don't implement as functions
@@ -50,7 +52,10 @@ behind, e.g. wasm-bindgen glue in Rust crates that also target browsers.
    each call.
 5. The game ends when the user quits, when an export traps, or when the guest
    calls WASI `proc_exit(code)`. Code 0 is a normal exit; runners stop cleanly
-   and report the code.
+   and report the code. When the *user* quits (window closed, Esc, page left,
+   headless run finished), runners first call `gasm_exit()` if it's exported.
+   This is best effort (a crash or killed process skips it), so games should
+   also save periodically.
 
 Runners must trap (not crash) on out-of-bounds pointers or invalid handles.
 
@@ -69,6 +74,7 @@ All pointers are `i32` offsets into guest memory. Strings are UTF-8 `(ptr, len)`
 | `input_pad` | `(player) -> u32` | Bitmask of buttons for virtual pad 0–3, stable within one `gasm_frame`. |
 | `asset_size` | `(name_ptr, name_len) -> i32` | Byte size, or `-1` if missing. |
 | `asset_read` | `(name_ptr, name_len, dst, cap) -> i32` | Copy ≤ `cap` bytes, return count or `-1`. |
+| `asset_read_at` | `(name_ptr, name_len, offset, dst, len) -> i32` | Copy up to `len` bytes starting at byte `offset` (streaming large assets). Returns bytes copied (0 at or after the end), or `-1` if missing. |
 | `param` | `(name_ptr, name_len, dst, cap) -> i32` | Launch parameter value: returns its byte length, or `-1` if unset. Copied only if length ≤ `cap`; call with `cap = 0` to query the length. |
 
 Button bits: `A=0 B=1 X=2 Y=3 L=4 R=5 SELECT=6 START=7 UP=8 DOWN=9 LEFT=10 RIGHT=11`.
@@ -158,6 +164,29 @@ must only let *message contents* affect the simulation, never arrival
 timing: lockstep games apply inputs at the frame number carried in the
 message. See `guests/sumo` and `gasm-relay`.
 
+## `gasm:storage` (optional): persistent key/value store
+
+For saves, settings and high scores. Each game gets its own **namespace, chosen
+by the runner**, never by the game, so one game can't read another's saves.
+By default the namespace is the game file's name (`sumo.wasm` → `sumo`).
+
+| Import | Signature | Semantics |
+|---|---|---|
+| `get` | `(key_ptr, key_len, dst, cap) -> i32` | Value length, or `-1` if the key doesn't exist. Copied only if length ≤ `cap` (call with `cap = 0` to query the size). |
+| `set` | `(key_ptr, key_len, data_ptr, data_len) -> i32` | Store a value: `0`, or `-1` on an invalid key, size or quota violation, or I/O error. |
+| `delete` | `(key_ptr, key_len) -> i32` | `0` if deleted, `-1` if it didn't exist. |
+
+Limits: keys are 1–128 bytes of `[A-Za-z0-9._-]` (not `.` or `..`), values up
+to 1 MiB, total 16 MiB per namespace. Durability: native writes are atomic and
+complete when `set` returns; the browser persists to IndexedDB in the
+background right after `set`. **Headless runs start with an empty in-memory
+store** (unless given a directory), so runs are reproducible.
+
+Where data lives: native: `<data dir>/gasm/<namespace>/<key>`, one file per key
+(macOS `~/Library/Application Support`, Linux `$XDG_DATA_HOME` or
+`~/.local/share`, Windows `%APPDATA%`), override with `--storage-dir`. Browser:
+IndexedDB database `gasm`, keys `<namespace>/<key>`, per site origin.
+
 ## WASI subset
 
 Guests may import `wasi_snapshot_preview1` (C with wasi-libc does; Rust on
@@ -178,7 +207,8 @@ payloads can diverge.
 
 ## Roadmap (not in v0)
 
-- `gasm:storage`: persistent saves (battery RAM, settings).
+- `.gasm` packages: one file bundling `game.wasm`, assets and a manifest.
+- `gasm:files`: a runner-provided file picker (the game only sees what the player picks).
 - `gasm:gfx` v1: textures and samplers, storage buffers, instancing examples,
   render bundles.
 - Capabilities manifest (custom section `gasm.manifest`) that declares required

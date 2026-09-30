@@ -8,6 +8,8 @@
 //! - `mode=bot|local2`: offline vs. a bot (default) or two local pads
 //! - `quit_at=N`: log the state hash at sim frame N and exit (tests)
 //!
+//! Your win/loss record is kept in `gasm:storage` (key `record`).
+//!
 //! Networking is deterministic lockstep. Peers exchange only inputs, scheduled
 //! `INPUT_DELAY` frames ahead, and each runs the same [`Sim`]. A state hash is
 //! exchanged every `HASH_EVERY` frames to detect desyncs.
@@ -82,7 +84,34 @@ impl Online {
     }
 }
 
+/// Wins/losses, persisted as two little-endian u32s (separately vs bot and online).
+#[derive(Default, Clone, Copy)]
+struct Record {
+    wins: u32,
+    losses: u32,
+}
+
+impl Record {
+    fn load(key: &str) -> Record {
+        match gasm::storage::get(key) {
+            Some(b) if b.len() >= 8 => Record {
+                wins: u32::from_le_bytes(b[0..4].try_into().unwrap()),
+                losses: u32::from_le_bytes(b[4..8].try_into().unwrap()),
+            },
+            _ => Record::default(),
+        }
+    }
+    fn save(&self, key: &str) {
+        let mut b = self.wins.to_le_bytes().to_vec();
+        b.extend_from_slice(&self.losses.to_le_bytes());
+        gasm::storage::set(key, &b);
+    }
+}
+
 pub struct Sumo {
+    record_key: &'static str,
+    record: Record,
+    recorded: bool, // current match already counted
     sim: Sim,
     renderer: Renderer,
     ticks: u32, // runner frames, for animation
@@ -220,6 +249,28 @@ impl Sumo {
     }
 }
 
+impl Sumo {
+    /// Count a finished match once for the local player (not in two-local-players mode).
+    fn count_result(&mut self, local: usize) {
+        if self.sim.phase != sim::Phase::MatchOver {
+            self.recorded = false;
+            return;
+        }
+        if self.recorded || self.local2 {
+            return;
+        }
+        self.recorded = true;
+        if self.sim.score[local] >= sim::WIN_SCORE {
+            self.record.wins += 1;
+            log!("[sumo] you win! record: {} wins, {} losses", self.record.wins, self.record.losses);
+        } else {
+            self.record.losses += 1;
+            log!("[sumo] you lose. record: {} wins, {} losses", self.record.wins, self.record.losses);
+        }
+        self.record.save(self.record_key);
+    }
+}
+
 impl gasm::Game for Sumo {
     fn init() -> Result<Self, String> {
         gasm::set_frame_rate(60.0);
@@ -252,7 +303,22 @@ impl gasm::Game for Sumo {
         if online.is_none() {
             log!("[sumo] offline mode: {}", if local2 { "two local players" } else { "vs. bot" });
         }
-        Ok(Sumo { sim: Sim::new(), renderer: Renderer::new(), ticks: 0, quit_at, local2, online })
+        let record_key = if online.is_some() { "record-online" } else { "record-bot" };
+        let record = Record::load(record_key);
+        if !local2 {
+            log!("[sumo] your record ({}): {} wins, {} losses", &record_key[7..], record.wins, record.losses);
+        }
+        Ok(Sumo {
+            record_key,
+            record,
+            recorded: false,
+            sim: Sim::new(),
+            renderer: Renderer::new(),
+            ticks: 0,
+            quit_at,
+            local2,
+            online,
+        })
     }
 
     fn frame(&mut self) {
@@ -282,6 +348,7 @@ impl gasm::Game for Sumo {
             self.check_quit();
             (0, false)
         };
+        self.count_result(local);
         self.renderer.frame(&self.sim, local, waiting, self.ticks as f32 / 60.0);
     }
 }

@@ -68,6 +68,7 @@ try {
   exitCode = e.code;
   ran++;
 }
+if (exitCode === null) host.exit();
 frames = ran;
 const secs = (performance.now() - t1) / 1000;
 

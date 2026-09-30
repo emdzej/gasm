@@ -43,13 +43,17 @@ automatically), Node ≥ 22, Python 3. On Linux, the native runner also needs
 ```
 exports: memory, gasm_abi_version() -> 0, gasm_init() -> 0, gasm_frame()
 
+exports (optional): gasm_exit()   player is quitting: flush saves
+
 gasm        log · time_ms · set_frame_rate · param · video_present
             audio_config · audio_push · input_pad · asset_size · asset_read
+            asset_read_at
 gasm:gfx    width · height · create_shader · create_buffer · write_buffer
             create_pipeline · create_bind_group · begin_frame · set_pipeline
             set_bind_group · set_vertex_buffer · set_index_buffer · draw
             draw_indexed · end_frame
 gasm:net    open · state · send · recv · close
+gasm:storage get · set · delete
 ```
 
 Full details: [ABI v0 specification](/docs/abi).

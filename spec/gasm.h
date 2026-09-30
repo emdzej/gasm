@@ -31,11 +31,13 @@
 #define GASM_IMPORT(name) __attribute__((import_module("gasm"), import_name(name)))
 #define GASM_GFX_IMPORT(name) __attribute__((import_module("gasm:gfx"), import_name(name)))
 #define GASM_NET_IMPORT(name) __attribute__((import_module("gasm:net"), import_name(name)))
+#define GASM_STORAGE_IMPORT(name) __attribute__((import_module("gasm:storage"), import_name(name)))
 #define GASM_EXPORT(name) __attribute__((export_name(name)))
 #else
 #define GASM_IMPORT(name)
 #define GASM_GFX_IMPORT(name)
 #define GASM_NET_IMPORT(name)
+#define GASM_STORAGE_IMPORT(name)
 #define GASM_EXPORT(name)
 #endif
 
@@ -103,6 +105,11 @@ GASM_IMPORT("asset_size") int32_t gasm_asset_size(const char *name, uint32_t nam
 GASM_IMPORT("asset_read")
 int32_t gasm_asset_read(const char *name, uint32_t name_len, void *dst, uint32_t cap);
 
+/* Copy up to `len` bytes of asset `name` starting at byte `offset` (streaming
+ * large assets). Returns bytes copied (0 at/after the end), or -1 if missing. */
+GASM_IMPORT("asset_read_at")
+int32_t gasm_asset_read_at(const char *name, uint32_t name_len, uint32_t offset, void *dst, uint32_t len);
+
 /* ---- launch parameters ---------------------------------------------------- */
 
 /* Launch parameter `name` (CLI `--param name=value`, URL query `?name=value`).
@@ -157,6 +164,22 @@ void gasm_gfx_draw_indexed(uint32_t index_count, uint32_t instance_count, uint32
                            int32_t base_vertex, uint32_t first_instance);
 /* Submit and present. */
 GASM_GFX_IMPORT("end_frame") void gasm_gfx_end_frame(void);
+
+/* ---- gasm:storage — persistent per-game key/value store (optional) -----------
+ *
+ * Saves, settings, high scores. Each game gets its own namespace, chosen by the
+ * runner (not the game). Keys: 1-128 bytes of [A-Za-z0-9._-]. Values: up to
+ * 1 MiB; up to 16 MiB per game. Writes are durable when set() returns 0
+ * (native) or shortly after (browser, IndexedDB). Headless runs start empty. */
+
+/* Value length, or -1 if the key doesn't exist. Copied only if length <= cap. */
+GASM_STORAGE_IMPORT("get")
+int32_t gasm_storage_get(const char *key, uint32_t key_len, void *dst, uint32_t cap);
+/* 0 on success, -1 on invalid key, too large, quota exceeded or I/O error. */
+GASM_STORAGE_IMPORT("set")
+int32_t gasm_storage_set(const char *key, uint32_t key_len, const void *data, uint32_t len);
+/* 0 if deleted, -1 if it didn't exist. */
+GASM_STORAGE_IMPORT("delete") int32_t gasm_storage_delete(const char *key, uint32_t key_len);
 
 /* ---- gasm:net — message connections (optional) ------------------------------
  *

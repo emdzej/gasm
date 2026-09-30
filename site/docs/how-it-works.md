@@ -21,8 +21,8 @@ are. For the normative interface, see the [ABI spec](/docs/abi).
 A **guest** (game) is a single WebAssembly module. A **runner** (host) is a
 native or web program that loads the module, provides the functions the guest
 imports, and drives it frame by frame. The **ABI** is the contract between them.
-Its core is small (10 imports, 3 exports), and GPU and network are optional
-modules on top.
+Its core is small (11 imports, 3 exports), and GPU, network and storage are
+optional modules on top.
 
 ## Components in this repository
 
@@ -241,6 +241,25 @@ frame f on each peer:
 
 `scripts/net-test.sh` plays full matches between headless peers on different
 runners and requires identical final states.
+
+## Storage (`gasm:storage`)
+
+A per-game key/value store for saves, settings and scores:
+`get`/`set`/`delete` on keys like `record-bot` or `sram-6871b1e7`.
+
+- **The runner picks the namespace** (default: the game file's name), so a
+  game can only see its own saves.
+- **Synchronous API, asynchronous persistence where needed.** Native: one
+  file per key in `<data dir>/gasm/<game>/`, written atomically (temp file +
+  rename) before `set` returns. Browser: the whole namespace is loaded from
+  IndexedDB before `gasm_init`, reads come from memory, and writes go to
+  IndexedDB in the background.
+- **Reproducible tests:** headless runs start empty and keep everything in
+  memory, so storage never makes two test runs differ.
+- **Flushing on quit:** runners call the optional `gasm_exit` export when the
+  player closes the window, presses Esc or leaves the page. Games also save
+  periodically, because a crash skips it. The NES game checks its battery RAM
+  every 5 s; sumo writes its record when a match ends.
 
 ## Assets and params
 

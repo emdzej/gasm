@@ -23,7 +23,7 @@ features:
   - title: One artifact
     details: A game is a single .wasm file. The same bytes run in a native window (wasmtime + wgpu), in any WebGPU browser, and headless in Node for CI.
   - title: A small, stable ABI
-    details: A 10-function core (video, audio, input, assets, params), plus optional GPU and network modules. A new runner is weeks of work, not years.
+    details: A small core (video, audio, input, assets, params), plus optional GPU, network and storage modules. A new runner is weeks of work, not years.
   - title: 3D via WebGPU
     details: gasm:gfx is a compact WebGPU subset with WGSL shaders. Browsers forward it almost 1:1; natively it runs on Metal, Vulkan and D3D12 through wgpu.
   - title: Online multiplayer

@@ -134,7 +134,19 @@ Map the calls onto WebGPU (browser) or a WebGPU implementation (wgpu, Dawn):
   guest can retry with a bigger buffer.
 - Deny by default unless the user opts in (`--allow-net`). Log denials.
 
-### Step 7: audio
+### Step 7: storage (`gasm:storage`, optional)
+
+- Namespace chosen by the runner (default: game file stem); validate keys
+  (`[A-Za-z0-9._-]{1,128}`, not `.`/`..`), 1 MiB per value, 16 MiB per namespace.
+- Native: one file per key under `<data dir>/gasm/<namespace>/`, written to a
+  temp file and renamed ([`storage.rs`](https://github.com/emdzej/gasm/blob/main/runners/native/src/storage.rs)).
+- Browser: load the namespace from IndexedDB *before* instantiating, serve
+  reads from memory, persist writes asynchronously (`IdbStorage` in `gasm-host.js`).
+- Headless: in-memory and empty unless told otherwise, to keep runs reproducible.
+- Call the optional `gasm_exit` export when the user quits (window close, Esc,
+  `pagehide`, end of a headless run), but not after `proc_exit` or a trap.
+
+### Step 8: audio
 
 Requirements for a good result:
 
@@ -150,7 +162,7 @@ Browsers: use an `AudioWorklet` and post `Float32Array` chunks to it; this
 avoids SharedArrayBuffer and the COOP/COEP headers it would need. Create or
 resume the `AudioContext` from a user gesture.
 
-### Step 8: input
+### Step 9: input
 
 Map every device to virtual pads. Recommended mapping (keeps muscle memory
 consistent across runners):
@@ -168,7 +180,7 @@ consistent across runners):
 
 Clear held keys when the window loses focus.
 
-### Step 9: headless mode (strongly recommended)
+### Step 10: headless mode (strongly recommended)
 
 Add a mode that runs N frames without a display or audio device, uses
 virtual time, reads scripted input, and prints:
@@ -198,7 +210,8 @@ cases in `scripts/determinism-test.sh`.
 - [ ] Calls `gasm_frame` at the guest's rate, independent of display refresh
 - [ ] Resamples audio; no drift-induced buffer growth over 10+ minutes
 - [ ] Keyboard + gamepad mapped as above
-- [ ] Unknown imports link as traps; `proc_exit(0)` ends cleanly
+- [ ] Unknown imports link as traps; `proc_exit(0)` ends cleanly; `gasm_exit` is called on user quit
+- [ ] Storage persists across runs (e.g. sumo's `record-bot`, NES battery saves)
 - [ ] Headless hashes match `gasm-run` for every case in `scripts/determinism-test.sh`
 - [ ] With `gasm:net`: a headless sumo peer on your runner reaches the same final
       state as a `gasm-run` peer through `gasm-relay` (`scripts/net-test.sh`)

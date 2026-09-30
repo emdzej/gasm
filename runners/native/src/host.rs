@@ -11,6 +11,7 @@ use wasmtime_wasi::p1::{self, WasiP1Ctx};
 use crate::audio::AudioSink;
 use crate::gfx::Gfx;
 use crate::net::Net;
+use crate::storage::Storage;
 
 pub const ABI_VERSION: i32 = 0;
 
@@ -45,6 +46,7 @@ pub struct Host {
     pub audio: Option<AudioSink>,
     pub gfx: Gfx,
     pub net: Net,
+    pub storage: Storage,
     /// false during catch-up frames: gfx begin_frame returns 0
     pub show_frame: bool,
     audio_rate: u32,
@@ -67,6 +69,7 @@ impl Host {
         audio: Option<AudioSink>,
         gfx: Gfx,
         net: Net,
+        storage: Storage,
     ) -> Self {
         let wasi = WasiCtx::builder().inherit_stdout().inherit_stderr().build_p1();
         Host {
@@ -81,6 +84,7 @@ impl Host {
             audio,
             gfx,
             net,
+            storage,
             show_frame: true,
             audio_rate: 44100,
             audio_channels: 2,
@@ -208,6 +212,22 @@ fn add_gasm_imports(linker: &mut Linker<Host>) -> wasmtime::Result<()> {
                 data[dst as usize..dst as usize + v.len()].copy_from_slice(v);
             }
             Ok(v.len() as i32)
+        },
+    )?;
+
+    linker.func_wrap(
+        "gasm",
+        "asset_read_at",
+        |mut caller: Caller<'_, Host>, ptr: u32, len: u32, offset: u32, dst: u32, cap: u32| -> wasmtime::Result<i32> {
+            let name = guest_str(&caller, ptr, len)?;
+            let mem = memory(&caller)?;
+            let (data, host) = mem.data_and_store_mut(&mut caller);
+            let Some(asset) = host.assets.get(&name) else { return Ok(-1) };
+            let start = (offset as usize).min(asset.len());
+            let n = (asset.len() - start).min(cap as usize);
+            guest_slice(data, dst, n as u64)?;
+            data[dst as usize..dst as usize + n].copy_from_slice(&asset[start..start + n]);
+            Ok(n as i32)
         },
     )?;
 
@@ -343,6 +363,39 @@ fn add_net_imports(linker: &mut Linker<Host>) -> wasmtime::Result<()> {
     Ok(())
 }
 
+fn add_storage_imports(linker: &mut Linker<Host>) -> wasmtime::Result<()> {
+    const M: &str = "gasm:storage";
+    linker.func_wrap(M, "get", |mut c: Caller<'_, Host>, kp: u32, kl: u32, dst: u32, cap: u32| -> wasmtime::Result<i32> {
+        let key = guest_str(&c, kp, kl)?;
+        let mem = memory(&c)?;
+        let (data, host) = mem.data_and_store_mut(&mut c);
+        let Some(v) = host.storage.get(&key) else { return Ok(-1) };
+        if v.len() <= cap as usize {
+            guest_slice(data, dst, v.len() as u64)?;
+            data[dst as usize..dst as usize + v.len()].copy_from_slice(v);
+        }
+        Ok(v.len() as i32)
+    })?;
+    linker.func_wrap(M, "set", |mut c: Caller<'_, Host>, kp: u32, kl: u32, vp: u32, vl: u32| -> wasmtime::Result<i32> {
+        let key = guest_str(&c, kp, kl)?;
+        let mem = memory(&c)?;
+        let (data, host) = mem.data_and_store_mut(&mut c);
+        let value = guest_slice(data, vp, vl as u64)?;
+        Ok(match host.storage.set(&key, value) {
+            Ok(()) => 0,
+            Err(e) => {
+                eprintln!("[gasm] storage: {e}");
+                -1
+            }
+        })
+    })?;
+    linker.func_wrap(M, "delete", |mut c: Caller<'_, Host>, kp: u32, kl: u32| -> wasmtime::Result<i32> {
+        let key = guest_str(&c, kp, kl)?;
+        Ok(if c.data_mut().storage.delete(&key) { 0 } else { -1 })
+    })?;
+    Ok(())
+}
+
 /// Why a guest call ended.
 pub enum Stop {
     /// The guest called proc_exit(code).
@@ -360,6 +413,7 @@ fn classify(e: wasmtime::Error) -> Stop {
 pub struct Game {
     pub store: Store<Host>,
     frame: TypedFunc<(), ()>,
+    exit: Option<TypedFunc<(), ()>>,
 }
 
 impl Game {
@@ -381,6 +435,7 @@ impl Game {
         add_gasm_imports(&mut linker)?;
         add_gfx_imports(&mut linker)?;
         add_net_imports(&mut linker)?;
+        add_storage_imports(&mut linker)?;
         // Imports this runner doesn't know (e.g. JS glue some Rust crates pull in)
         // link as traps: harmless unless the guest actually calls them.
         linker.define_unknown_imports_as_traps(&module)?;
@@ -406,11 +461,23 @@ impl Game {
             bail!("gasm_init failed with code {rc}");
         }
         let frame = instance.get_typed_func::<(), ()>(&mut store, "gasm_frame")?;
-        Ok(Game { store, frame })
+        let exit = instance.get_typed_func::<(), ()>(&mut store, "gasm_exit").ok();
+        Ok(Game { store, frame, exit })
     }
 
     pub fn frame(&mut self) -> Result<(), Stop> {
         self.frame.call(&mut self.store, ()).map_err(classify)
+    }
+
+    /// Best-effort "the player is quitting" notification (optional `gasm_exit` export).
+    pub fn exit(&mut self) {
+        if let Some(f) = self.exit.take() {
+            if let Err(e) = f.call(&mut self.store, ()) {
+                if let Stop::Trap(t) = classify(e) {
+                    eprintln!("[gasm] gasm_exit trapped: {t}");
+                }
+            }
+        }
     }
 
     pub fn host(&self) -> &Host {

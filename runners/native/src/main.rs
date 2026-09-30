@@ -4,6 +4,7 @@ mod audio;
 mod gfx;
 mod host;
 mod net;
+mod storage;
 
 use std::collections::{HashMap, HashSet};
 use std::process::ExitCode;
@@ -21,6 +22,7 @@ use winit::window::{Window, WindowId};
 use gfx::Gfx;
 use host::{Game, Host, Stop};
 use net::Net;
+use storage::Storage;
 
 const USAGE: &str = "\
 usage: gasm-run <game.wasm|game.cwasm> [options]
@@ -30,6 +32,9 @@ options:
   --asset <name>=<path>    expose a file to the guest as asset <name>
   --param <name>=<value>   launch parameter for the guest (repeatable)
   --allow-net              allow the guest to open network connections (gasm:net)
+  --storage-dir <dir>      where the game's saves live (default: <data dir>/gasm/<game>;
+                           headless runs use memory unless this is given)
+  --storage-id <id>        storage namespace (default: the game file's name)
   --window <W>x<H>         initial window size in logical pixels (default 960x720)
   --mute                   no audio output
   --compile <out.cwasm>    AOT-compile the game to native code and exit
@@ -49,6 +54,8 @@ struct Args {
     assets: HashMap<String, String>,
     params: HashMap<String, String>,
     allow_net: bool,
+    storage_dir: Option<String>,
+    storage_id: Option<String>,
     window: (u32, u32),
     headless: Option<u64>,
     screenshot: Option<String>,
@@ -66,6 +73,8 @@ fn parse_args() -> Result<Args, String> {
         assets: HashMap::new(),
         params: HashMap::new(),
         allow_net: false,
+        storage_dir: None,
+        storage_id: None,
         window: (960, 720),
         headless: None,
         screenshot: None,
@@ -92,6 +101,8 @@ fn parse_args() -> Result<Args, String> {
                 args.params.insert(k.into(), p.into());
             }
             "--allow-net" => args.allow_net = true,
+            "--storage-dir" => args.storage_dir = Some(val("--storage-dir")?),
+            "--storage-id" => args.storage_id = Some(val("--storage-id")?),
             "--window" => {
                 let v = val("--window")?;
                 let (w, h) = v.split_once('x').ok_or("--window expects WxH")?;
@@ -180,8 +191,30 @@ fn run(args: Args) -> Result<i32, String> {
     }
 }
 
+fn open_storage(args: &Args) -> Result<Storage, Stop> {
+    // Namespace = the game file's name (sumo.wasm / sumo.cwasm -> "sumo").
+    let id = args.storage_id.clone().unwrap_or_else(|| {
+        std::path::Path::new(&args.wasm).file_stem().map_or("game".into(), |s| s.to_string_lossy().into_owned())
+    });
+    if !storage::valid_key(&id) {
+        return Err(Stop::Trap(format!("invalid storage id {id:?} (use [A-Za-z0-9._-])")));
+    }
+    let dir = match (&args.storage_dir, args.headless) {
+        (Some(d), _) => Some(std::path::PathBuf::from(d)),
+        (None, Some(_)) => None,
+        (None, None) => storage::default_dir(&id),
+    };
+    let s = match dir {
+        Some(d) => Storage::open(d).map_err(Stop::Trap)?,
+        None => Storage::memory(),
+    };
+    eprintln!("[gasm] storage: {}", s.location());
+    Ok(s)
+}
+
 fn load(args: &Args, loaded: &Loaded, audio: Option<audio::AudioSink>, gfx: Gfx) -> Result<Game, Stop> {
-    let mut host = Host::new(loaded.assets.clone(), args.params.clone(), audio, gfx, Net::new(args.allow_net));
+    let storage = open_storage(args)?;
+    let mut host = Host::new(loaded.assets.clone(), args.params.clone(), audio, gfx, Net::new(args.allow_net), storage);
     if args.headless.is_some() {
         host.virtual_time_ms = Some(0.0);
     }
@@ -233,6 +266,9 @@ fn headless(args: &Args, loaded: Loaded, frames: u64) -> Result<i32, String> {
                 std::thread::sleep(wait);
             }
         }
+    }
+    if exit.is_none() {
+        game.exit();
     }
     let secs = t0.elapsed().as_secs_f64();
     let h = game.host();
@@ -334,6 +370,14 @@ impl App {
         el.exit();
     }
 
+    /// The player closed the window / pressed Esc: let the game save, then stop.
+    fn quit(&mut self, el: &ActiveEventLoop) {
+        if let Some(g) = &mut self.game {
+            g.exit();
+        }
+        self.stop(el, Ok(0));
+    }
+
     fn tick(&mut self, el: &ActiveEventLoop) {
         let Some(game) = &mut self.game else { return };
         let period = Duration::from_secs_f64(1.0 / game.host().frame_rate);
@@ -422,7 +466,7 @@ impl ApplicationHandler for App {
 
     fn window_event(&mut self, el: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
         match event {
-            WindowEvent::CloseRequested => self.stop(el, Ok(0)),
+            WindowEvent::CloseRequested => self.quit(el),
             WindowEvent::Resized(size) => {
                 if let Some(g) = &mut self.game {
                     g.host_mut().gfx.resize(size.width, size.height);
@@ -432,7 +476,7 @@ impl ApplicationHandler for App {
             WindowEvent::KeyboardInput { event, .. } => {
                 if let PhysicalKey::Code(code) = event.physical_key {
                     if code == KeyCode::Escape {
-                        return self.stop(el, Ok(0));
+                        return self.quit(el);
                     }
                     match event.state {
                         ElementState::Pressed => self.keys.insert(code),

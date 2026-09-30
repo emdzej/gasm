@@ -13,6 +13,7 @@ struct State {
     frames: u64,
     assets: Vec<(String, Vec<u8>)>,
     params: Vec<(String, String)>,
+    storage: Vec<(String, Vec<u8>)>,
     pads: [u32; 4],
     channels: u32,
     hashing: bool,
@@ -29,6 +30,7 @@ static STATE: Mutex<State> = Mutex::new(State {
     frames: 0,
     assets: Vec::new(),
     params: Vec::new(),
+    storage: Vec::new(),
     pads: [0; 4],
     channels: 2,
     hashing: true,
@@ -161,6 +163,45 @@ pub mod abi {
             None => -1,
         })
     }
+    pub unsafe fn asset_read_at(name: *const u8, len: u32, offset: u32, dst: *mut u8, cap: u32) -> i32 {
+        let n = unsafe { text(name, len) };
+        with(|s| match s.assets.iter().find(|a| a.0 == n) {
+            Some(a) => {
+                let start = (offset as usize).min(a.1.len());
+                let k = (a.1.len() - start).min(cap as usize);
+                unsafe { std::ptr::copy_nonoverlapping(a.1[start..].as_ptr(), dst, k) };
+                k as i32
+            }
+            None => -1,
+        })
+    }
+
+    // storage: in memory (like headless runners)
+    pub unsafe fn storage_get(key: *const u8, len: u32, dst: *mut u8, cap: u32) -> i32 {
+        let k = unsafe { text(key, len) };
+        with(|s| match s.storage.iter().find(|e| e.0 == k) {
+            Some(e) => unsafe { copy_out(&e.1, dst, cap) },
+            None => -1,
+        })
+    }
+    pub unsafe fn storage_set(key: *const u8, len: u32, data: *const u8, data_len: u32) -> i32 {
+        let k = unsafe { text(key, len) };
+        let v = unsafe { bytes(data, data_len) }.to_vec();
+        with(|s| {
+            s.storage.retain(|e| e.0 != k);
+            s.storage.push((k, v));
+            0
+        })
+    }
+    pub unsafe fn storage_delete(key: *const u8, len: u32) -> i32 {
+        let k = unsafe { text(key, len) };
+        with(|s| {
+            let before = s.storage.len();
+            s.storage.retain(|e| e.0 != k);
+            if s.storage.len() < before { 0 } else { -1 }
+        })
+    }
+
     pub unsafe fn param(name: *const u8, len: u32, dst: *mut u8, cap: u32) -> i32 {
         let n = unsafe { text(name, len) };
         with(|s| match s.params.iter().find(|p| p.0 == n) {

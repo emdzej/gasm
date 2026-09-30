@@ -1,6 +1,6 @@
 // Browser runner: canvas (2D or WebGPU) + AudioWorklet + keyboard/Gamepad API
 // + WebSocket networking around GasmHost.
-import { GasmHost, ProcExit, Resampler } from './gasm-host.js';
+import { GasmHost, IdbStorage, MemoryStorage, ProcExit, Resampler } from './gasm-host.js';
 import { WebGpuGfx } from './webgpu-gfx.js';
 
 // Where build/*.wasm and roms/ live, relative to this page: the repo root in
@@ -156,7 +156,13 @@ async function start({ romBytes } = {}) {
     const c = freshCanvas();
     c.classList.toggle('gpu', usesGfx);
     const gfx = usesGfx ? await WebGpuGfx.create(c, log) : undefined;
-    host = new GasmHost({ assets, params, gfx, allowNet: true, onPresent: present, onAudio, onLog: log });
+    // Saves live in IndexedDB, one namespace per game file (sumo.wasm -> "sumo").
+    const storage = await IdbStorage.open(game.replace(/\.wasm$/, '')).catch((e) => {
+      log(`storage unavailable (${e.message}); saves won't persist`);
+      return new MemoryStorage();
+    });
+    host?.exit();
+    host = new GasmHost({ assets, params, gfx, storage, allowNet: true, onPresent: present, onAudio, onLog: log });
     await host.load(bytes);
   } catch (e) {
     if (e instanceof ProcExit) log(`game exited during init (code ${e.code})`);
@@ -213,3 +219,5 @@ const params = new URLSearchParams(location.search);
 if (params.get('game') in GAMES) $('game').value = params.get('game');
 $('game').onchange();
 if (params.has('autostart')) start();
+// Leaving the page: let the game flush its saves (gasm_exit).
+addEventListener('pagehide', () => host?.exit());

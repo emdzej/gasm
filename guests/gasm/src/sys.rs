@@ -18,6 +18,17 @@ mod imports {
         pub fn asset_size(name: *const u8, len: u32) -> i32;
         pub fn asset_read(name: *const u8, len: u32, dst: *mut u8, cap: u32) -> i32;
         pub fn param(name: *const u8, len: u32, dst: *mut u8, cap: u32) -> i32;
+        pub fn asset_read_at(name: *const u8, len: u32, offset: u32, dst: *mut u8, cap: u32) -> i32;
+    }
+
+    #[link(wasm_import_module = "gasm:storage")]
+    unsafe extern "C" {
+        #[link_name = "get"]
+        pub fn storage_get(key: *const u8, len: u32, dst: *mut u8, cap: u32) -> i32;
+        #[link_name = "set"]
+        pub fn storage_set(key: *const u8, len: u32, data: *const u8, data_len: u32) -> i32;
+        #[link_name = "delete"]
+        pub fn storage_delete(key: *const u8, len: u32) -> i32;
     }
 
     #[link(wasm_import_module = "gasm:gfx")]

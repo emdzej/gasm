@@ -141,6 +141,8 @@ gasm-run <game.wasm|game.cwasm> [options]
 --asset <name>=<path>    expose a file to the game as asset <name> (repeatable)
 --param <name>=<value>   launch parameter for the game (repeatable)
 --allow-net              let the game open network connections
+--storage-dir <dir>      where saves live (default: see "Saves" below)
+--storage-id <id>        save namespace (default: the game file's name)
 --window <W>x<H>         initial window size (default 960x720)
 --mute                   no audio output
 --compile <out.cwasm>    ahead-of-time compile to native code and exit
@@ -160,6 +162,24 @@ Game parameters:
 | sumo | `mode=local2` | offline two-player on one machine (default: vs. bot) |
 | sumo, nes | `quit_at=N` | exit after N frames (tests) |
 | nes | `filter=ntsc` | NTSC composite filter (default: sharp pixels) |
+
+### Saves
+
+Games can keep saves, settings and scores (`gasm:storage`). Sumo keeps your
+win/loss record; the NES emulator keeps battery-backed cartridge saves
+(`sram-<rom hash>`, the raw save RAM, compatible with `.srm` files).
+
+| Runner | Location |
+|---|---|
+| macOS | `~/Library/Application Support/gasm/<game>/` |
+| Linux | `$XDG_DATA_HOME/gasm/<game>/` (usually `~/.local/share/gasm/<game>/`) |
+| Windows | `%APPDATA%\gasm\<game>\` |
+| Browser | IndexedDB (database `gasm`) for the site you play on |
+| Headless | in memory only (unless `--storage-dir` is given) |
+
+`<game>` is the file name without extension (`sumo`, `nes`). Delete the
+folder to reset. Games save on change and when you quit normally (close the
+window or press Esc).
 
 ### Precompiling (AOT)
 
@@ -214,7 +234,7 @@ The NES game uses tetanes-core, an accurate, cycle-based emulator that supports
 the common mappers (NROM, MMC1, UxROM, CNROM, MMC3, MMC5, AxROM, and many
 more; see the [tetanes project](https://github.com/lukexor/tetanes)). Use
 iNES `.nes` files. It passes the blargg CPU, timing and APU test
-ROMs. Battery saves are **not persisted yet**. For commercial games, use dumps
+ROMs. Battery-backed saves are kept (see [Saves](#saves)). For commercial games, use dumps
 of cartridges you own.
 
 ## 9. Troubleshooting

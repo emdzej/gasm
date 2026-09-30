@@ -1,6 +1,6 @@
 // gasm-host.js — gasm ABI v0 host for JavaScript (browser and Node).
 //
-//   const host = new GasmHost({ assets, params, gfx, allowNet, onPresent, onAudio, onLog, getPad });
+//   const host = new GasmHost({ assets, params, gfx, storage, allowNet, onPresent, onAudio, onLog, getPad });
 //   await host.load(wasmBytes);
 //   host.frame();              // call at host.frameRate Hz
 //
@@ -23,12 +23,13 @@ export class ProcExit extends Error {
 }
 
 export class GasmHost {
-  constructor({ assets = {}, params = {}, gfx = new NullGfx(), allowNet = false,
+  constructor({ assets = {}, params = {}, gfx = new NullGfx(), storage = new MemoryStorage(), allowNet = false,
                 onPresent = () => {}, onAudio = () => {}, onLog = console.log,
                 getPad = () => 0, virtualTime = false } = {}) {
     this.assets = assets;            // name -> Uint8Array
     this.params = params;            // name -> string
     this.gfx = gfx;
+    this.storage = storage;          // MemoryStorage (headless) or IdbStorage (browser)
     this.net = new NetConnections(allowNet, (m) => this.onLog(m));
     this.showFrame = true;           // false during catch-up frames: begin_frame returns 0
     this.onPresent = onPresent;      // (rgba: Uint8ClampedArray, w, h)
@@ -99,6 +100,14 @@ export class GasmHost {
         if (b.length <= cap >>> 0) this.bytes(dst, b.length).set(b);
         return b.length;
       },
+      asset_read_at: (ptr, len, offset, dst, cap) => {
+        const a = this.assets[this.str(ptr, len)];
+        if (!a) return -1;
+        const start = Math.min(offset >>> 0, a.length);
+        const n = Math.min(a.length - start, cap >>> 0);
+        this.bytes(dst, n).set(a.subarray(start, start + n));
+        return n;
+      },
       asset_size: (ptr, len) => { const a = this.assets[this.str(ptr, len)]; return a ? a.length : -1; },
       asset_read: (ptr, len, dst, cap) => {
         const a = this.assets[this.str(ptr, len)];
@@ -138,6 +147,25 @@ export class GasmHost {
       draw: (vc, ic, fv, fi) => g.draw(vc >>> 0, ic >>> 0, fv >>> 0, fi >>> 0),
       draw_indexed: (ic, n, first, base, fi) => g.drawIndexed(ic >>> 0, n >>> 0, first >>> 0, base | 0, fi >>> 0),
       end_frame: () => { g.endFrame(); this.framesPresented++; },
+    };
+  }
+
+  // ---- gasm:storage -------------------------------------------------------------
+  storageImports() {
+    const st = this.storage;
+    return {
+      get: (kp, kl, dst, cap) => {
+        const v = st.get(this.str(kp, kl));
+        if (!v) return -1;
+        if (v.length <= cap >>> 0) this.bytes(dst, v.length).set(v);
+        return v.length;
+      },
+      set: (kp, kl, vp, vl) => {
+        const err = st.set(this.str(kp, kl), this.bytes(vp, vl).slice());
+        if (err) { this.onLog(`[gasm] storage: ${err}`); return -1; }
+        return 0;
+      },
+      delete: (kp, kl) => (st.delete(this.str(kp, kl)) ? 0 : -1),
     };
   }
 
@@ -210,6 +238,7 @@ export class GasmHost {
   async load(wasmBytes) {
     const imports = new Proxy({
       gasm: this.gasmImports(), 'gasm:gfx': this.gfxImports(), 'gasm:net': this.netImports(),
+      'gasm:storage': this.storageImports(),
       wasi_snapshot_preview1: this.wasiImports(),
     }, {
       get: (t, mod) => t[mod] ?? new Proxy({}, { get: (_, n) => () => { throw new Error(`unsupported import ${String(mod)}.${String(n)}`); } }),
@@ -229,6 +258,13 @@ export class GasmHost {
   frame() {
     this.exports.gasm_frame();
     this.frameIndex++;
+  }
+
+  // Best-effort "player is quitting" (optional gasm_exit export): games flush saves.
+  exit() {
+    const f = this.exports?.gasm_exit;
+    this.exports = { ...this.exports, gasm_exit: undefined };
+    if (f) { try { f(); } catch (e) { if (!(e instanceof ProcExit)) this.onLog(`[gasm] gasm_exit trapped: ${e.message}`); } }
   }
 }
 
@@ -309,5 +345,63 @@ export class NetConnections {
   close(h) {
     const c = this.conns.get(h);
     if (c) { c.ws.close(); this.conns.delete(h); }
+  }
+}
+
+// gasm:storage rules (same as runners/native/src/storage.rs).
+export const STORAGE_MAX_VALUE = 1 << 20, STORAGE_QUOTA = 16 << 20;
+export const validKey = (k) => /^[A-Za-z0-9._-]{1,128}$/.test(k) && k !== '.' && k !== '..';
+
+// In-memory store: headless runs (reproducible) and the base for IdbStorage.
+export class MemoryStorage {
+  constructor(entries = []) { this.map = new Map(entries); }
+  get(k) { return this.map.get(k); }
+  set(k, v) {
+    if (!validKey(k)) return `invalid key ${JSON.stringify(k)}`;
+    if (v.length > STORAGE_MAX_VALUE) return `value for ${k} is ${v.length} bytes (max ${STORAGE_MAX_VALUE})`;
+    let used = 0;
+    for (const [key, val] of this.map) if (key !== k) used += key.length + val.length;
+    if (used + k.length + v.length > STORAGE_QUOTA) return `storage quota of ${STORAGE_QUOTA} bytes exceeded`;
+    this.map.set(k, v);
+    this.persist?.('put', k, v);
+    return null;
+  }
+  delete(k) {
+    if (!this.map.delete(k)) return false;
+    this.persist?.('delete', k);
+    return true;
+  }
+}
+
+// Browser store: IndexedDB database "gasm", one object store record per
+// (namespace, key). Loaded fully before the game starts so reads are
+// synchronous; writes are persisted in the background.
+export class IdbStorage extends MemoryStorage {
+  static async open(namespace) {
+    const db = await new Promise((resolve, reject) => {
+      const req = indexedDB.open('gasm', 1);
+      req.onupgradeneeded = () => req.result.createObjectStore('kv');
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+    const prefix = `${namespace}/`;
+    const entries = await new Promise((resolve, reject) => {
+      const out = [];
+      const range = IDBKeyRange.bound(prefix, `${prefix}\uffff`);
+      const req = db.transaction('kv').objectStore('kv').openCursor(range);
+      req.onsuccess = () => {
+        const c = req.result;
+        if (!c) return resolve(out);
+        out.push([String(c.key).slice(prefix.length), new Uint8Array(c.value)]);
+        c.continue();
+      };
+      req.onerror = () => reject(req.error);
+    });
+    const s = new IdbStorage(entries);
+    s.persist = (op, k, v) => {
+      const store = db.transaction('kv', 'readwrite').objectStore('kv');
+      if (op === 'put') store.put(v, prefix + k); else store.delete(prefix + k);
+    };
+    return s;
   }
 }
