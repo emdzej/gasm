@@ -196,19 +196,25 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ env.TAG }}
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
       - uses: actions/setup-node@v4
         with:
           node-version: 24          # npm >= 11.5.1: trusted publishing (OIDC) + automatic provenance
           registry-url: https://registry.npmjs.org
       - name: Publish @emdzej/gasm-host (skips versions already on npm)
         working-directory: runners/web
+        # pnpm packs; npm uploads, because npm performs the OIDC token exchange
+        # and attaches provenance (pnpm publish doesn't support trusted publishing).
         run: |
-          npm --version
-          npm version "$TAG" --no-git-tag-version --allow-same-version
+          pnpm --version && npm --version
+          npm pkg set version="$TAG"
           if npm view "@emdzej/gasm-host@$TAG" version >/dev/null 2>&1; then
             echo "@emdzej/gasm-host@$TAG already published"
           else
-            npm publish --access public
+            pnpm pack --pack-destination "$RUNNER_TEMP"
+            npm publish "$RUNNER_TEMP"/emdzej-gasm-host-"$TAG".tgz --access public
           fi
 
   publish-relay-image:

@@ -151,16 +151,17 @@ One-time setup, because both registries attach trusted publishers to a
    cargo login                                   # crates.io API token
    (cd guests && cargo publish -p gasm-sdk)
    (cd runners/native && cargo publish)
-   npm login
-   (cd runners/web && npm publish --access public --provenance=false)
+   npm login                                     # pnpm publishes with npm's credentials
+   (cd runners/web && pnpm publish --access public --no-git-checks --otp <code>)
    ```
 2. **crates.io**, for `gasm-sdk` and for `gasm-host`: Settings → Trusted
    Publishing → Add → GitHub: owner `emdzej`, repository `gasm`, workflow
    `release.yml`, environment `release`.
-3. **npm**, for `@emdzej/gasm-host`: Settings → Trusted Publisher → GitHub
-   Actions: organization/user `emdzej`, repository `gasm`, workflow
-   `release.yml`, environment `release`. Then, under Publishing access,
-   disallow tokens.
+3. **npm**, for `@emdzej/gasm-host`:
+   `npm trust github @emdzej/gasm-host --repo emdzej/gasm --file release.yml --env release --allow-publish`
+   (or Settings → Trusted Publisher on npmjs.com). Then, under Publishing
+   access, disallow tokens. In CI, pnpm packs and `npm publish` uploads the
+   tarball, because npm performs the OIDC exchange and adds provenance.
 4. **GitHub** (optional): Settings → Environments → `release`, and add
    required reviewers or restrict it to tags.
 

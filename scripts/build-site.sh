@@ -18,6 +18,6 @@ sed -i.bak 's|<meta name="gasm-root" content="../../">|<meta name="gasm-root" co
 rm -f "$PLAY/index.html.bak"
 
 cd site
-if [ -f package-lock.json ]; then npm ci --no-audit --no-fund; else npm install --no-audit --no-fund; fi
-npx vitepress build
+pnpm install --frozen-lockfile
+pnpm exec vitepress build
 echo "site built: site/.vitepress/dist"
