@@ -34,6 +34,19 @@ Games in this repo (all Rust except one C example):
 [writing games](site/dev/games.md) · [writing runners](site/dev/runners.md) ·
 [testing](site/dev/testing.md) · [ABI spec](spec/ABI.md)
 
+## Packages
+
+| For | Package |
+|---|---|
+| Writing games in Rust | [`gasm-sdk`](https://crates.io/crates/gasm-sdk) on crates.io |
+| Writing games in C/C++ | `gasm-c-sdk-<version>.zip` on Releases (`gasm.h` + CMake toolchain) |
+| Embedding in a web page / Node | [`@emdzej/gasm-host`](https://www.npmjs.com/package/@emdzej/gasm-host) on npm |
+| Embedding natively / `cargo install` | [`gasm-host`](https://crates.io/crates/gasm-host) on crates.io (`gasm-run`, `gasm-relay`) |
+| Hosting a relay | `ghcr.io/emdzej/gasm-relay` |
+
+The ABI itself is machine-readable ([`spec/abi.json`](spec/abi.json)); the C header
+and Rust bindings are generated from it. See [Packages](site/dev/packages.md).
+
 ## Download
 
 [Releases](https://github.com/emdzej/gasm/releases) have ready-to-run builds:

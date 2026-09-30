@@ -3,11 +3,12 @@ name = "nes"
 version = "0.1.0"
 edition.workspace = true
 license.workspace = true
+publish = false
 description = "NES emulator for gasm, built on tetanes-core"
 
 [lib]
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-gasm = { path = "../gasm" }
+gasm = { package = "gasm-sdk", path = "../gasm" }
 tetanes-core = { version = "0.17", default-features = false }

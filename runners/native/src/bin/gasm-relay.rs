@@ -94,16 +94,31 @@ fn load_tls(cert: &str, key: &str) -> Result<Arc<rustls::ServerConfig>, String> 
     Ok(Arc::new(cfg))
 }
 
-/// Plain or TLS: the WebSocket code is generic over the stream. `raw` is a
-/// clone of the socket, used to set timeouts after the (blocking) handshakes.
+/// The TCP socket under a (possibly TLS) stream: timeouts must be set on the
+/// socket actually in use. (A try_clone()'d handle doesn't share SO_RCVTIMEO
+/// on Windows, which deadlocked relay threads in read.)
+trait Socket: Read + Write {
+    fn tcp(&self) -> &TcpStream;
+}
+impl Socket for TcpStream {
+    fn tcp(&self) -> &TcpStream {
+        self
+    }
+}
+impl Socket for rustls::StreamOwned<rustls::ServerConnection, TcpStream> {
+    fn tcp(&self) -> &TcpStream {
+        &self.sock
+    }
+}
+
+/// Plain or TLS: the WebSocket code is generic over the stream.
 fn handle(tcp: TcpStream, rooms: &Rooms, max_peers: usize, tls: Option<Arc<rustls::ServerConfig>>) -> Result<(), String> {
-    let raw = tcp.try_clone().map_err(|e| e.to_string())?;
-    let _ = raw.set_nodelay(true);
+    let _ = tcp.set_nodelay(true);
     match tls {
-        None => client(tcp, &raw, rooms, max_peers),
+        None => client(tcp, rooms, max_peers),
         Some(cfg) => {
             let conn = rustls::ServerConnection::new(cfg).map_err(|e| e.to_string())?;
-            client(rustls::StreamOwned::new(conn, tcp), &raw, rooms, max_peers)
+            client(rustls::StreamOwned::new(conn, tcp), rooms, max_peers)
         }
     }
 }
@@ -118,8 +133,8 @@ fn broadcast(rooms: &Rooms, room: &str, except: usize, msg: &[u8]) {
     }
 }
 
-fn client<S: Read + Write>(stream: S, raw: &TcpStream, rooms: &Rooms, max_peers: usize) -> Result<(), String> {
-    let peer_addr = raw.peer_addr().map(|a| a.to_string()).unwrap_or_default();
+fn client<S: Socket>(stream: S, rooms: &Rooms, max_peers: usize) -> Result<(), String> {
+    let peer_addr = stream.tcp().peer_addr().map(|a| a.to_string()).unwrap_or_default();
     let mut path = String::new();
     let mut ws = tungstenite::accept_hdr(stream, |req: &Request, resp: Response| {
         path = req.uri().path().to_string();
@@ -130,7 +145,9 @@ fn client<S: Read + Write>(stream: S, raw: &TcpStream, rooms: &Rooms, max_peers:
         "" => "lobby".to_string(),
         r => r.to_string(),
     };
-    raw.set_read_timeout(Some(Duration::from_millis(2))).map_err(|e| e.to_string())?;
+    // After the (blocking) handshakes: short read timeouts let one thread alternate
+    // between forwarding queued messages and reading.
+    ws.get_ref().tcp().set_read_timeout(Some(Duration::from_millis(2))).map_err(|e| e.to_string())?;
 
     // Join: take the lowest free index, tell the others while holding the lock
     // so membership events are ordered before any data from this peer.

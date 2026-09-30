@@ -397,11 +397,23 @@ fn add_storage_imports(linker: &mut Linker<Host>) -> wasmtime::Result<()> {
 }
 
 /// Why a guest call ended.
+#[derive(Debug)]
 pub enum Stop {
     /// The guest called proc_exit(code).
     Exit(i32),
     Trap(String),
 }
+
+impl std::fmt::Display for Stop {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Stop::Exit(code) => write!(f, "guest exited with code {code}"),
+            Stop::Trap(msg) => write!(f, "guest trapped: {msg}"),
+        }
+    }
+}
+
+impl std::error::Error for Stop {}
 
 fn classify(e: wasmtime::Error) -> Stop {
     match e.downcast_ref::<wasmtime_wasi::I32Exit>() {

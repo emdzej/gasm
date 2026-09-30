@@ -5,6 +5,7 @@ gasm has two sides, and you can work on either one alone:
 <div class="demo-grid">
   <a class="demo-card" href="/dev/games"><strong>Writing games →</strong><span>Rust with the <code>gasm</code> crate (or C): 2D, 3D with WebGPU, audio, input, networking, determinism.</span></a>
   <a class="demo-card" href="/dev/runners"><strong>Writing runners →</strong><span>Bring every gasm game to a new platform or engine: the ABI, frame loop, GPU, audio, network, conformance.</span></a>
+  <a class="demo-card" href="/dev/packages"><strong>Packages →</strong><span><code>gasm-sdk</code> (Rust), the C/C++ SDK, <code>@emdzej/gasm-host</code> (npm), <code>gasm-host</code> (crates.io), the relay image.</span></a>
   <a class="demo-card" href="/dev/testing"><strong>Testing & contributing →</strong><span>Determinism, network and parity suites, benchmarks, repository conventions.</span></a>
 </div>
 

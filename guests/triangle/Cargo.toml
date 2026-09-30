@@ -3,10 +3,11 @@ name = "triangle"
 version = "0.1.0"
 edition.workspace = true
 license.workspace = true
+publish = false
 description = "Smallest gasm:gfx example: one colored triangle"
 
 [lib]
 crate-type = ["cdylib"]
 
 [dependencies]
-gasm = { path = "../gasm" }
+gasm = { package = "gasm-sdk", path = "../gasm" }

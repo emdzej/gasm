@@ -131,7 +131,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "gasm"
+name = "gasm-sdk"
 version = "0.1.0"
 
 [[package]]
@@ -198,7 +198,7 @@ dependencies = [
 name = "nes"
 version = "0.1.0"
 dependencies = [
- "gasm",
+ "gasm-sdk",
  "tetanes-core",
 ]
 
@@ -218,7 +218,7 @@ checksum = "04744f49eae99ab78e0d5c0b603ab218f515ea8cfe5a456d7629ad883a3b6e7d"
 name = "parity"
 version = "0.1.0"
 dependencies = [
- "gasm",
+ "gasm-sdk",
  "nes",
 ]
 
@@ -344,7 +344,7 @@ checksum = "0c790de23124f9ab44544d7ac05d60440adc586479ce501c1d6d7da3cd8c9cf5"
 name = "sumo"
 version = "0.1.0"
 dependencies = [
- "gasm",
+ "gasm-sdk",
 ]
 
 [[package]]
@@ -422,7 +422,7 @@ dependencies = [
 name = "triangle"
 version = "0.1.0"
 dependencies = [
- "gasm",
+ "gasm-sdk",
 ]
 
 [[package]]

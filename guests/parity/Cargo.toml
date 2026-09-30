@@ -7,5 +7,5 @@ publish = false
 description = "Runs the NES guest natively against the gasm stub host (parity + benchmarks)"
 
 [dependencies]
-gasm = { path = "../gasm" }
+gasm = { package = "gasm-sdk", path = "../gasm" }
 nes = { path = "../nes" }

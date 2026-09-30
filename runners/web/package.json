@@ -1,1 +1,22 @@
-{ "type": "module", "private": true }
+{
+  "name": "@emdzej/gasm-host",
+  "version": "0.1.0",
+  "description": "Run gasm games (portable WebAssembly games) in the browser or Node: the gasm ABI host with WebGPU, WebSocket networking, storage and a headless runner",
+  "type": "module",
+  "exports": {
+    ".": { "types": "./gasm-host.d.ts", "default": "./gasm-host.js" },
+    "./webgpu": { "types": "./webgpu-gfx.d.ts", "default": "./webgpu-gfx.js" }
+  },
+  "types": "./gasm-host.d.ts",
+  "bin": { "gasm-headless": "./headless.mjs" },
+  "files": ["gasm-host.js", "gasm-host.d.ts", "webgpu-gfx.js", "webgpu-gfx.d.ts", "headless.mjs", "README.md"],
+  "engines": { "node": ">=22" },
+  "keywords": ["gasm", "webassembly", "wasm", "webgpu", "game", "gamedev", "runtime", "emulator"],
+  "homepage": "https://gasm.emdzej.pl",
+  "repository": { "type": "git", "url": "git+https://github.com/emdzej/gasm.git", "directory": "runners/web" },
+  "bugs": "https://github.com/emdzej/gasm/issues",
+  "author": "Michał Jaskólski",
+  "license": "MIT",
+  "sideEffects": false,
+  "publishConfig": { "access": "public", "provenance": true }
+}

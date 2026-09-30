@@ -38,6 +38,7 @@ export default defineConfig({
           { text: 'Overview', link: '/dev/' },
           { text: 'Writing games', link: '/dev/games' },
           { text: 'Writing runners', link: '/dev/runners' },
+          { text: 'Packages', link: '/dev/packages' },
           { text: 'Testing & contributing', link: '/dev/testing' },
         ] },
         { text: 'Reference', items: [{ text: 'ABI v0', link: '/docs/abi' }] },

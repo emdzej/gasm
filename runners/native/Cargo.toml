@@ -1,9 +1,28 @@
 [package]
-name = "gasm-run"
+name = "gasm-host"
 version = "0.1.0"
 edition = "2024"
-description = "gasm native runner (wasmtime + wgpu + winit + cpal + gilrs) and relay"
+description = "Native host for gasm games (a portable game runtime on WebAssembly): wasmtime, WebGPU via wgpu, audio, gamepads, WebSocket networking and storage. Includes the gasm-run runner and gasm-relay"
 license = "MIT"
+repository = "https://github.com/emdzej/gasm"
+homepage = "https://gasm.emdzej.pl"
+documentation = "https://gasm.emdzej.pl/dev/runners"
+readme = "README.md"
+keywords = ["gamedev", "wasm", "wasmtime", "webgpu", "runtime"]
+categories = ["game-development", "wasm", "emulators"]
+rust-version = "1.85"
+
+[lib]
+name = "gasm_host"
+path = "src/lib.rs"
+
+[[bin]]
+name = "gasm-run"
+path = "src/main.rs"
+
+[[bin]]
+name = "gasm-relay"
+path = "src/bin/gasm-relay.rs"
 
 [dependencies]
 wasmtime = "49"

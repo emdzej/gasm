@@ -11,7 +11,14 @@ existing runners as reference implementations:
 | `gasm:gfx` | [`gfx.rs`](https://github.com/emdzej/gasm/blob/main/runners/native/src/gfx.rs) (wgpu, ~770 lines incl. 2D blit) | [`webgpu-gfx.js`](https://github.com/emdzej/gasm/blob/main/runners/web/webgpu-gfx.js) (~130 lines) |
 | `gasm:net` | [`net.rs`](https://github.com/emdzej/gasm/blob/main/runners/native/src/net.rs) (tungstenite threads) | `NetConnections` in `gasm-host.js` (WebSocket) |
 
-A minimal runner implements only the core `gasm` module (about 10 functions).
+To embed rather than write a runner, use the published hosts:
+[`@emdzej/gasm-host`](/dev/packages#for-runners-and-embedders) (browser/Node) or
+the [`gasm-host`](https://crates.io/crates/gasm-host) crate (native). The
+machine-readable ABI ([`spec/abi.json`](https://github.com/emdzej/gasm/blob/main/spec/abi.json))
+lists every function to implement; `scripts/gen-abi.mjs --check` verifies the
+reference runners against it.
+
+A minimal runner implements only the core `gasm` module (11 functions).
 `gasm:gfx` and `gasm:net` are optional: games that don't import them run
 anyway.
 

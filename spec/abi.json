@@ -1,0 +1,113 @@
+{
+  "$comment": "Machine-readable gasm ABI. Source of truth for spec/gasm.h and guests/gasm/src/sys.rs (scripts/gen-abi.mjs) and for runner conformance checks (scripts/gen-abi.mjs --check). Prose: spec/ABI.md.",
+  "abi_version": 0,
+  "types": {
+    "u32": { "wasm": "i32", "c": "uint32_t", "rust": "u32" },
+    "i32": { "wasm": "i32", "c": "int32_t", "rust": "i32" },
+    "f32": { "wasm": "f32", "c": "float", "rust": "f32" },
+    "f64": { "wasm": "f64", "c": "double", "rust": "f64" },
+    "str": { "wasm": "i32 i32", "c": "const char *{name}, uint32_t {name}_len", "rust": "{name}: *const u8, {name}_len: u32", "doc": "UTF-8 (ptr, len) pair, not NUL-terminated" },
+    "ptr": { "wasm": "i32", "doc": "offset into guest memory; C/Rust pointer types given per parameter" }
+  },
+  "exports": [
+    { "name": "memory", "kind": "memory", "required": true },
+    { "name": "gasm_abi_version", "result": "i32", "required": true, "doc": "Must return the ABI version (0)." },
+    { "name": "gasm_init", "result": "i32", "required": true, "doc": "0 = ok; anything else aborts." },
+    { "name": "gasm_frame", "required": true, "doc": "One simulation + render step, called at the frame rate." },
+    { "name": "gasm_exit", "required": false, "doc": "The player is quitting: flush saves (best effort)." },
+    { "name": "_initialize", "required": false, "doc": "WASI reactor constructor hook, called first if present." }
+  ],
+  "modules": [
+    {
+      "name": "gasm",
+      "optional": false,
+      "c_macro": "GASM_IMPORT",
+      "c_prefix": "gasm_",
+      "rust_prefix": "",
+      "doc": "core",
+      "functions": [
+        { "name": "log", "params": [{ "name": "msg", "type": "str" }], "doc": "Write a line to the runner's log." },
+        { "name": "time_ms", "result": "f64", "doc": "Monotonic time in milliseconds (virtual, frame-derived in headless runs)." },
+        { "name": "set_frame_rate", "params": [{ "name": "hz", "type": "f64" }], "doc": "Rate (Hz) at which the runner calls gasm_frame(). Default 60; 1-1000." },
+        { "name": "video_present", "params": [{ "name": "rgba", "type": "ptr", "c": "const void *", "rust": "*const u8" }, { "name": "width", "type": "u32" }, { "name": "height", "type": "u32" }, { "name": "stride", "type": "u32" }], "doc": "Present RGBA8 pixels (bytes R,G,B,A), stride bytes per row, w,h <= 4096. Copied before returning; letterboxed by the runner." },
+        { "name": "audio_config", "params": [{ "name": "sample_rate", "type": "u32" }, { "name": "channels", "type": "u32" }], "doc": "Format for audio_push: 8-192 kHz, 1 or 2 channels. Default 44100/2." },
+        { "name": "audio_push", "params": [{ "name": "samples", "type": "ptr", "c": "const float *", "rust": "*const f32" }, { "name": "frames", "type": "u32" }], "doc": "Queue frames x channels interleaved f32 samples in [-1, 1]; the runner resamples." },
+        { "name": "input_pad", "params": [{ "name": "player", "type": "u32" }], "result": "u32", "doc": "Bitmask of GASM_BTN_* held on virtual pad player (0..3), stable within a frame." },
+        { "name": "asset_size", "params": [{ "name": "name", "type": "str" }], "result": "i32", "doc": "Size in bytes of asset name, or -1 if it does not exist." },
+        { "name": "asset_read", "params": [{ "name": "name", "type": "str" }, { "name": "dst", "type": "ptr", "c": "void *", "rust": "*mut u8" }, { "name": "cap", "type": "u32" }], "result": "i32", "doc": "Copy up to cap bytes of asset name into dst. Bytes copied, or -1 if missing." },
+        { "name": "asset_read_at", "params": [{ "name": "name", "type": "str" }, { "name": "offset", "type": "u32" }, { "name": "dst", "type": "ptr", "c": "void *", "rust": "*mut u8" }, { "name": "len", "type": "u32" }], "result": "i32", "doc": "Copy up to len bytes of asset name starting at offset (streaming). Bytes copied (0 at the end), or -1 if missing." },
+        { "name": "param", "params": [{ "name": "name", "type": "str" }, { "name": "dst", "type": "ptr", "c": "char *", "rust": "*mut u8" }, { "name": "cap", "type": "u32" }], "result": "i32", "doc": "Launch parameter value length, or -1 if unset. Copied only if length <= cap (cap = 0 queries the length)." }
+      ]
+    },
+    {
+      "name": "gasm:gfx",
+      "optional": true,
+      "c_macro": "GASM_GFX_IMPORT",
+      "c_prefix": "gasm_gfx_",
+      "rust_prefix": "gfx_",
+      "doc": "GPU rendering: a WebGPU subset. Handles are u32 (0 is never valid); creation descriptors are JSON mirroring WebGPU with color format \"surface\" and depth format \"depth24plus\". Invalid descriptors trap.",
+      "functions": [
+        { "name": "width", "result": "u32", "doc": "Current drawable width in pixels." },
+        { "name": "height", "result": "u32", "doc": "Current drawable height in pixels." },
+        { "name": "create_shader", "params": [{ "name": "wgsl", "type": "str" }], "result": "u32", "doc": "Compile WGSL source." },
+        { "name": "create_buffer", "params": [{ "name": "size", "type": "u32" }, { "name": "usage", "type": "u32" }], "result": "u32", "doc": "size: non-zero multiple of 4; usage: GASM_BUF_* (WebGPU GPUBufferUsage bits; COPY_DST always added)." },
+        { "name": "create_pipeline", "params": [{ "name": "json", "type": "str" }], "result": "u32", "doc": "GPURenderPipelineDescriptor as JSON (layout auto)." },
+        { "name": "create_bind_group", "params": [{ "name": "json", "type": "str" }], "result": "u32", "doc": "{\"pipeline\":P,\"group\":G,\"entries\":[{\"binding\":B,\"buffer\":H,\"offset\":O,\"size\":S}]}" },
+        { "name": "write_buffer", "params": [{ "name": "buffer", "type": "u32" }, { "name": "offset", "type": "u32" }, { "name": "data", "type": "ptr", "c": "const void *", "rust": "*const u8" }, { "name": "len", "type": "u32" }], "doc": "Queue a write, applied before the frame's draws. offset/len: multiples of 4." },
+        { "name": "begin_frame", "params": [{ "name": "r", "type": "f32" }, { "name": "g", "type": "f32" }, { "name": "b", "type": "f32" }, { "name": "a", "type": "f32" }], "result": "u32", "doc": "Start the frame (clears color and depth). 1 = will be shown, 0 = discarded (the guest may skip draws)." },
+        { "name": "set_pipeline", "params": [{ "name": "pipeline", "type": "u32" }] },
+        { "name": "set_bind_group", "params": [{ "name": "index", "type": "u32" }, { "name": "bind_group", "type": "u32" }] },
+        { "name": "set_vertex_buffer", "params": [{ "name": "slot", "type": "u32" }, { "name": "buffer", "type": "u32" }, { "name": "offset", "type": "u32" }] },
+        { "name": "set_index_buffer", "params": [{ "name": "buffer", "type": "u32" }, { "name": "format", "type": "u32" }, { "name": "offset", "type": "u32" }], "doc": "format: GASM_INDEX_U16 or GASM_INDEX_U32." },
+        { "name": "draw", "params": [{ "name": "vertex_count", "type": "u32" }, { "name": "instance_count", "type": "u32" }, { "name": "first_vertex", "type": "u32" }, { "name": "first_instance", "type": "u32" }] },
+        { "name": "draw_indexed", "params": [{ "name": "index_count", "type": "u32" }, { "name": "instance_count", "type": "u32" }, { "name": "first_index", "type": "u32" }, { "name": "base_vertex", "type": "i32" }, { "name": "first_instance", "type": "u32" }] },
+        { "name": "end_frame", "doc": "Submit and present." }
+      ]
+    },
+    {
+      "name": "gasm:net",
+      "optional": true,
+      "c_macro": "GASM_NET_IMPORT",
+      "c_prefix": "gasm_net_",
+      "rust_prefix": "net_",
+      "doc": "Message connections with WebSocket semantics (reliable, ordered, binary), non-blocking. Runners may deny connections (native: --allow-net).",
+      "functions": [
+        { "name": "open", "params": [{ "name": "url", "type": "str" }], "result": "i32", "doc": "Open a ws:// or wss:// URL. Handle > 0, or -1 if denied/invalid." },
+        { "name": "state", "params": [{ "name": "conn", "type": "i32" }], "result": "u32", "doc": "GASM_NET_CONNECTING / OPEN / CLOSED / ERROR." },
+        { "name": "send", "params": [{ "name": "conn", "type": "i32" }, { "name": "data", "type": "ptr", "c": "const void *", "rust": "*const u8" }, { "name": "len", "type": "u32" }], "result": "i32", "doc": "Send one message (len > 0). 0, or -1 if not open." },
+        { "name": "recv", "params": [{ "name": "conn", "type": "i32" }, { "name": "dst", "type": "ptr", "c": "void *", "rust": "*mut u8" }, { "name": "cap", "type": "u32" }], "result": "i32", "doc": "Next message's length (copied only if <= cap, else it stays queued), 0 if none, -1 if closed and drained." },
+        { "name": "close", "params": [{ "name": "conn", "type": "i32" }] }
+      ]
+    },
+    {
+      "name": "gasm:storage",
+      "optional": true,
+      "c_macro": "GASM_STORAGE_IMPORT",
+      "c_prefix": "gasm_storage_",
+      "rust_prefix": "storage_",
+      "doc": "Persistent per-game key/value store; the runner chooses the namespace. Keys: 1-128 bytes of [A-Za-z0-9._-]. Values up to 1 MiB, 16 MiB per game. Headless runs start empty.",
+      "functions": [
+        { "name": "get", "params": [{ "name": "key", "type": "str" }, { "name": "dst", "type": "ptr", "c": "void *", "rust": "*mut u8" }, { "name": "cap", "type": "u32" }], "result": "i32", "doc": "Value length, or -1 if missing. Copied only if length <= cap." },
+        { "name": "set", "params": [{ "name": "key", "type": "str" }, { "name": "data", "type": "ptr", "c": "const void *", "rust": "*const u8" }, { "name": "len", "type": "u32" }], "result": "i32", "doc": "0, or -1 on invalid key, too large, quota exceeded or I/O error." },
+        { "name": "delete", "params": [{ "name": "key", "type": "str" }], "result": "i32", "doc": "0 if deleted, -1 if it did not exist." }
+      ]
+    },
+    {
+      "name": "wasi_snapshot_preview1",
+      "optional": true,
+      "wasi": true,
+      "rust_prefix": "",
+      "doc": "Only proc_exit is part of the gasm ABI proper; runners also provide a libc support subset (see ABI.md).",
+      "functions": [
+        { "name": "proc_exit", "params": [{ "name": "code", "type": "i32" }], "noreturn": true, "doc": "End the game; 0 is a normal exit." }
+      ]
+    }
+  ],
+  "constants": [
+    { "group": "buttons", "c_enum": true, "doc": "Virtual gamepad buttons (bit positions). Face buttons by position: East=A, South=B, North=X, West=Y.",
+      "values": [["GASM_BTN_A", "1u << 0"], ["GASM_BTN_B", "1u << 1"], ["GASM_BTN_X", "1u << 2"], ["GASM_BTN_Y", "1u << 3"], ["GASM_BTN_L", "1u << 4"], ["GASM_BTN_R", "1u << 5"], ["GASM_BTN_SELECT", "1u << 6"], ["GASM_BTN_START", "1u << 7"], ["GASM_BTN_UP", "1u << 8"], ["GASM_BTN_DOWN", "1u << 9"], ["GASM_BTN_LEFT", "1u << 10"], ["GASM_BTN_RIGHT", "1u << 11"]] },
+    { "group": "buffer usage", "c_enum": true, "values": [["GASM_BUF_COPY_DST", "0x08"], ["GASM_BUF_INDEX", "0x10"], ["GASM_BUF_VERTEX", "0x20"], ["GASM_BUF_UNIFORM", "0x40"]] },
+    { "group": "index formats", "c_enum": true, "values": [["GASM_INDEX_U16", "0"], ["GASM_INDEX_U32", "1"]] },
+    { "group": "net states", "c_enum": true, "values": [["GASM_NET_CONNECTING", "0"], ["GASM_NET_OPEN", "1"], ["GASM_NET_CLOSED", "2"], ["GASM_NET_ERROR", "3"]] }
+  ]
+}

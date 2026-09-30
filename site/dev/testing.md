@@ -121,10 +121,48 @@ lot of time.
   `site/node_modules`, `site/.vitepress/dist`, `site/public/play`) is git-ignored.
   Never commit ROMs.
 - **Releases:** push a version tag without a `v` prefix (`git tag 0.2.0 && git push origin 0.2.0`).
+  See [Releases and trusted publishing](#releases-and-trusted-publishing).
+- **ABI:** edit `spec/abi.json`, run `node scripts/gen-abi.mjs` (regenerates `spec/gasm.h`
+  and `guests/gasm/src/sys.rs`), then implement it in both runners and the native stub.
+  CI runs `--check`.
 - **Agents:** [`AGENTS.md`](https://github.com/emdzej/gasm/blob/main/AGENTS.md) lists build traps, invariants and conventions for coding agents.
 - **Docs** live in `site/` (VitePress) and are published to
   [gasm.emdzej.pl](https://gasm.emdzej.pl) by GitHub Actions. `spec/ABI.md` is
   included into the site, not copied.
+
+## Releases and trusted publishing
+
+`release.yml` runs on a version tag (`0.2.0`). It builds everything, creates
+the GitHub Release, and publishes `gasm-sdk` + `gasm-host` to crates.io,
+`@emdzej/gasm-host` to npm, and `ghcr.io/emdzej/gasm-relay`. Versions come
+from the tag, and versions that are already published are skipped, so re-running
+a release is safe.
+
+crates.io and npm use **trusted publishing**: the workflow gets a short-lived
+token from the registry via GitHub OIDC (`id-token: write`, environment
+`release`), and nothing secret is stored in the repository. The relay image is
+pushed with the workflow's own `GITHUB_TOKEN`.
+
+One-time setup, because both registries attach trusted publishers to a
+*package*, which must exist first:
+
+1. **First publish by hand** (once per package):
+   ```sh
+   cargo login                                   # crates.io API token
+   (cd guests && cargo publish -p gasm-sdk)
+   (cd runners/native && cargo publish)
+   npm login
+   (cd runners/web && npm publish --access public --provenance=false)
+   ```
+2. **crates.io**, for `gasm-sdk` and for `gasm-host`: Settings → Trusted
+   Publishing → Add → GitHub: owner `emdzej`, repository `gasm`, workflow
+   `release.yml`, environment `release`.
+3. **npm**, for `@emdzej/gasm-host`: Settings → Trusted Publisher → GitHub
+   Actions: organization/user `emdzej`, repository `gasm`, workflow
+   `release.yml`, environment `release`. Then, under Publishing access,
+   disallow tokens.
+4. **GitHub** (optional): Settings → Environments → `release`, and add
+   required reviewers or restrict it to tags.
 
 ## Updating dependencies
 

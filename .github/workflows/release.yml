@@ -12,7 +12,7 @@ on:
         required: true
 
 permissions:
-  contents: write
+  contents: read
 
 env:
   TAG: ${{ inputs.tag || github.ref_name }}
@@ -41,7 +41,7 @@ jobs:
         include:
           - { os: macos-14, platform: macos-universal }
           - { os: ubuntu-22.04, platform: linux-x86_64 }
-          - { os: ubuntu-24.04-arm, platform: linux-arm64 }
+          - { os: ubuntu-22.04-arm, platform: linux-arm64 }
           - { os: windows-2022, platform: windows-x86_64 }
     runs-on: ${{ matrix.os }}
     defaults:
@@ -110,6 +110,8 @@ jobs:
   release:
     needs: native
     runs-on: ubuntu-24.04
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
         with:
@@ -123,7 +125,9 @@ jobs:
         run: |
           VERSION=$TAG
           (cd artifacts/games && zip -q "../gasm-$VERSION-games-wasm.zip" *.wasm)
-          mapfile -t FILES < <(find artifacts -maxdepth 2 -type f \( -name '*.tar.gz' -o -name '*.zip' \))
+          cp "$(scripts/package-c-sdk.sh "$VERSION")" artifacts/
+          cp spec/gasm.h spec/abi.json artifacts/
+          mapfile -t FILES < <(find artifacts -maxdepth 2 -type f \( -name '*.tar.gz' -o -name '*.zip' -o -name gasm.h -o -name abi.json \))
           cat > notes.md <<NOTES
           ## Downloads
 
@@ -134,6 +138,10 @@ jobs:
           | \`gasm-$VERSION-linux-x86_64.tar.gz\`, \`gasm-$VERSION-linux-arm64.tar.gz\` | same for Linux (x86_64, arm64) |
           | \`gasm-$VERSION-windows-x86_64.zip\` | same for Windows |
           | \`gasm-$VERSION-games-wasm.zip\` | just the games: the same .wasm files run on every runner and at https://gasm.emdzej.pl/demos/ |
+          | \`gasm-c-sdk-$VERSION.zip\` | C/C++ SDK: \`gasm.h\` + CMake toolchain (wasi-sdk) + example |
+          | \`gasm.h\`, \`abi.json\` | the ABI as a single C header, and machine-readable |
+
+          Packages: [\`gasm-sdk\`](https://crates.io/crates/gasm-sdk) (write games in Rust) · [\`gasm-host\`](https://crates.io/crates/gasm-host) (native host library + \`cargo install gasm-host\`) · [\`@emdzej/gasm-host\`](https://www.npmjs.com/package/@emdzej/gasm-host) (browser/Node host) · \`ghcr.io/emdzej/gasm-relay\` (relay image)
           NOTES
           sed -i 's/^          //' notes.md
           if gh release view "$TAG" >/dev/null 2>&1; then
@@ -141,3 +149,105 @@ jobs:
           else
             gh release create "$TAG" "${FILES[@]}" --title "gasm $VERSION" --notes-file notes.md --generate-notes
           fi
+
+  # ---- registries: trusted publishing (OIDC), no long-lived tokens ----------------
+  # One-time setup per package on the registry (see site/dev/testing.md#releases):
+  # trusted publisher = repo emdzej/gasm, workflow release.yml, environment "release".
+  publish-crates:
+    needs: native
+    runs-on: ubuntu-24.04
+    environment: release
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+      - name: System packages (gasm-host verify build)
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libasound2-dev libudev-dev pkg-config
+      - name: Set crate versions from the tag
+        run: |
+          sed -i "0,/^version = .*/s//version = \"$TAG\"/" guests/gasm/Cargo.toml runners/native/Cargo.toml
+          grep -m1 '^version' guests/gasm/Cargo.toml runners/native/Cargo.toml
+      - uses: rust-lang/crates-io-auth-action@v1
+        id: auth
+      - name: Publish gasm-sdk and gasm-host (skips versions already on crates.io)
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+        run: |
+          publish() { # <crate> <dir> [cargo args]
+            if curl -sf -A "gasm-release (github.com/emdzej/gasm)" "https://crates.io/api/v1/crates/$1/$TAG" >/dev/null; then
+              echo "$1 $TAG already published"; return
+            fi
+            (cd "$2" && cargo publish --allow-dirty "${@:3}")
+          }
+          publish gasm-sdk guests -p gasm-sdk
+          publish gasm-host runners/native
+
+  publish-npm:
+    needs: native
+    runs-on: ubuntu-24.04
+    environment: release
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24          # npm >= 11.5.1: trusted publishing (OIDC) + automatic provenance
+          registry-url: https://registry.npmjs.org
+      - name: Publish @emdzej/gasm-host (skips versions already on npm)
+        working-directory: runners/web
+        run: |
+          npm --version
+          npm version "$TAG" --no-git-tag-version --allow-same-version
+          if npm view "@emdzej/gasm-host@$TAG" version >/dev/null 2>&1; then
+            echo "@emdzej/gasm-host@$TAG already published"
+          else
+            npm publish --access public
+          fi
+
+  publish-relay-image:
+    needs: native
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: package-linux-*
+          path: artifacts
+      - name: Collect relay binaries
+        run: |
+          for a in x86_64:amd64 arm64:arm64; do
+            tar xzf artifacts/package-linux-${a%%:*}/gasm-$TAG-linux-${a%%:*}.tar.gz -C artifacts
+            cp artifacts/gasm-$TAG-linux-${a%%:*}/gasm-relay runners/native/relay-${a##*:}
+          done
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: runners/native
+          file: runners/native/relay.Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ghcr.io/emdzej/gasm-relay:${{ env.TAG }}
+            ghcr.io/emdzej/gasm-relay:latest
+          labels: |
+            org.opencontainers.image.source=https://github.com/emdzej/gasm
+            org.opencontainers.image.description=gasm-relay: WebSocket room relay for gasm games
+            org.opencontainers.image.licenses=MIT

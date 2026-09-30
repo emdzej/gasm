@@ -16,11 +16,13 @@ property: most tests assert bit-identical hashes.
 
 | Path | What |
 |---|---|
-| `spec/ABI.md`, `spec/gasm.h` | Normative ABI + C header |
+| `spec/abi.json` | **Machine-readable ABI, source of truth.** `node scripts/gen-abi.mjs` regenerates `spec/gasm.h` + `guests/gasm/src/sys.rs`; `--check` verifies runners |
+| `spec/ABI.md`, `spec/gasm.h` | Normative prose + generated C header (don't edit `gasm.h` or `sys.rs` by hand) |
+| `sdk/c/` | C/C++ SDK: CMake toolchain (wraps wasi-sdk) + `Gasm.cmake` + example |
 | `guests/` | Rust workspace (`wasm32-unknown-unknown`): `gasm` (SDK + native stub host), `sumo`, `nes` (tetanes-core), `triangle`, `parity` (native harness) |
 | `guests/test-pattern/` | C guest (wasi-sdk) |
-| `runners/native/` | `gasm-run` (wasmtime, wgpu, winit, cpal, gilrs, tungstenite) and `gasm-relay` (`src/bin/`) |
-| `runners/web/` | `gasm-host.js` (shared browser + Node core), `webgpu-gfx.js`, `app.js`, `headless.mjs` |
+| `runners/native/` | crate `gasm-host`: library (`src/lib.rs`) + bins `gasm-run` (`src/main.rs`) and `gasm-relay` (`src/bin/`); `relay.Dockerfile` |
+| `runners/web/` | npm package `@emdzej/gasm-host` (`gasm-host.js` + `.d.ts`, `webgpu-gfx.js`, `headless.mjs` = `gasm-headless`); `app.js`/`index.html` = the site player (not published) |
 | `scripts/` | toolchain/ROM fetchers, test suites, packaging, site build, Linux container |
 | `site/` | VitePress website (docs live here; `site/docs/abi.md` includes `spec/ABI.md`) |
 | `.github/workflows/` | `ci.yml`, `pages.yml`, `release.yml` |
@@ -68,7 +70,7 @@ Headless runs with `--screenshot` render GPU games offscreen: look at the PNG.
 
 ## Invariants
 
-- **ABI changes** update `spec/ABI.md`, `spec/gasm.h`, the `gasm` crate
+- **ABI changes** start in `spec/abi.json` (then regenerate) and update `spec/ABI.md`, the `gasm` crate
   (`guests/gasm/src/{sys,lib,native}.rs`), both runners (`runners/native/src/host.rs`
   and friends, `runners/web/gasm-host.js`) and the site docs, in one change.
   Breaking changes bump `GASM_ABI_VERSION`.
@@ -96,8 +98,14 @@ Headless runs with `--screenshot` render GPU games offscreen: look at the PNG.
 
 ## Conventions
 
-- **Version tags have no `v` prefix:** `0.1.0`. Pushing one runs `release.yml`
-  (macOS universal + `.app` bundles, Linux x86_64/arm64, Windows, games zip).
+- **Version tags have no `v` prefix:** `0.1.0`. Pushing one runs `release.yml`:
+  macOS universal + `.app` bundles, Linux x86_64/arm64, Windows, games zip, C SDK,
+  then publishes `gasm-sdk` + `gasm-host` (crates.io), `@emdzej/gasm-host` (npm),
+  `ghcr.io/emdzej/gasm-relay`. Registries use trusted publishing (OIDC, environment
+  `release`); never add registry tokens as secrets.
+- **Package names:** crates `gasm-sdk` (lib name `gasm`) and `gasm-host`; npm scope
+  `@emdzej/*` (the unscoped `gasm` is taken on both registries). Demo game crates are
+  `publish = false` and depend on the SDK by path only.
 - **No emojis on the website** (`site/`), including feature tiles and cards.
 - Docs are written for the site (`site/…`). Repo links use absolute
   `https://github.com/emdzej/gasm/blob/main/…` URLs so they work in both places.

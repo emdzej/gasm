@@ -37,6 +37,9 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('guests/Cargo.lock', 'runners/native/Cargo.lock', 'scripts/fetch-wasi-sdk.sh') }}
           restore-keys: ${{ runner.os }}-cargo-
 
+      - name: ABI conformance (spec/abi.json vs header, Rust bindings, runners)
+        run: node scripts/gen-abi.mjs --check
+
       - name: Build games + native runner
         run: make
 

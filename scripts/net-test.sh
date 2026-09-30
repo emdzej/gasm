@@ -47,23 +47,52 @@ run_case native-native native native
 run_case native-node   native node
 run_case node-native   node   native
 
-# Same over TLS (wss://): throwaway CA + relay certificate for localhost.
+# Same over TLS (wss://): throwaway CA + relay certificate for localhost. Config
+# files instead of -subj/-addext: portable across OpenSSL, old LibreSSL (macOS)
+# and Git Bash (which rewrites "/CN=..." arguments into Windows paths).
 if command -v openssl >/dev/null; then
   TLS_PORT=$((PORT + 1))
-  openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj "/CN=gasm test CA" \
-    -keyout "$TMP/ca.key" -out "$TMP/ca.pem" -addext basicConstraints=critical,CA:TRUE \
-    -addext keyUsage=critical,keyCertSign >/dev/null 2>&1
-  openssl req -newkey rsa:2048 -nodes -subj "/CN=localhost" -keyout "$TMP/relay.key" -out "$TMP/relay.csr" >/dev/null 2>&1
-  printf 'subjectAltName=DNS:localhost,IP:127.0.0.1\nextendedKeyUsage=serverAuth\n' > "$TMP/ext.cnf"
+  cat > "$TMP/ca.cnf" <<'CNF'
+[req]
+distinguished_name = dn
+prompt = no
+x509_extensions = v3_ca
+[dn]
+CN = gasm test CA
+[v3_ca]
+basicConstraints = critical, CA:TRUE
+keyUsage = critical, keyCertSign, cRLSign
+subjectKeyIdentifier = hash
+CNF
+  cat > "$TMP/leaf.cnf" <<'CNF'
+[req]
+distinguished_name = dn
+prompt = no
+[dn]
+CN = localhost
+[v3_leaf]
+basicConstraints = CA:FALSE
+keyUsage = critical, digitalSignature, keyEncipherment
+extendedKeyUsage = serverAuth
+subjectAltName = DNS:localhost, IP:127.0.0.1
+CNF
+  openssl req -x509 -newkey rsa:2048 -nodes -days 1 -config "$TMP/ca.cnf" -keyout "$TMP/ca.key" -out "$TMP/ca.pem" 2>"$TMP/openssl.log"
+  openssl req -new -newkey rsa:2048 -nodes -config "$TMP/leaf.cnf" -keyout "$TMP/relay.key" -out "$TMP/relay.csr" 2>>"$TMP/openssl.log"
   openssl x509 -req -in "$TMP/relay.csr" -CA "$TMP/ca.pem" -CAkey "$TMP/ca.key" -CAcreateserial -days 1 \
-    -extfile "$TMP/ext.cnf" -out "$TMP/relay.pem" >/dev/null 2>&1
-  "$RELAY" 127.0.0.1:$TLS_PORT --tls-cert "$TMP/relay.pem" --tls-key "$TMP/relay.key" 2>"$TMP/relay-tls.log" &
-  TLS_PID=$!
-  trap 'kill $RELAY_PID $TLS_PID 2>/dev/null; rm -rf "$TMP"' EXIT
-  sleep 0.3
-  export SSL_CERT_FILE="$TMP/ca.pem" NODE_EXTRA_CA_CERTS="$TMP/ca.pem"
-  RELAY_URL=wss://localhost:$TLS_PORT
-  run_case tls-native-node native node
+    -extfile "$TMP/leaf.cnf" -extensions v3_leaf -out "$TMP/relay.pem" 2>>"$TMP/openssl.log"
+  if [ -s "$TMP/relay.pem" ]; then
+    "$RELAY" 127.0.0.1:$TLS_PORT --tls-cert "$TMP/relay.pem" --tls-key "$TMP/relay.key" 2>"$TMP/relay-tls.log" &
+    TLS_PID=$!
+    trap 'kill $RELAY_PID $TLS_PID 2>/dev/null; rm -rf "$TMP"' EXIT
+    sleep 0.3
+    CA="$TMP/ca.pem"
+    command -v cygpath >/dev/null && CA=$(cygpath -m "$CA") # native Windows programs need C:/... paths
+    export SSL_CERT_FILE="$CA" NODE_EXTRA_CA_CERTS="$CA"
+    RELAY_URL=wss://localhost:$TLS_PORT
+    run_case tls-native-node native node
+  else
+    fail=$((fail + 1)); echo "FAIL  tls: could not create test certificates"; cat "$TMP/openssl.log"
+  fi
 else
   echo "SKIP  tls (no openssl)"
 fi

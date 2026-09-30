@@ -22,7 +22,7 @@ edition = "2024"
 crate-type = ["cdylib"]
 
 [dependencies]
-gasm = { path = "../gasm" }        # guests/gasm in this repo
+gasm-sdk = "0.1"                   # crates.io; the library is named `gasm`
 
 [profile.release]
 lto = true
@@ -322,6 +322,10 @@ tools/wasi-sdk/bin/clang --target=wasm32-wasip1 -mexec-model=reactor -O2 -Ispec 
 # freestanding, no libc
 tools/wasi-sdk/bin/clang --target=wasm32 -nostdlib -O2 -Ispec -Wl,--no-entry game.c -o game.wasm
 ```
+
+The [C/C++ SDK](/dev/packages#for-game-authors) (release asset
+`gasm-c-sdk-<version>.zip`) wraps this in CMake: `include(Gasm)`, then
+`gasm_add_game(mygame main.c)`.
 
 `-mexec-model=reactor` is required with libc (it produces `_initialize`
 instead of `main`) and belongs on the link step only. Export the entry points

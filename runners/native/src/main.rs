@@ -1,10 +1,6 @@
 //! gasm-run — native runner for gasm ABI v0 games (wasmtime + wgpu + winit).
 
-mod audio;
-mod gfx;
-mod host;
-mod net;
-mod storage;
+use gasm_host::{audio, gfx, host, net, storage};
 
 use std::collections::{HashMap, HashSet};
 use std::process::ExitCode;
