@@ -346,6 +346,17 @@ export class NetConnections {
     const c = this.conns.get(h);
     if (c) { c.ws.close(); this.conns.delete(h); }
   }
+  // Close every connection with a proper handshake and wait (bounded) for it,
+  // so queued messages are delivered before a headless process exits.
+  closeAll(timeoutMs = 1000) {
+    const waits = [...this.conns.values()].map((c) => new Promise((resolve) => {
+      if (c.ws.readyState >= 2) return resolve();
+      c.ws.addEventListener('close', resolve, { once: true });
+      c.ws.close();
+    }));
+    this.conns.clear();
+    return Promise.race([Promise.all(waits), new Promise((r) => setTimeout(r, timeoutMs))]);
+  }
 }
 
 // gasm:storage rules (same as runners/native/src/storage.rs).

@@ -124,7 +124,24 @@ fn run(url: &str, state: &AtomicU32, outgoing: Receiver<Vec<u8>>, incoming: Send
     state.store(OPEN, Ordering::Release);
     let end = pump(&mut ws, &outgoing, &incoming);
     state.store(if end.is_ok() { CLOSED } else { ERROR }, Ordering::Release);
-    let _ = ws.close(None);
+    close_gracefully(&mut ws);
+}
+
+/// WebSocket close handshake, draining incoming data until the peer confirms.
+/// Exiting with unread data makes the OS reset the connection, and a reset can
+/// make the other side discard messages it hasn't read yet (e.g. our last inputs).
+fn close_gracefully(ws: &mut WebSocket<MaybeTlsStream<std::net::TcpStream>>) {
+    if ws.close(None).is_err() {
+        return;
+    }
+    let deadline = std::time::Instant::now() + Duration::from_secs(1);
+    while std::time::Instant::now() < deadline {
+        match ws.read() {
+            Ok(_) => {}
+            Err(tungstenite::Error::Io(e)) if matches!(e.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => {}
+            Err(_) => break, // ConnectionClosed: handshake complete
+        }
+    }
 }
 
 pub(crate) fn pump(

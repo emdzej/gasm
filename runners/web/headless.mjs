@@ -81,11 +81,12 @@ if (screenshot && host.width) {
   writeFileSync(screenshot, encodePng(host.rgba, host.width, host.height));
   console.error(`[gasm-node] wrote ${screenshot}`);
 }
+await host.net.closeAll(); // deliver queued messages before exiting
 if (exitCode !== null) {
   console.error(`[gasm-node] guest exited with code ${exitCode}`);
   process.exit(exitCode);
 }
-process.exit(0); // don't wait for open sockets
+process.exit(0);
 
 function encodePng(rgba, w, h) {
   const crcTable = Array.from({ length: 256 }, (_, n) => {

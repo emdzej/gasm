@@ -10,6 +10,26 @@
 | `make parity ROM=… FRAMES=…` | The NES game built **natively** (Rust, stub host) matches the wasm build | ~1 min first build |
 | `node scripts/web-smoke.mjs <url> <out.png> [secs]` | The browser runner loads and runs in headless Chrome (including WebGPU); prints status, fps and console, saves a screenshot | ~10 s |
 
+### Linux locally (Apple `container`)
+
+On Apple silicon (macOS 26+), the whole suite also runs on Linux arm64 in a
+container. It uses your read-only source; builds go to a named volume, so your
+macOS `target/` dirs are untouched.
+
+```sh
+scripts/linux-container.sh            # build + all tests (NET_REPEAT=5 to stress the network test)
+scripts/linux-container.sh build      # just build; binaries land in dist/linux-arm64/
+scripts/linux-container.sh shell      # interactive shell in the synced tree
+CPUS=8 MEMORY=12g scripts/linux-container.sh
+```
+
+The image (`container/linux.Containerfile`: Debian + Node 22 + rustup) holds only
+toolchains. It also works with Docker/Podman
+(`docker build -f container/linux.Containerfile container/`). Headless tests
+need no display or GPU. CI runs the same suites on Linux x86_64, **Windows**
+and **macOS** runners (`.github/workflows/ci.yml`, job `platforms`), so the
+Windows runner is verified bit-identical too.
+
 ### Determinism test
 
 Cases: the C test pattern, sumo vs. the bot with scripted input (GPU uploads

@@ -56,3 +56,49 @@ jobs:
         with:
           name: games
           path: build/*.wasm
+
+  # Same suites on the other desktop platforms: builds gasm-run natively and runs
+  # the games built above. Proves the Windows/macOS runners are bit-identical.
+  platforms:
+    name: runner tests (${{ matrix.os }})
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, macos-14]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: games
+          path: build
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            runners/native/target
+          key: ${{ runner.os }}-runner-${{ hashFiles('runners/native/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-runner-
+
+      - name: Build native runner
+        working-directory: runners/native
+        run: cargo build --release
+
+      - name: Fetch test ROMs
+        run: scripts/fetch-roms.sh
+
+      - name: Determinism (wasmtime JIT vs AOT vs V8)
+        run: scripts/determinism-test.sh
+
+      - name: Network lockstep (native <-> node via gasm-relay)
+        run: scripts/net-test.sh

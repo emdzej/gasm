@@ -41,6 +41,7 @@ jobs:
         include:
           - { os: macos-14, platform: macos-universal }
           - { os: ubuntu-22.04, platform: linux-x86_64 }
+          - { os: ubuntu-24.04-arm, platform: linux-arm64 }
           - { os: windows-2022, platform: windows-x86_64 }
     runs-on: ${{ matrix.os }}
     defaults:
@@ -130,7 +131,7 @@ jobs:
           |---|---|
           | \`gasm-$VERSION-macos-apps.zip\` | **Sumo.app, NES.app, Triangle.app, Test Pattern.app**, double-click to play (unsigned: right-click, then Open the first time) |
           | \`gasm-$VERSION-macos-universal.tar.gz\` | gasm-run + gasm-relay (Apple Silicon + Intel) with games and launch scripts |
-          | \`gasm-$VERSION-linux-x86_64.tar.gz\` | same for Linux |
+          | \`gasm-$VERSION-linux-x86_64.tar.gz\`, \`gasm-$VERSION-linux-arm64.tar.gz\` | same for Linux (x86_64, arm64) |
           | \`gasm-$VERSION-windows-x86_64.zip\` | same for Windows |
           | \`gasm-$VERSION-games-wasm.zip\` | just the games: the same .wasm files run on every runner and at https://gasm.emdzej.pl/demos/ |
           NOTES

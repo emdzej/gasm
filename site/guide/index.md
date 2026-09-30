@@ -26,6 +26,11 @@ The rest of this guide builds from source.
 | Python 3 | local web server for the browser runner | `python3 --version` |
 | git, curl, make | fetching sources/toolchain | — |
 
+- **Linux runtime:** `gasm-run` needs ALSA (`libasound2`), `libudev1`, a
+  Vulkan (or GL) driver such as Mesa, and X11 or Wayland. Building needs
+  `libasound2-dev libudev-dev pkg-config`.
+- **Windows:** `gasm-run.exe` uses Direct3D 12 (or Vulkan) and WASAPI; no
+  extra installs. Release builds are unsigned, so SmartScreen may ask once.
 - **Rust from Homebrew isn't enough** for the games: it has no wasm targets.
   Install rustup (`brew install rustup` then `rustup-init`, or see rustup.rs).
   The Makefile adds the `wasm32-unknown-unknown` target to the `stable`
