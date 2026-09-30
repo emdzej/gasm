@@ -32,6 +32,13 @@ jobs:
         with:
           name: games
           path: build/*.wasm
+      # doom.wasm is GPL-2.0: its complete source goes out with every release
+      - name: DOOM source
+        run: scripts/package-doom-src.sh "$TAG"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: doom-src
+          path: dist/*-doom-src.tar.gz
 
   native:
     needs: games
@@ -138,6 +145,7 @@ jobs:
           | \`gasm-$VERSION-linux-x86_64.tar.gz\`, \`gasm-$VERSION-linux-arm64.tar.gz\` | same for Linux (x86_64, arm64) |
           | \`gasm-$VERSION-windows-x86_64.zip\` | same for Windows |
           | \`gasm-$VERSION-games-wasm.zip\` | just the games: the same .wasm files run on every runner and at https://gasm.emdzej.pl/demos/ |
+          | \`gasm-$VERSION-doom-src.tar.gz\` | complete source of \`doom.wasm\` (GPL-2.0: doomgeneric, chocolate-doom's OPL music, gasm's glue); \`make doom\` rebuilds it |
           | \`gasm-c-sdk-$VERSION.zip\` | C/C++ SDK: \`gasm.h\` + CMake toolchain (wasi-sdk) + example |
           | \`gasm.h\`, \`abi.json\` | the ABI as a single C header, and machine-readable |
 

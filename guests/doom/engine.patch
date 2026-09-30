@@ -1,0 +1,188 @@
+--- a/d_main.c
++++ b/d_main.c
+@@ -165,6 +165,20 @@
+ extern  boolean setsizeneeded;
+ extern  int             showMessages;
+ void R_ExecuteSetViewSize (void);
++
++// gasm: a screen wipe in progress, advanced once per frame.
++static boolean wipe_in_progress = false;
++
++static void D_WipeStep(void)
++{
++    if (wipe_ScreenWipe(wipe_Melt, 0, 0, SCREENWIDTH, SCREENHEIGHT, 1))
++    {
++        wipe_in_progress = false;
++    }
++    I_UpdateNoBlit ();
++    M_Drawer ();                            // menu is drawn even on top of wipes
++    I_FinishUpdate ();                      // page flip or blit buffer
++}
+ 
+ void D_Display (void)
+ {
+@@ -308,24 +322,10 @@
+     // wipe update
+     wipe_EndScreen(0, 0, SCREENWIDTH, SCREENHEIGHT);
+ 
+-    wipestart = I_GetTime () - 1;
+-
+-    do
+-    {
+-	do
+-	{
+-	    nowtime = I_GetTime ();
+-	    tics = nowtime - wipestart;
+-            I_Sleep(1);
+-	} while (tics <= 0);
+-        
+-	wipestart = nowtime;
+-	done = wipe_ScreenWipe(wipe_Melt
+-			       , 0, 0, SCREENWIDTH, SCREENHEIGHT, tics);
+-	I_UpdateNoBlit ();
+-	M_Drawer ();                            // menu is drawn even on top of wipes
+-	I_FinishUpdate ();                      // page flip or blit buffer
+-    } while (!done);
++    // gasm: melt one step per frame in doomgeneric_Tick instead of
++    // blocking here until the wipe is done.
++    wipe_in_progress = true;
++    D_WipeStep();
+ }
+ 
+ //
+@@ -404,6 +404,14 @@
+ 
+ void doomgeneric_Tick()
+ {
++    // gasm: the game doesn't run while the screen melts (as in vanilla,
++    // where the wipe loop blocked); the tics are caught up afterwards.
++    if (wipe_in_progress)
++    {
++        D_WipeStep();
++        return;
++    }
++
+     // frame syncronous IO operations
+     I_StartFrame ();
+ 
+@@ -416,6 +424,13 @@
+     {
+         D_Display ();
+     }
++}
++
++// gasm: wasm traps on calls through a function pointer of the wrong type,
++// and G_CheckDemoStatus returns boolean.
++static void D_CheckDemoStatusAtExit(void)
++{
++    G_CheckDemoStatus();
+ }
+ 
+ //
+@@ -1510,7 +1525,7 @@
+         printf("Playing demo %s.\n", file);
+     }
+ 
+-    I_AtExit((atexit_func_t) G_CheckDemoStatus, true);
++    I_AtExit(D_CheckDemoStatusAtExit, true);
+ 
+     // Generate the WAD hash table.  Speed things up a bit.
+     W_GenerateHashTable();
+--- a/i_system.c
++++ b/i_system.c
+@@ -259,9 +259,10 @@
+ 
+ #if ORIGCODE
+     SDL_Quit();
++#endif
+ 
++    // gasm: really quit (the runner ends the game).
+     exit(0);
+-#endif
+ }
+ 
+ #if !defined(_WIN32) && !defined(__MACOSX__) && !defined(__DJGPP__)
+--- a/m_config.c
++++ b/m_config.c
+@@ -1608,7 +1608,7 @@
+ 
+ static void SaveDefaultCollection(default_collection_t *collection)
+ {
+-#if ORIGCODE
++#if ORIGCODE || GASM
+     default_t *defaults;
+     int i, v;
+     FILE *f;
+@@ -1626,9 +1626,17 @@
+         // Ignore unbound variables
+ 
+         if (!defaults[i].bound)
++        {
++            continue;
++        }
++
++#if GASM
++        // gasm: controls come from the pad mapping, not the config file.
++        if (defaults[i].type == DEFAULT_KEY)
+         {
+             continue;
+         }
++#endif
+ 
+         // Print the name and line up all values at 30 characters
+ 
+@@ -1642,6 +1650,7 @@
+         switch (defaults[i].type) 
+         {
+             case DEFAULT_KEY:
++#if !GASM
+ 
+                 // use the untranslated version if we can, to reduce
+                 // the possibility of screwing up the user's config
+@@ -1685,6 +1694,7 @@
+                 }
+ 
+ 	        fprintf(f, "%i", v);
++#endif
+                 break;
+ 
+             case DEFAULT_INT:
+@@ -1770,7 +1780,7 @@
+ 
+ static void LoadDefaultCollection(default_collection_t *collection)
+ {
+-#if ORIGCODE
++#if ORIGCODE || GASM
+     FILE *f;
+     default_t *def;
+     char defname[80];
+@@ -1800,7 +1810,11 @@
+ 
+         def = SearchCollection(collection, defname);
+ 
+-        if (def == NULL || !def->bound)
++        if (def == NULL || !def->bound
++#if GASM
++         || def->type == DEFAULT_KEY
++#endif
++           )
+         {
+             // Unknown variable?  Unbound variables are also treated
+             // as unknown.
+@@ -2042,11 +2056,16 @@
+ 
+ static char *GetDefaultConfigDir(void)
+ {
++#if GASM
++    // gasm: files are flat storage keys (default.cfg, doomsav0.dsg).
++    return strdup("");
++#else
+     char *result = (char *)malloc(2);
+     result[0] = '.';
+     result[1] = '\0';
+ 
+     return result;
++#endif
+ }
+ 
+ // 

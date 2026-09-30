@@ -17,6 +17,7 @@ guests/              Rust workspace, target wasm32-unknown-unknown
   gasm/                bindings, game! macro, native stub host
   sumo/                3D two-player game (sim.rs, render.rs, lib.rs)
   nes/                 NES emulator on tetanes-core
+  doom/                DOOM: platform layer for doomgeneric (C; engine fetched at build)
   triangle/            smallest GPU example
   parity/              runs the NES game natively (parity + benchmarks)
   test-pattern/        C example (wasi-sdk)

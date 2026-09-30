@@ -8,6 +8,7 @@
 #   make relay      run gasm-relay on ws://0.0.0.0:9000
 #   make parity     NES guest built natively vs as wasm (ROM=, FRAMES=)
 #   make roms       fetch freely distributable test ROMs into roms/
+#   make doom       build/doom.wasm (fetches the GPL-2.0 engine into tools/doom-src)
 
 BUILD    := build
 
@@ -28,9 +29,9 @@ TARGET   := --target=wasm32-wasip1
 REACTOR  := -mexec-model=reactor
 OPT      := -O2 -DNDEBUG
 
-GUESTS   := $(BUILD)/test-pattern.wasm $(BUILD)/nes.wasm $(BUILD)/sumo.wasm $(BUILD)/triangle.wasm $(BUILD)/assetcheck.wasm
+GUESTS   := $(BUILD)/test-pattern.wasm $(BUILD)/nes.wasm $(BUILD)/sumo.wasm $(BUILD)/triangle.wasm $(BUILD)/assetcheck.wasm $(BUILD)/doom.wasm
 
-.PHONY: all guests native test web relay roms parity clean rust-toolchain
+.PHONY: all guests native test web relay roms parity clean rust-toolchain doom
 all: guests native
 
 guests: $(GUESTS)
@@ -41,6 +42,35 @@ $(WASI_SDK)/bin/clang:
 rust-toolchain:
 	@test -n "$(CARGO_W)" || { echo "rustup toolchain '$(TOOLCHAIN)' not found; install rustup, then: rustup toolchain install $(TOOLCHAIN) --target wasm32-unknown-unknown"; exit 1; }
 	@$(RUSTUP) target list --installed --toolchain $(TOOLCHAIN) | grep -q wasm32-unknown-unknown || $(RUSTUP) target add --toolchain $(TOOLCHAIN) wasm32-unknown-unknown
+
+# --- DOOM (guests/doom): doomgeneric + chocolate-doom's OPL music, fetched at build ---
+DOOM_SRC  := tools/doom-src
+DOOM_ENGINE := am_map d_event d_items d_iwad d_loop d_main d_mode d_net doomdef doomgeneric \
+  doomstat dstrings dummy f_finale f_wipe g_game hu_lib hu_stuff i_cdmus i_endoom i_input \
+  i_joystick i_scale i_sound i_system i_timer i_video info m_argv m_bbox m_cheat m_config \
+  m_controls m_fixed m_menu m_misc m_random memio mus2mid p_ceilng p_doors p_enemy p_floor \
+  p_inter p_lights p_map p_maputl p_mobj p_plats p_pspr p_saveg p_setup p_sight p_spec \
+  p_switch p_telept p_tick p_user r_bsp r_data r_draw r_main r_plane r_segs r_sky r_things \
+  s_sound sha1 sounds st_lib st_stuff statdump tables v_video w_checksum w_file w_file_stdc \
+  w_main w_wad wi_stuff z_zone i_oplmusic midifile opl_queue dbopl
+DOOM_GLUE := guests/doom/gasm_doom.c guests/doom/gasm_opl.c
+DOOM_DEFS := -DCMAP256 -DDOOMGENERIC_RESX=320 -DDOOMGENERIC_RESY=200 -DFEATURE_SOUND \
+  -D_GNU_SOURCE -DGASM=1 -Dmusic_opl_module=DG_music_module
+DOOM_WARN := -Wno-implicit-function-declaration -Wno-int-conversion -Wno-incompatible-pointer-types \
+  -Wno-pointer-sign -Wno-dangling-else -Wno-parentheses -Wno-format -Wno-unused-value \
+  -Wno-return-type -Wno-deprecated-non-prototype -Wno-string-concatenation -Wno-absolute-value
+
+doom: $(BUILD)/doom.wasm
+
+$(DOOM_SRC)/.version: scripts/fetch-doom.sh guests/doom/engine.patch
+	scripts/fetch-doom.sh
+
+$(BUILD)/doom.wasm: $(DOOM_GLUE) guests/doom/gasm_doom.h guests/doom/prelude.h spec/gasm.h $(DOOM_SRC)/.version | $(WASI_SDK)/bin/clang
+	@mkdir -p $(@D)
+	$(CC) $(TARGET) $(REACTOR) $(OPT) $(DOOM_DEFS) $(DOOM_WARN) -include guests/doom/prelude.h \
+	  -Iguests/doom/shim -Iguests/doom -I$(DOOM_SRC) -Ispec \
+	  $(DOOM_GLUE) $(addprefix $(DOOM_SRC)/,$(addsuffix .c,$(DOOM_ENGINE))) \
+	  -Wl,-z,stack-size=1048576 -o $@ -lm
 
 $(BUILD)/test-pattern.wasm: guests/test-pattern/main.c spec/gasm.h | $(WASI_SDK)/bin/clang
 	@mkdir -p $(@D)

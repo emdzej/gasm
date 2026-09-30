@@ -6,12 +6,13 @@ interface** (video, audio, input, assets, GPU, network). The same `.wasm` runs
 natively (wasmtime + wgpu), in the browser (WebAssembly + WebGPU), and headless
 in Node, with bit-identical game state.
 
-Games in this repo (all Rust except one C example):
+Games in this repo (Rust, plus two in C):
 
 | Game | Shows | Size |
 |---|---|---|
 | `sumo.wasm` | 3D (`gasm:gfx`, WebGPU/WGSL) + online 2-player lockstep (`gasm:net`), with cross-play between native and browser | 70 KB |
 | `nes.wasm` | NES emulator on [tetanes-core](https://crates.io/crates/tetanes-core): 2D video, audio, input, assets | 1.5 MB |
+| `doom.wasm` | DOOM ([doomgeneric](https://github.com/ozkl/doomgeneric), C) with OPL music, saves in `gasm:storage`, any IWAD as an asset ([guests/doom](guests/doom/README.md)) | 750 KB |
 | `triangle.wasm` | Smallest `gasm:gfx` program (about 50 lines of Rust) | 25 KB |
 | `test-pattern.wasm` | Minimal C guest (proves the ABI is language-agnostic) | 87 KB |
 | `assetcheck.wasm` | Test guest for asset providers (folders, streaming, OPFS) | 34 KB |
@@ -66,7 +67,7 @@ On Linux, the native runner also needs `libasound2-dev libudev-dev pkg-config`.
 
 ```sh
 make                 # build games (build/*.wasm) + native runner + relay
-make roms            # fetch freely distributable test ROMs / homebrew into roms/
+make roms            # fetch freely distributable test ROMs / homebrew, Freedoom and shareware DOOM into roms/
 make test            # determinism (JIT vs AOT vs V8) + network lockstep tests
 
 R=runners/native/target/release/gasm-run
@@ -81,6 +82,9 @@ make web   # terminal 3, open http://localhost:8080/runners/web/, enter the rela
 
 # NES
 $R build/nes.wasm --rom roms/bladebuster.nes
+
+# DOOM (any IWAD: doom1.wad, doom2.wad, Freedoom, ...)
+$R build/doom.wasm --asset wad=roms/doom1.wad
 ```
 
 Controls: arrows = D-pad, **X** = A, **Z** = B, **Enter** = Start,
@@ -90,8 +94,9 @@ ball off the platform. First to 5 wins.
 
 ## Results (Apple M1 Pro, this commit)
 
-**Portability.** `make test` checks 8 single-player cases (test pattern, sumo
-vs. bot, 5 NES test ROMs/demos, scripted Blade Buster gameplay). Each produces
+**Portability.** `make test` checks 11 single-player cases (test pattern, sumo
+vs. bot, 5 NES test ROMs/demos, scripted Blade Buster gameplay, the DOOM and
+Freedoom attract-mode demos, and a scripted DOOM game that saves and loads). Each produces
 **bit-identical video, audio and GPU-upload streams** on wasmtime JIT,
 wasmtime AOT and V8. It also plays 3,600-frame online sumo matches through
 `gasm-relay` for native↔native, native↔Node and Node↔native, all ending in the
@@ -112,7 +117,9 @@ hashes.
 | wasm, Node 22 (V8)             | 11.2 s | 1.6×      | ~9×      |
 
 Sumo's simulation plus scene building runs at more than 100,000 frames/s
-headless; with the GPU, both runners hold 60 fps.
+headless; with the GPU, both runners hold 60 fps. DOOM (shareware demos,
+`--no-hash`) runs at 2,700 to 3,000 frames/s on wasmtime (JIT and AOT) and about 2,800 on V8, about
+80x its 35 Hz.
 
 ## Layout
 
@@ -122,14 +129,15 @@ guests/                      Rust workspace (wasm32-unknown-unknown)
   gasm/                        Rust bindings + game! macro + native stub host
   sumo/                        3D 2-player game: sim.rs (deterministic), render.rs, lib.rs (lockstep)
   nes/                         NES emulator on tetanes-core
+  doom/                        DOOM: gasm platform layer for doomgeneric (engine fetched at build)
   triangle/                    smallest GPU example
   parity/                      runs the NES game natively (parity + benchmarks)
   test-pattern/                C guest (wasi-sdk)
 runners/native/              Rust: wasmtime + wasmtime-wasi, wgpu, winit, cpal, gilrs, tungstenite
   src/bin/gasm-relay.rs        WebSocket room relay
 runners/web/                 gasm-host.js (browser + Node), webgpu-gfx.js, index.html, app.js, headless.mjs
-scripts/                     fetch-wasi-sdk, fetch-roms, determinism-test, net-test, web-smoke,
-                             build-site, package-cli, package-macos
+scripts/                     fetch-wasi-sdk, fetch-roms, fetch-doom, determinism-test, net-test,
+                             web-smoke, build-site, package-cli, package-macos, package-doom-src
 site/                        website (VitePress): docs, dev guides, demos → gasm.emdzej.pl
 .github/workflows/           CI (tests), Pages (site), Release (macOS apps + CLI builds)
 ```
@@ -137,11 +145,14 @@ site/                        website (VitePress): docs, dev guides, demos → ga
 ## Licensing
 
 - gasm (spec, runners, relay, bindings, games): MIT.
-- `nes.wasm` statically contains tetanes-core (MIT OR Apache-2.0). No copyleft
-  code is involved anymore; the earlier QuickNES (GPL-2.0) build was replaced.
-- ROMs are not part of the repo. `make roms` downloads test ROMs and homebrew
+- `nes.wasm` statically contains tetanes-core (MIT OR Apache-2.0).
+- `doom.wasm` is **GPL-2.0** as a whole (the DOOM source code). The repo holds
+  only gasm's MIT glue and a small engine patch; `make doom` fetches the engine.
+  Releases and the website ship the complete source next to the binary.
+- ROMs and WADs are not part of the repo. `make roms` downloads test ROMs and homebrew
   demos from the [nes-test-roms](https://github.com/christopherpow/nes-test-roms)
-  collection for testing.
+  collection, [Freedoom](https://freedoom.github.io/) (BSD-3-Clause) and the
+  freely distributable DOOM shareware `doom1.wad`.
 
 ## Next steps
 

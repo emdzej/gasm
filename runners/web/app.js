@@ -11,10 +11,17 @@ import { WebGpuGfx } from './webgpu-gfx.js';
 // development (`make web`), the page's own directory on the website.
 const ROOT = new URL(document.querySelector('meta[name=gasm-root]')?.content ?? '../../', import.meta.url);
 const GAMES = {
-  'sumo.wasm': '3D sumo (2 players)', 'nes.wasm': 'NES (tetanes-core)',
+  'sumo.wasm': '3D sumo (2 players)', 'nes.wasm': 'NES (tetanes-core)', 'doom.wasm': 'DOOM (doomgeneric)',
   'triangle.wasm': 'GPU triangle', 'test-pattern.wasm': 'test pattern (C)',
   'assetcheck.wasm': 'asset check (test)',
 };
+// Games that take a content file from roms/ (or an opened/dropped file) as an asset.
+// `known` is offered even without a roms/ directory listing (the website has none).
+const CONTENT = {
+  'nes.wasm': { ext: '.nes', asset: 'rom', preferred: 'bladebuster', known: [] },
+  'doom.wasm': { ext: '.wad', asset: 'wad', preferred: 'doom1.wad', known: ['doom1.wad'] },
+};
+const contentGame = (name) => Object.keys(CONTENT).find((g) => name.toLowerCase().endsWith(CONTENT[g].ext));
 
 const $ = (id) => document.getElementById(id);
 // A canvas can only ever have one context type, so each game gets a fresh one.
@@ -221,9 +228,11 @@ async function start({ romBytes } = {}) {
   const game = url.get('wasm') ?? $('game').value;   // ?wasm=<url> runs any module
   const hashFrames = Number(url.get('hashframes') || 0);
   const record = {};
-  if (game === 'nes.wasm' && !folder && !url.has('opfs')) {
-    romBytes ??= await fetchBytes(new URL(`roms/${url.get('rom') ?? $('rom').value}`, ROOT));
-    record.rom = romBytes;
+  if (CONTENT[game] && !folder && !url.has('opfs')) {
+    try {
+      romBytes ??= await fetchBytes(new URL(`roms/${url.get('rom') ?? $('rom').value}`, ROOT));
+    } catch (e) { return log(`${e.message}: open a ${CONTENT[game].ext} file instead`); }
+    record[CONTENT[game].asset] = romBytes;
   }
   // Launch parameters: URL query plus the relay/room fields.
   const skip = ['game', 'autostart', 'wasm', 'worker', 'opfs', 'prefix', 'hashframes', 'rom'];
@@ -284,23 +293,32 @@ async function fetchBytes(url) {
 
 // ---- UI ----------------------------------------------------------------------
 for (const [file, label] of Object.entries(GAMES)) $('game').add(new Option(label, file));
+let romNames = [];   // roms/ directory listing (development server only)
+function fillRoms() {
+  const c = CONTENT[$('game').value];
+  $('rom').replaceChildren();
+  if (!c) return;
+  const names = [...new Set([...romNames.filter((n) => n.toLowerCase().endsWith(c.ext)), ...c.known])];
+  for (const n of names) $('rom').add(new Option(n, n));
+  const preferred = names.find((n) => n.startsWith(c.preferred));
+  if (preferred) $('rom').value = preferred;
+  $('romlabel').firstChild.textContent = `open ${c.ext}…`;
+}
 $('game').onchange = () => {
   const g = $('game').value;
-  $('rom').hidden = $('romlabel').hidden = g !== 'nes.wasm';
+  $('rom').hidden = $('romlabel').hidden = !CONTENT[g];
   $('netfields').hidden = g !== 'sumo.wasm';
+  fillRoms();
 };
 $('relay').value = new URLSearchParams(location.search).get('relay') ?? '';
 $('room').value = new URLSearchParams(location.search).get('room') ?? 'sumo';
 $('relay').placeholder = `ws://${location.hostname || 'localhost'}:9000  (empty = vs. bot)`;
 
 // roms/ is listed via the dev server's directory index (python -m http.server)
-fetch(new URL('roms/', ROOT)).then((r) => r.text()).then((html) => {
-  const names = [...html.matchAll(/href="([^"]+\.nes)"/gi)].map((m) => decodeURIComponent(m[1]));
-  for (const n of names) $('rom').add(new Option(n, n));
-  const preferred = names.find((n) => n.startsWith('bladebuster'));
-  if (preferred) $('rom').value = preferred;
-  if (!names.length) log('no roms/ found — run `make roms`, or open a .nes file');
-}).catch(() => log('no roms/ listing — open a .nes file'));
+fetch(new URL('roms/', ROOT)).then((r) => (r.ok ? r.text() : '')).then((html) => {
+  romNames = [...html.matchAll(/href="([^"]+\.(?:nes|wad))"/gi)].map((m) => decodeURIComponent(m[1]));
+  fillRoms();
+}).catch(() => {});
 
 $('start').onclick = () => start();
 $('pause').onclick = () => { running = !running; last = performance.now(); $('pause').textContent = running ? '❚❚ pause' : '▶ resume'; };
@@ -330,17 +348,20 @@ $('folderinput').onchange = (e) => {
 };
 $('worker').checked = new URLSearchParams(location.search).has('worker');
 
-$('romfile').onchange = async (e) => {
-  const f = e.target.files[0];
-  if (f) { $('game').value = 'nes.wasm'; start({ romBytes: new Uint8Array(await f.arrayBuffer()) }); }
-};
+// An opened or dropped content file picks its game by extension (.nes, .wad).
+async function openContent(f) {
+  const g = contentGame(f.name);
+  if (!g) return log(`${f.name}: expected a ${Object.values(CONTENT).map((c) => c.ext).join(' or ')} file`);
+  if ($('game').value !== g) { $('game').value = g; $('game').onchange(); }
+  start({ romBytes: new Uint8Array(await f.arrayBuffer()) });
+}
+$('romfile').onchange = (e) => { if (e.target.files[0]) openContent(e.target.files[0]); };
 const stage = $('stage');
 stage.ondragover = (e) => { e.preventDefault(); stage.classList.add('drag'); };
 stage.ondragleave = () => stage.classList.remove('drag');
 stage.ondrop = async (e) => {
   e.preventDefault(); stage.classList.remove('drag');
-  const f = e.dataTransfer.files[0];
-  if (f) { $('game').value = 'nes.wasm'; start({ romBytes: new Uint8Array(await f.arrayBuffer()) }); }
+  if (e.dataTransfer.files[0]) openContent(e.dataTransfer.files[0]);
 };
 
 const params = new URLSearchParams(location.search);

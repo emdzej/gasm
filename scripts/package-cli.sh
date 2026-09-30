@@ -9,7 +9,14 @@ EXE=""; [[ "$PLATFORM" == windows* ]] && EXE=".exe"
 PKG="dist/gasm-$VERSION-$PLATFORM"
 rm -rf "$PKG"; mkdir -p "$PKG/games"
 cp "$BIN/gasm-run$EXE" "$BIN/gasm-relay$EXE" "$PKG/"
-cp build/sumo.wasm build/nes.wasm build/triangle.wasm build/test-pattern.wasm "$PKG/games/"
+cp build/sumo.wasm build/nes.wasm build/doom.wasm build/triangle.wasm build/test-pattern.wasm "$PKG/games/"
+cat > "$PKG/games/doom-LICENSE.txt" <<TXT
+doom.wasm is DOOM (doomgeneric, chocolate-doom) for gasm, licensed under the
+GNU General Public License version 2. Its complete source code is
+gasm-$VERSION-doom-src.tar.gz, published next to this package at
+https://github.com/emdzej/gasm/releases/tag/$VERSION
+The game data (WAD files) is not included and has its own license.
+TXT
 
 if [ -z "$EXE" ]; then
   for g in triangle test-pattern; do
@@ -26,9 +33,19 @@ SH
   cat > "$PKG/run-nes.sh" <<'SH'
 #!/bin/sh
 # ./run-nes.sh path/to/game.nes
-cd "$(dirname "$0")"
 [ -n "$1" ] || { echo "usage: $0 <rom.nes>"; exit 2; }
-exec ./gasm-run games/nes.wasm --rom "$1"
+rom=$(cd "$(dirname "$1")" && pwd)/$(basename "$1")
+cd "$(dirname "$0")"
+exec ./gasm-run games/nes.wasm --rom "$rom"
+SH
+  cat > "$PKG/run-doom.sh" <<'SH'
+#!/bin/sh
+# ./run-doom.sh path/to/doom1.wad [DOOM options, e.g. -warp 1 1 -skill 4]
+# Any IWAD works: shareware doom1.wad, doom.wad, doom2.wad, Freedoom.
+[ -n "$1" ] || { echo "usage: $0 <file.wad> [options]"; exit 2; }
+wad=$(cd "$(dirname "$1")" && pwd)/$(basename "$1"); shift
+cd "$(dirname "$0")"
+exec ./gasm-run games/doom.wasm --asset "wad=$wad" --param "args=$*"
 SH
   cat > "$PKG/run-relay.sh" <<'SH'
 #!/bin/sh
@@ -42,6 +59,7 @@ else
   printf '@echo off\r\nrem Sumo vs. the bot: run-sumo.cmd    Online: run-sumo.cmd ws://HOST:9000 [room]\r\ncd /d "%%~dp0"\r\nif "%%~1"=="" (gasm-run.exe games\\sumo.wasm) else (if "%%~2"=="" (gasm-run.exe games\\sumo.wasm --allow-net --param relay=%%1 --param room=sumo) else (gasm-run.exe games\\sumo.wasm --allow-net --param relay=%%1 --param room=%%2))\r\n' > "$PKG/run-sumo.cmd"
   printf '@echo off\r\nrem run-nes.cmd path\\to\\game.nes\r\ncd /d "%%~dp0"\r\ngasm-run.exe games\\nes.wasm --rom %%1\r\n' > "$PKG/run-nes.cmd"
   printf '@echo off\r\ncd /d "%%~dp0"\r\ngasm-relay.exe 0.0.0.0:9000\r\n' > "$PKG/run-relay.cmd"
+  printf '@echo off\r\nrem run-doom.cmd path\\to\\doom1.wad (any IWAD: doom1.wad, doom.wad, doom2.wad, Freedoom)\r\ncd /d "%%~dp0"\r\ngasm-run.exe games\\doom.wasm --asset wad=%%1\r\n' > "$PKG/run-doom.cmd"
 fi
 
 cat > "$PKG/README.txt" <<TXT
@@ -51,10 +69,11 @@ https://gasm.emdzej.pl
   gasm-run$EXE      native runner (wasmtime + wgpu)   gasm-run$EXE --help
   gasm-relay$EXE    WebSocket room relay for online play
   games/           sumo.wasm (3D, 2 players), nes.wasm (NES emulator),
-                   triangle.wasm, test-pattern.wasm
+                   doom.wasm (DOOM, GPL-2.0), triangle.wasm, test-pattern.wasm
 
 Quick start: run-sumo (vs. bot), run-sumo ws://HOST:9000 (online, start
-run-relay somewhere first), run-nes <rom.nes>, run-triangle.
+run-relay somewhere first), run-nes <rom.nes>, run-doom <doom1.wad>,
+run-triangle.
 
 Controls: arrows = D-pad, X = A, Z = B, Enter = Start, Esc = quit. Gamepads work.
 The same .wasm files run in the browser: https://gasm.emdzej.pl/demos/

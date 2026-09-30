@@ -39,8 +39,8 @@
 <header>
   <b>gasm</b>
   <select id="game" title="guest module"></select>
-  <select id="rom" title="ROM (asset &quot;rom&quot;)"></select>
-  <label class="file" id="romlabel">open .nes…<input id="romfile" type="file" accept=".nes"></label>
+  <select id="rom" title="Content file from roms/ (NES: asset &quot;rom&quot;, DOOM: asset &quot;wad&quot;)"></select>
+  <label class="file" id="romlabel">open .nes…<input id="romfile" type="file" accept=".nes,.wad"></label>
   <span id="netfields">
     <input id="relay" size="34" title="gasm-relay URL (empty = offline vs. bot)">
     <input id="room" size="8" title="room name (both players use the same)">
@@ -54,7 +54,7 @@
 </header>
 <main id="stage"><canvas id="screen" width="256" height="240"></canvas></main>
 <footer>
-  <span id="log">drop a .nes file on the screen, or pick one above</span>
+  <span id="log">drop a .nes or .wad file on the screen, or pick one above</span>
   <span title="Player 2 keys apply while fewer than two gamepads are connected">P1: arrows, X=A Z=B, Enter=Start · P2: IJKL, .=A ,=B, RCtrl=Start · gamepads · <a href="#" onclick="document.getElementById('keys').click();return false">change keys</a> · <span id="fps"></span></span>
 </footer>
 <dialog id="keysdlg">

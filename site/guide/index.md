@@ -13,7 +13,7 @@ everything from source.
     `~/Library/Logs/gasm/`.
   - `gasm-<version>-<platform>` archives (macOS universal, Linux, Windows):
     `gasm-run`, `gasm-relay`, the games, and `run-sumo` / `run-nes` /
-    `run-relay` / `run-triangle` scripts.
+    `run-doom` / `run-relay` / `run-triangle` scripts.
 
 The rest of this guide builds from source.
 
@@ -46,13 +46,14 @@ The rest of this guide builds from source.
 
 ```sh
 make          # games (build/*.wasm) + native runner + relay
-make roms     # optional: test ROMs and homebrew demos into roms/
+make roms     # optional: test ROMs, homebrew demos, Freedoom and shareware DOOM into roms/
 ```
 
 | File | What |
 |---|---|
 | `build/sumo.wasm` | 3D two-player sumo (GPU + network) |
 | `build/nes.wasm` | NES emulator (tetanes-core); needs a ROM |
+| `build/doom.wasm` | DOOM (doomgeneric); needs a WAD |
 | `build/test-pattern.wasm` | Tiny C demo: gradient, movable square, tone on A |
 | `runners/native/target/release/gasm-run` | Native runner |
 | `runners/native/target/release/gasm-relay` | Room relay for online play |
@@ -65,7 +66,14 @@ $R build/sumo.wasm                                  # vs. bot
 $R build/sumo.wasm --param mode=local2              # two players: one keyboard, or two gamepads
 $R build/nes.wasm --rom roms/bladebuster.nes
 $R build/nes.wasm --rom ~/path/to/your-game.nes --param filter=ntsc
+$R build/doom.wasm --asset wad=roms/doom1.wad
+$R build/doom.wasm --asset wad=~/Games/DOOM2.WAD --param "args=-warp 7 -skill 4"
 ```
+
+DOOM takes any IWAD as the asset `wad` (shareware `doom1.wad`, `doom.wad`,
+`doom2.wad`, Freedoom, ...). `args` is a DOOM command line. See
+[guests/doom](https://github.com/emdzej/gasm/blob/main/guests/doom/README.md)
+for its controls.
 
 The window is resizable. Its title shows the game's frame rate. Press **Esc**
 or close the window to quit.
@@ -98,6 +106,8 @@ make web
    to play online (next section).
    **NES:** pick a ROM from the list (from `roms/`), click **open .nes…**, or
    drag and drop a `.nes` file onto the screen.
+   **DOOM:** pick a WAD from the list (`doom1.wad` by default), click
+   **open .wad…**, or drop a `.wad` file onto the screen.
 3. Click **▶ start**. Browsers only allow audio after a click, so the first
    start must be a click.
 
@@ -152,16 +162,16 @@ $R build/sumo.wasm --allow-net --param relay=ws://RELAY_HOST:9000 --param room=f
 
 ## 6. Controls
 
-| gasm button | Keyboard | Gamepad (position) | NES | Sumo |
-|---|---|---|---|---|
-| D-pad | Arrow keys | D-pad / left stick | D-pad | move |
-| A | X | East (right face) | A | dash |
-| B | Z | South (bottom face) | B | dash |
-| X | S | North (top face) | — | — |
-| Y | A | West (left face) | — | — |
-| L / R | Q / W | LB / RB | — | — |
-| Start | Enter | Start | Start | — |
-| Select | Right Shift (web: either Shift) | Select/Back | Select | — |
+| gasm button | Keyboard | Gamepad (position) | NES | Sumo | DOOM |
+|---|---|---|---|---|---|
+| D-pad | Arrow keys | D-pad / left stick | D-pad | move | move, turn |
+| A | X | East (right face) | A | dash | fire; select in menus |
+| B | Z | South (bottom face) | B | dash | use (doors); back |
+| X | S | North (top face) | — | — | next weapon |
+| Y | A | West (left face) | — | — | run |
+| L / R | Q / W | LB / RB | — | — | strafe |
+| Start | Enter | Start | Start | — | menu |
+| Select | Right Shift (web: either Shift) | Select/Back | Select | — | automap |
 
 Keyboard and the first gamepad both drive player 1. **Player 2 has its own
 keys by default:** I/J/K/L move, `.` = A, `,` = B, M = X, N = Y, U/O = L/R,
@@ -294,6 +304,14 @@ more; see the [tetanes project](https://github.com/lukexor/tetanes)). Use
 iNES `.nes` files. It passes the blargg CPU, timing and APU test
 ROMs. Battery-backed saves are kept (see [Saves](#saves)). For commercial games, use dumps
 of cartridges you own.
+
+### DOOM WADs
+
+Any DOOM IWAD works: the shareware `doom1.wad` (`make roms` fetches it; id
+Software made it freely distributable), `doom.wad` (registered or Ultimate),
+`doom2.wad`, `plutonia.wad`, `tnt.wad`, and the free
+[Freedoom](https://freedoom.github.io/) IWADs. For the commercial ones, use
+your own copies.
 
 ## 9. Troubleshooting
 

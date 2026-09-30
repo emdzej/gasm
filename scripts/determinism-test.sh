@@ -6,8 +6,8 @@ set -uo pipefail
 cd "$(dirname "$0")/.."
 NATIVE=runners/native/target/release/gasm-run
 NODE="node runners/web/headless.mjs"
-[ -d roms ] && [ -n "$(ls roms/*.nes 2>/dev/null)" ] || scripts/fetch-roms.sh
-for g in nes test-pattern sumo; do "$NATIVE" build/$g.wasm --compile build/$g.cwasm 2>/dev/null; done
+[ -d roms ] && [ -n "$(ls roms/*.nes 2>/dev/null)" ] && [ -f roms/freedoom2.wad ] && [ -f roms/doom1.wad ] || scripts/fetch-roms.sh
+for g in nes test-pattern sumo doom; do "$NATIVE" build/$g.wasm --compile build/$g.cwasm 2>/dev/null; done
 
 pass=0; fail=0
 check() { # <name> <guest-basename> <frames> [runner args...]
@@ -32,6 +32,12 @@ check apu_test           nes 1200 --rom roms/apu_test.nes
 check spritecans         nes 600  --rom roms/spritecans.nes
 check quantum_disco      nes 1800 --rom roms/quantum_disco.nes
 check bladebuster-play   nes 2400 --rom roms/bladebuster.nes --input "100-104:START,200-204:START,300-2400:RIGHT+A,600-900:UP,1200-1500:DOWN"
+# doom: attract-mode demos (IWAD demo lumps), and a scripted game on Freedoom
+# that saves, keeps playing, then loads the save (input, storage, OPL music)
+check doom1-demos        doom 2100 --asset wad=roms/doom1.wad
+check freedoom1-demos    doom 2100 --asset wad=roms/freedoom1.wad
+check freedoom2-save-load doom 1100 --asset wad=roms/freedoom2.wad --param "args=-warp 1 -skill 4" \
+  --input "20-200:UP+A,210-211:START,220-221:DOWN,230-231:DOWN,240-241:DOWN,250-251:A,260-261:A,270-271:A,300-500:LEFT+UP+A,510-511:START,520-521:UP,530-531:A,540-541:A,600-900:RIGHT+UP+A+Y,905-906:X,910-1100:LEFT+R+A"
 
 echo "$pass passed, $fail failed"
 [ "$fail" -eq 0 ]

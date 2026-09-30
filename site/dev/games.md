@@ -7,7 +7,8 @@ with the `gasm` crate. C also works (see [C and other languages](#c-and-other-la
 - Contract: [ABI v0](/docs/abi)
 - Examples: [`guests/triangle`](https://github.com/emdzej/gasm/tree/main/guests/triangle) (smallest GPU game),
   [`guests/sumo`](https://github.com/emdzej/gasm/tree/main/guests/sumo) (3D + networking),
-  [`guests/nes`](https://github.com/emdzej/gasm/tree/main/guests/nes) (wrapping an existing Rust crate)
+  [`guests/nes`](https://github.com/emdzej/gasm/tree/main/guests/nes) (wrapping an existing Rust crate),
+  [`guests/doom`](https://github.com/emdzej/gasm/tree/main/guests/doom) (porting an existing C game, [play it](/play/?game=doom.wasm&autostart))
 
 ## 1. A minimal game
 
@@ -338,6 +339,35 @@ with `GASM_EXPORT("gasm_init")` and friends; see
 [`guests/test-pattern/main.c`](https://github.com/emdzej/gasm/blob/main/guests/test-pattern/main.c).
 With C++, add `-fno-exceptions`. Zig (`wasm32-freestanding`) should work the
 same way but hasn't been tried here.
+
+### Porting an existing C game
+
+[`guests/doom`](https://github.com/emdzej/gasm/tree/main/guests/doom) runs
+DOOM (doomgeneric) with under 800 lines of glue. The same issues come up in
+most old C codebases:
+
+- **Own the main loop.** Desktop code loops forever; a guest runs one step per
+  `gasm_frame`. Look for other loops that wait for time to pass (DOOM's screen
+  melt, "wait for the next tic") and turn them into per-frame state.
+- **Count frames, not milliseconds.** Derive the game's clock from the frame
+  number, and let `sleep` just advance it. The game then runs identically on
+  every runner, and headless tests are reproducible.
+- **Files without a filesystem.** Force-include a header (`-include prelude.h`)
+  that redirects `fopen`, `remove` and `rename`, and return real `FILE *`
+  streams with `fopencookie`: reads from assets (`asset_read_at`, so large
+  files stream) or `gasm:storage`, writes buffered and stored on `fclose`.
+  All of stdio (`fread`, `fscanf`, `fprintf`, `ftell`) then keeps working.
+- **Function pointer types must match.** Native C tolerates calling a
+  function through a pointer of another type; wasm traps with *indirect call
+  type mismatch*. The backtrace names the caller. Fix the cast, or add a
+  wrapper with the right signature.
+- **Line-buffer stdout** (`setvbuf(stdout, NULL, _IOLBF, 0)`), or messages
+  sit in the buffer until it fills.
+- **Missing libc bits** (`system`, signals, threads): stub them in the
+  prelude, since the code paths that need them rarely matter.
+- **Keep the license in mind.** DOOM is GPL-2.0, so the repository fetches the
+  engine at build time, and releases ship the complete source next to
+  `doom.wasm`.
 
 ## Checklist
 

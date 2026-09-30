@@ -4,7 +4,7 @@
 
 | Command | What it proves | Time |
 |---|---|---|
-| `scripts/determinism-test.sh` | Every case gives identical video, audio and GPU-upload hashes on **wasmtime JIT**, **wasmtime AOT** and **V8 (Node)** | ~75 s |
+| `scripts/determinism-test.sh` | Every case gives identical video, audio and GPU-upload hashes on **wasmtime JIT**, **wasmtime AOT** and **V8 (Node)** | ~105 s |
 | `scripts/net-test.sh` | Full online sumo matches through `gasm-relay` for native↔native, native↔Node, Node↔native, and native↔Node over **TLS** (`wss://`, throwaway CA) end in the **identical game state**, with no desync | ~15 s |
 | `make test` | Both of the above | |
 | `make parity ROM=… FRAMES=…` | The NES game built **natively** (Rust, stub host) matches the wasm build | ~1 min first build |
@@ -46,9 +46,11 @@ set up here. Open the same URLs there to check by hand.
 
 Cases: the C test pattern, sumo vs. the bot with scripted input (GPU uploads
 are hashed, covering the whole scene), the blargg CPU instruction, CPU timing
-and APU tests, spritecans, Quantum Disco Brothers, and 2,400 frames of Blade
-Buster gameplay with scripted input. It fetches ROMs if missing and
-AOT-compiles the games first.
+and APU tests, spritecans, Quantum Disco Brothers, 2,400 frames of Blade
+Buster gameplay with scripted input, the attract-mode demos of shareware DOOM
+and Freedoom (video, sound effects and OPL music), and a scripted Freedoom
+game that saves to `gasm:storage`, plays on and loads the save. It fetches
+ROMs and WADs if missing and AOT-compiles the games first.
 
 ```sh
 check <name> <game> <frames> [runner args...]

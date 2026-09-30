@@ -79,6 +79,12 @@ jobs:
           name: games
           path: build/*.wasm
 
+      # The other platforms reuse these (the WAD downloads need unzip/ar/xz)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: roms
+          path: roms/
+
   # Same suites on the other desktop platforms: builds gasm-run natively and runs
   # the games built above. Proves the Windows/macOS runners are bit-identical.
   platforms:
@@ -103,6 +109,11 @@ jobs:
         with:
           name: games
           path: build
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: roms
+          path: roms
 
       - uses: actions/cache@v4
         with:

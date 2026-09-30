@@ -21,6 +21,7 @@ property: most tests assert bit-identical hashes.
 | `sdk/c/` | C/C++ SDK: CMake toolchain (wraps wasi-sdk) + `Gasm.cmake` + example |
 | `guests/` | Rust workspace (`wasm32-unknown-unknown`): `gasm` (SDK + native stub host), `sumo`, `nes` (tetanes-core), `triangle`, `parity` (native harness) |
 | `guests/test-pattern/` | C guest (wasi-sdk) |
+| `guests/doom/` | DOOM: gasm platform layer (MIT) for doomgeneric. `scripts/fetch-doom.sh` puts the GPL-2.0 engine (+ chocolate-doom OPL music) in `tools/doom-src` and applies `engine.patch`; `scripts/package-doom-src.sh` packs the complete source shipped with releases and the site |
 | `runners/native/` | crate `gasm-host`: library (`src/lib.rs`) + bins `gasm-run` (`src/main.rs`) and `gasm-relay` (`src/bin/`); `relay.Dockerfile` |
 | `runners/web/` | npm package `@emdzej/gasm-host` (`gasm-host.js` + `.d.ts`: host, asset providers, keymap; `gasm-worker.js`: Worker mode; `webgpu-gfx.js`; `headless.mjs` = `gasm-headless`). Not published: `app.js`/`index.html` (the player), `opfs.html`/`opfs.js` (csfs OPFS import; csfs is a devDependency vendored by `scripts/vendor-web.sh`), `testdata.js` |
 | `runners/native/src/assets.rs`, `keymap.rs` | file-backed assets, `--asset-dir`, case-insensitive lookup; keyboard layouts (`default-keymap.txt` must equal the JS `DEFAULT_KEYMAP`, checked by `gen-abi.mjs --check`) |
@@ -32,8 +33,8 @@ property: most tests assert bit-identical hashes.
 
 ```sh
 make                          # games -> build/*.wasm, native runner + relay
-make roms                     # test ROMs into roms/ (needed by the determinism test)
-scripts/determinism-test.sh   # 8 cases: wasmtime JIT == AOT == V8 (must pass)
+make roms                     # test ROMs, Freedoom, shareware doom1.wad into roms/ (needed by the determinism test)
+scripts/determinism-test.sh   # 11 cases: wasmtime JIT == AOT == V8 (must pass)
 scripts/net-test.sh           # lockstep sumo via gasm-relay, 3 runner pairs + TLS (must pass)
 scripts/asset-test.sh         # folders, case-insensitive names, 200 MB streaming + RSS (must pass)
 node scripts/opfs-test.mjs    # Chrome: OPFS + Worker mode == Node, memory flat
@@ -70,6 +71,14 @@ Headless runs with `--screenshot` render GPU games offscreen: look at the PNG.
   `set -u`; use `${a[@]+"${a[@]}"}`).
 - **Background `node` reading the terminal gets suspended** (SIGTTIN). Redirect
   `</dev/null` for background peers in scripts.
+- **DOOM is GPL-2.0.** Never commit engine sources into the repo: change the
+  engine only through `guests/doom/engine.patch`, which `fetch-doom.sh` applies
+  (its checksum is part of the fetch stamp, so `make doom` re-fetches). Wherever
+  `doom.wasm` is distributed (release bundles, games zip, site), its source
+  archive must be too.
+- **wasm checks indirect call signatures.** C that calls through a mismatched
+  function pointer traps with "indirect call type mismatch"; fix it with a
+  typed wrapper (see `engine.patch`).
 
 ## Invariants
 
@@ -120,7 +129,7 @@ Headless runs with `--screenshot` render GPU games offscreen: look at the PNG.
 - Docs are written for the site (`site/…`). Repo links use absolute
   `https://github.com/emdzej/gasm/blob/main/…` URLs so they work in both places.
   VitePress fails on dead links.
-- Never commit ROMs, `build/`, `dist/`, `tools/`, `target/`, `site/node_modules`,
+- Never commit ROMs, WADs, `build/`, `dist/`, `tools/`, `target/`, `site/node_modules`,
   `site/public/play`.
 - Measured numbers in docs (performance, sizes, memory) must come from an actual
   run. Re-measure rather than copy when things change.
