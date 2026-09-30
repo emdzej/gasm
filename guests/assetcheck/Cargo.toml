@@ -1,0 +1,13 @@
+[package]
+name = "assetcheck"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+publish = false
+description = "Test guest: reads assets by name (full and ranged) and presents what it read, for cross-runner asset tests"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+gasm = { package = "gasm-sdk", path = "../gasm" }

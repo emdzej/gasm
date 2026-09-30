@@ -62,13 +62,29 @@ make roms     # optional: test ROMs and homebrew demos into roms/
 ```sh
 R=runners/native/target/release/gasm-run
 $R build/sumo.wasm                                  # vs. bot
-$R build/sumo.wasm --param mode=local2              # two gamepads, same machine
+$R build/sumo.wasm --param mode=local2              # two players: one keyboard, or two gamepads
 $R build/nes.wasm --rom roms/bladebuster.nes
 $R build/nes.wasm --rom ~/path/to/your-game.nes --param filter=ntsc
 ```
 
 The window is resizable. Its title shows the game's frame rate. Press **Esc**
 or close the window to quit.
+
+### Games with lots of data
+
+Point the runner at a folder instead of listing files. Every file under it
+becomes an asset named by its relative path, and nothing is loaded up front:
+files are read on demand, so a 300 MB CD costs no memory and no start-up
+time.
+
+```sh
+$R game.wasm --asset-dir /Volumes/GAMECD              # a mounted CD or ISO
+$R game.wasm --asset-dir cd=~/Games/data              # names become cd/<path>
+```
+
+Names match case-insensitively (`Art/art.car` finds `ART/ART.CAR`). Hidden
+files and symlinks are skipped, and an explicit `--asset name=path` overrides a
+folder entry with the same name.
 
 ## 4. Play in the browser
 
@@ -86,8 +102,22 @@ make web
    start must be a click.
 
 URL parameters are passed to the game: `?game=sumo.wasm&relay=ws://host:9000&room=abc&autostart`.
-`game` and `autostart` are used by the page itself; everything else becomes a
-game parameter.
+`game`, `autostart`, `wasm`, `worker`, `opfs`, `prefix`, `rom` and
+`hashframes` are used by the page itself; everything else becomes a game
+parameter.
+
+**Folders and big data sets in the browser:**
+
+- **open folder…** gives the game a folder as assets, named like
+  `--asset-dir`. It uses the folder picker in Chromium and falls back to
+  `webkitdirectory` elsewhere.
+- **worker** runs the game in a Worker (not for 3D games). Assets are then
+  read on demand instead of loaded into memory first.
+- For data you use repeatedly (a game CD), import it once on the **OPFS**
+  page, `…/opfs.html`. It copies the folder into the site's private
+  storage; after that, `index.html?game=<game>.wasm&opfs=gasm-assets/<name>`
+  starts instantly, with no prompt and no preloading, even after a
+  reload.
 
 ROMs you open are read locally by the page and never uploaded.
 
@@ -133,8 +163,20 @@ $R build/sumo.wasm --allow-net --param relay=ws://RELAY_HOST:9000 --param room=f
 | Start | Enter | Start | Start | — |
 | Select | Right Shift (web: either Shift) | Select/Back | Select | — |
 
-Keyboard and the first gamepad both drive player 1. Additional gamepads
-become players 2–4. **Sumo tips:** dashing has a cooldown (the small white orb
+Keyboard and the first gamepad both drive player 1. **Player 2 has its own
+keys by default:** I/J/K/L move, `.` = A, `,` = B, M = X, N = Y, U/O = L/R,
+Right Ctrl or keypad Enter = Start, Backspace = Select. So two people can
+share one keyboard (sumo: `--param mode=local2`, or `?mode=local2` in the
+browser). Gamepads take players in connection order. The player-2 keys apply
+while fewer than two gamepads are connected.
+
+**Change the layout:** the web player's **keys…** button opens an editor
+(saved in your browser). Natively, `gasm-run --print-keymap > keymap.txt`,
+edit it, then `--keymap keymap.txt`, or save it as
+`<data dir>/gasm/keymap.txt` (see [Saves](#saves)) to make it the default.
+The format is one line per binding, `<pad 1-4> <button> <key code>...`,
+with [KeyboardEvent.code](https://developer.mozilla.org/en-US/docs/Web/API/UI_Events/Keyboard_event_code_values)
+names; both runners use the same files. **Sumo tips:** dashing has a cooldown (the small white orb
 above your ball shows it's ready). A dash into the opponent pushes much
 harder than rolling into them. Keep away from the edge.
 
@@ -144,7 +186,10 @@ harder than rolling into them. Keep away from the edge.
 gasm-run <game.wasm|game.cwasm> [options]
 
 --rom <path>             shorthand for --asset rom=<path>
---asset <name>=<path>    expose a file to the game as asset <name> (repeatable)
+--asset <name>=<path>    expose a file to the game as asset <name> (repeatable; read on demand)
+--asset-dir [prefix=]dir expose every file under dir (repeatable; case-insensitive names)
+--keymap <file>          keyboard layout (default <data dir>/gasm/keymap.txt, else built-in)
+--print-keymap           print the active keyboard layout and exit
 --param <name>=<value>   launch parameter for the game (repeatable)
 --allow-net              let the game open network connections
 --storage-dir <dir>      where saves live (default: see "Saves" below)

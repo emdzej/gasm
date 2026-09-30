@@ -8,6 +8,8 @@
 | `scripts/net-test.sh` | Full online sumo matches through `gasm-relay` for native↔native, native↔Node, Node↔native, and native↔Node over **TLS** (`wss://`, throwaway CA) end in the **identical game state**, with no desync | ~15 s |
 | `make test` | Both of the above | |
 | `make parity ROM=… FRAMES=…` | The NES game built **natively** (Rust, stub host) matches the wasm build | ~1 min first build |
+| `scripts/asset-test.sh` | File-backed assets and folders: `--asset-dir` == `--asset` list == Node (lazy and in-memory); prefix form, hidden files, precedence; a 200 MB asset streamed at random offsets has the in-memory hash, with max RSS measured against a tiny asset (`LARGE_MB=0` skips) | ~10 s |
+| `node scripts/opfs-test.mjs [MB]` | Headless Chrome: csfs imports a data set into OPFS, `assetcheck` runs from it in **Worker mode** with lazy OPFS reads; hash == Node `--asset-dir`; renderer memory sampled while streaming 10 GB of random reads | ~60 s |
 | `node scripts/web-smoke.mjs <url> <out.png> [secs]` | The browser runner loads and runs in headless Chrome (including WebGPU); prints status, fps and console, saves a screenshot | ~10 s |
 
 ### Linux locally (Apple `container`)
@@ -29,6 +31,16 @@ toolchains. It also works with Docker/Podman
 need no display or GPU. CI runs the same suites on Linux x86_64, **Windows**
 and **macOS** runners (`.github/workflows/ci.yml`, job `platforms`), so the
 Windows runner is verified bit-identical too.
+
+### Browser checks by hand
+
+Worker and main-thread modes against the Node runner:
+`index.html?game=nes.wasm&rom=cpu_instr_test.nes&worker&hashframes=600&autostart`
+prints `frames=… video_fnv32=… audio_fnv32=…`, which must equal
+`node runners/web/headless.mjs build/nes.wasm --rom roms/cpu_instr_test.nes --headless 600`.
+Verified in Chrome. Safari and Firefox haven't been run through the
+automated suites yet: Safari needs `safaridriver --enable`, and Firefox isn't
+set up here. Open the same URLs there to check by hand.
 
 ### Determinism test
 

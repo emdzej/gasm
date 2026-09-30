@@ -38,6 +38,25 @@ addEventListener('pagehide', () => host.exit());
 A complete player (canvas, AudioWorklet audio, keyboard and Gamepad API,
 catch-up handling) is `app.js` in the [repository](https://github.com/emdzej/gasm/tree/main/runners/web).
 
+## Big data sets: asset providers and Worker mode
+
+Assets can be a `{ name: bytes }` record or any synchronous
+`GasmAssetProvider` (`size(name)`, `readAt(name, offset, dst)`). `AssetTable`
+applies gasm's naming rules (folder entries match case-insensitively, hidden
+files skipped). Helpers: `directoryHandleAssets` / `fileListAssets` (preload a
+picked folder, with progress), and in Workers `opfsAssets` / `fileAssets`
+(lazy, synchronous reads). Run such games off the main thread:
+
+```js
+import { GasmWorker } from '@emdzej/gasm-host/worker';
+const w = await GasmWorker.start({ wasm, assets: [{ kind: 'opfs', dir: 'gasm-assets/my-cd' }], onAudio });
+const r = await w.frames([[pads0, pads1, 0, 0]]);   // r.frame: { rgba, width, height }
+```
+
+No `SharedArrayBuffer` and no COOP/COEP headers are needed (works on GitHub
+Pages). Keyboard layouts: `DEFAULT_KEYMAP`, `parseKeymap(text)`,
+`keyboardPads(bindings, heldCodes, gamepadCount)`.
+
 ## Headless (Node ≥ 22)
 
 ```sh
@@ -47,7 +66,7 @@ npx -p @emdzej/gasm-host gasm-headless game.wasm --headless 600 --input "30-90:R
 ```
 
 The hashes match the native runner (`gasm-run --headless`) bit for bit. That
-is how gasm checks determinism across engines. Options: `--rom`, `--asset n=p`,
+is how gasm checks determinism across engines. Options: `--rom`, `--asset n=p`, `--asset-dir [prefix=]dir`,
 `--param k=v`, `--allow-net`, `--realtime`, `--screenshot out.png`, `--no-hash`.
 
 - ABI: https://gasm.emdzej.pl/docs/abi

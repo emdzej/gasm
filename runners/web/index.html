@@ -27,6 +27,12 @@
   footer { display: flex; justify-content: space-between; gap: 1rem; padding: .5rem 1rem; color: var(--dim);
            border-top: 1px solid #222832; font-size: 12px; }
   #log { white-space: pre; overflow: hidden; text-overflow: ellipsis; max-width: 70vw; }
+  footer a { color: var(--dim); }
+  dialog { background: #12161d; color: var(--fg); border: 1px solid #2c3440; border-radius: 8px; max-width: 640px; }
+  dialog p { color: var(--dim); font-size: 12px; } dialog a { color: var(--accent); }
+  dialog textarea { width: 100%; background: #0e1116; color: var(--fg); border: 1px solid #2c3440; font: 12px/1.4 ui-monospace, Menlo, monospace; }
+  #keymaperr { color: #e8554e; white-space: pre-wrap; }
+  dialog menu { display: flex; gap: .5rem; justify-content: flex-end; padding: 0; }
 </style>
 </head>
 <body>
@@ -39,14 +45,29 @@
     <input id="relay" size="34" title="gasm-relay URL (empty = offline vs. bot)">
     <input id="room" size="8" title="room name (both players use the same)">
   </span>
+  <button id="folder" title="Assets from a folder (like gasm-run --asset-dir)">open folder…</button>
+  <input id="folderinput" type="file" webkitdirectory hidden>
+  <label title="Run the game in a Worker: assets are read on demand (OPFS, picked folders). Not for GPU games."><input id="worker" type="checkbox"> worker</label>
+  <button id="keys" title="Keyboard layout for up to four players">keys…</button>
   <button id="start" class="primary">▶ start</button>
   <button id="pause">❚❚ pause</button>
 </header>
 <main id="stage"><canvas id="screen" width="256" height="240"></canvas></main>
 <footer>
   <span id="log">drop a .nes file on the screen, or pick one above</span>
-  <span>arrows · X=A · Z=B · S=X · A=Y · Q/W=L/R · Enter=Start · Shift=Select · gamepad ok · <span id="fps"></span></span>
+  <span title="Player 2 keys apply while fewer than two gamepads are connected">P1: arrows, X=A Z=B, Enter=Start · P2: IJKL, .=A ,=B, RCtrl=Start · gamepads · <a href="#" onclick="document.getElementById('keys').click();return false">change keys</a> · <span id="fps"></span></span>
 </footer>
+<dialog id="keysdlg">
+  <form method="dialog">
+    <p>One binding per line: <code>&lt;pad 1-4&gt; &lt;button&gt; &lt;key code&gt;…</code>. Buttons:
+       a b x y l r select start up down left right. Key codes are
+       <a href="https://developer.mozilla.org/en-US/docs/Web/API/UI_Events/Keyboard_event_code_values" target="_blank">KeyboardEvent.code</a>
+       names. Keys for pad 2+ apply while fewer gamepads than that are connected. Same format as <code>gasm-run --keymap</code>.</p>
+    <textarea id="keymaptext" rows="22" cols="64" spellcheck="false"></textarea>
+    <pre id="keymaperr"></pre>
+    <menu><button id="keymapreset">defaults</button> <button value="cancel" formnovalidate>cancel</button> <button id="keymapsave" class="primary" value="save">save</button></menu>
+  </form>
+</dialog>
 <script type="module" src="app.js"></script>
 </body>
 </html>

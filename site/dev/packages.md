@@ -50,7 +50,7 @@ gasm_add_game(mygame main.c)   # -> mygame.wasm (reactor model, gasm.h on the in
 
 | Package | What |
 |---|---|
-| [`@emdzej/gasm-host`](https://www.npmjs.com/package/@emdzej/gasm-host) (npm) | Browser + Node host: `GasmHost`, WebGPU backend (`@emdzej/gasm-host/webgpu`), IndexedDB storage, TypeScript types, and `gasm-headless` (`npx -p @emdzej/gasm-host gasm-headless game.wasm --headless 600`) |
+| [`@emdzej/gasm-host`](https://www.npmjs.com/package/@emdzej/gasm-host) (npm) | Browser + Node host, dependency-free: `GasmHost`; asset providers (`AssetTable`, folder, OPFS and `File` sources); Worker mode (`@emdzej/gasm-host/worker`); WebGPU backend (`@emdzej/gasm-host/webgpu`); IndexedDB storage; keyboard layouts (`parseKeymap`); TypeScript types; and `gasm-headless` (`npx -p @emdzej/gasm-host gasm-headless game.wasm --headless 600`) |
 | [`gasm-host`](https://crates.io/crates/gasm-host) (crates.io) | Native host library (wasmtime, wgpu, cpal, gilrs, WebSocket/TLS, storage). `cargo install gasm-host` installs `gasm-run` and `gasm-relay` |
 | `ghcr.io/emdzej/gasm-relay` | Relay container image (amd64, arm64): `docker run -p 9000:9000 ghcr.io/emdzej/gasm-relay` |
 | Releases | Prebuilt `gasm-run`/`gasm-relay` for macOS (universal), Linux (x86_64, arm64), Windows, plus macOS `.app` bundles |
@@ -66,13 +66,29 @@ await host.load(await (await fetch('game.wasm')).arrayBuffer());
 // call host.frame() at host.frameRate Hz
 ```
 
+Data-heavy games in a Worker, with data the page imported into OPFS once
+(for example with [csfs](https://github.com/emdzej/csfs), as the gasm player's
+`opfs.html` does):
+
+```js
+import { GasmWorker } from '@emdzej/gasm-host/worker';
+
+const w = await GasmWorker.start({
+  wasm, storage: 'mygame',
+  assets: [{ kind: 'opfs', dir: 'gasm-assets/mygame-cd' }],   // read on demand, synchronously
+  onAudio: (samples, rate, channels) => feedAudioWorklet(samples, rate, channels),
+});
+const r = await w.frames([[pad0, pad1, 0, 0]]);               // one entry per frame
+if (r.frame) ctx.putImageData(new ImageData(r.frame.rgba, r.frame.width, r.frame.height), 0, 0);
+```
+
 Embedding natively:
 
 ```rust
 use std::collections::HashMap;
-use gasm_host::{gfx::Gfx, host::{Game, Host}, net::Net, storage::Storage};
+use gasm_host::{assets::Assets, gfx::Gfx, host::{Game, Host}, net::Net, storage::Storage};
 
-let host = Host::new(HashMap::new(), HashMap::new(), None, Gfx::null(), Net::new(false), Storage::memory());
+let host = Host::new(Assets::new(), HashMap::new(), None, Gfx::null(), Net::new(false), Storage::memory());
 let mut game = Game::load(&std::fs::read("game.wasm")?, host)?;
 game.frame()?;
 ```

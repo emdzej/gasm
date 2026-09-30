@@ -22,7 +22,8 @@ property: most tests assert bit-identical hashes.
 | `guests/` | Rust workspace (`wasm32-unknown-unknown`): `gasm` (SDK + native stub host), `sumo`, `nes` (tetanes-core), `triangle`, `parity` (native harness) |
 | `guests/test-pattern/` | C guest (wasi-sdk) |
 | `runners/native/` | crate `gasm-host`: library (`src/lib.rs`) + bins `gasm-run` (`src/main.rs`) and `gasm-relay` (`src/bin/`); `relay.Dockerfile` |
-| `runners/web/` | npm package `@emdzej/gasm-host` (`gasm-host.js` + `.d.ts`, `webgpu-gfx.js`, `headless.mjs` = `gasm-headless`); `app.js`/`index.html` = the site player (not published) |
+| `runners/web/` | npm package `@emdzej/gasm-host` (`gasm-host.js` + `.d.ts`: host, asset providers, keymap; `gasm-worker.js`: Worker mode; `webgpu-gfx.js`; `headless.mjs` = `gasm-headless`). Not published: `app.js`/`index.html` (the player), `opfs.html`/`opfs.js` (csfs OPFS import; csfs is a devDependency vendored by `scripts/vendor-web.sh`), `testdata.js` |
+| `runners/native/src/assets.rs`, `keymap.rs` | file-backed assets, `--asset-dir`, case-insensitive lookup; keyboard layouts (`default-keymap.txt` must equal the JS `DEFAULT_KEYMAP`, checked by `gen-abi.mjs --check`) |
 | `scripts/` | toolchain/ROM fetchers, test suites, packaging, site build, Linux container |
 | `site/` | VitePress website (docs live here; `site/docs/abi.md` includes `spec/ABI.md`) |
 | `.github/workflows/` | `ci.yml`, `pages.yml`, `release.yml` |
@@ -33,7 +34,9 @@ property: most tests assert bit-identical hashes.
 make                          # games -> build/*.wasm, native runner + relay
 make roms                     # test ROMs into roms/ (needed by the determinism test)
 scripts/determinism-test.sh   # 8 cases: wasmtime JIT == AOT == V8 (must pass)
-scripts/net-test.sh           # lockstep sumo via gasm-relay, 3 runner pairs (must pass)
+scripts/net-test.sh           # lockstep sumo via gasm-relay, 3 runner pairs + TLS (must pass)
+scripts/asset-test.sh         # folders, case-insensitive names, 200 MB streaming + RSS (must pass)
+node scripts/opfs-test.mjs    # Chrome: OPFS + Worker mode == Node, memory flat
 make parity                   # NES native Rust build == wasm build
 scripts/build-site.sh         # website into site/.vitepress/dist (needs build/*.wasm)
 scripts/linux-container.sh    # everything above on Linux arm64 (Apple `container`)
@@ -90,6 +93,13 @@ Headless runs with `--screenshot` render GPU games offscreen: look at the PNG.
   The render pass always has depth24plus + 4× MSAA; pipelines without
   `depthStencil` get a no-op one. Validation errors become traps via error
   scopes.
+- **Assets:** never preload on native (positioned reads); same naming rules in
+  `assets.rs` and `AssetTable` (exact first, explicit over folder, ASCII
+  case-insensitive among folder entries, first sorted on collisions, hidden
+  and symlinks skipped, 2 GiB limit). `@emdzej/gasm-host` stays
+  dependency-free: csfs belongs to pages (e.g. `opfs.html`), not the host.
+- **Worker mode:** transferables only (no SharedArrayBuffer/COOP/COEP); main
+  thread stays the default; `gasm:gfx` guests never go to a worker.
 - **net:** runners flush queued messages and do a WebSocket close handshake on
   exit. Lockstep peers finish the frames they have inputs for after a leave notice.
   TLS is rustls with the **ring** backend (no cmake/NASM on CI); the crypto

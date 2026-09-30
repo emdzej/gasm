@@ -2,14 +2,16 @@
 // Headless Node runner: same host code as the browser runner, no canvas/audio.
 // Output format matches `gasm-run --headless` so results can be diffed.
 //
-//   node runners/web/headless.mjs <game.wasm> [--rom p] [--asset n=p] [--param k=v] [--allow-net]
+//   node runners/web/headless.mjs <game.wasm> [--rom p] [--asset n=p] [--asset-dir [prefix=]dir]
+//        [--param k=v] [--allow-net]
 //        [--realtime] --headless N [--input script] [--screenshot out.png] [--no-hash]
 //
 // A guest calling proc_exit (e.g. sumo's quit_at) ends the run early, cleanly.
 
-import { readFileSync, writeFileSync } from 'node:fs';
+import { closeSync, fstatSync, openSync, readFileSync, readSync, readdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { deflateSync } from 'node:zlib';
-import { GasmHost, ProcExit } from './gasm-host.js';
+import { AssetTable, GasmHost, ProcExit, bytesSource } from './gasm-host.js';
 
 const argv = process.argv.slice(2);
 let wasm, frames = 600, screenshot, input = [], noHash = false, allowNet = false, realtime = false;
@@ -25,7 +27,7 @@ const parseInput = (spec) => spec.split(',').map((item) => {
   }, 0);
   return { from, to, mask };
 });
-const assets = {}, params = {};
+const assets = {}, params = {}, assetDirs = [];
 for (let i = 0; i < argv.length; i++) {
   const a = argv[i];
   if (a === '--rom') assets.rom = new Uint8Array(readFileSync(argv[++i]));
@@ -34,6 +36,11 @@ for (let i = 0; i < argv.length; i++) {
   else if (a === '--screenshot') screenshot = argv[++i];
   else if (a === '--input') input = parseInput(argv[++i]);
   else if (a === '--no-hash') noHash = true;
+  else if (a === '--asset-dir') {
+    const v = argv[++i], k = v.indexOf('=');
+    const p = k > 0 ? v.slice(0, k) : '';
+    if (p && !/[\\/]/.test(p)) assetDirs.push([p, v.slice(k + 1)]); else assetDirs.push(['', v]);
+  }
   else if (a === '--param') { const v = argv[++i], k = v.indexOf('='); params[v.slice(0, k)] = v.slice(k + 1); }
   else if (a === '--allow-net') allowNet = true;
   else if (a === '--realtime') realtime = true;
@@ -41,8 +48,37 @@ for (let i = 0; i < argv.length; i++) {
 }
 if (!wasm) { console.error('usage: headless.mjs <game.wasm> [--rom path] --headless N [--screenshot out.png]'); process.exit(2); }
 
+// Explicit assets stay in memory; --asset-dir folders are read lazily from disk
+// (same naming/precedence/case rules as gasm-run, via AssetTable).
+const table = new AssetTable((m) => console.error(m));
+for (const [name, bytes] of Object.entries(assets)) table.add(name, bytesSource(bytes));
+const fds = [];
+for (const [prefix, dir] of assetDirs) {
+  let n = 0;
+  const walk = (abs, segs) => {
+    for (const d of readdirSync(abs, { withFileTypes: true }).sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))) {
+      if (d.name.startsWith('.') || d.isSymbolicLink()) continue;
+      const s = [...segs, d.name];
+      if (d.isDirectory()) walk(join(abs, d.name), s);
+      else if (d.isFile()) {
+        const fd = openSync(join(abs, d.name), 'r');
+        fds.push(fd);
+        const name = prefix ? `${prefix.replace(/\/+$/, '')}/${s.join('/')}` : s.join('/');
+        const added = table.add(name, {
+          size: () => { try { return Math.min(fstatSync(fd).size, 0x7fffffff); } catch { return 0; } },
+          readAt: (offset, dst) => { let done = 0; try { while (done < dst.length) { const k = readSync(fd, dst, done, dst.length - done, offset + done); if (!k) break; done += k; } } catch {} return done; },
+        }, { fromDir: true });
+        if (added) n++;
+      }
+    }
+  };
+  walk(dir, []);
+  console.error(`[gasm-node] assets: ${n} files from ${dir}${prefix ? ` as ${prefix}/` : ''}`);
+}
+table.finish();
+
 const host = new GasmHost({
-  assets, params, allowNet, virtualTime: true, onLog: (m) => console.error(m),
+  assets: table, params, allowNet, virtualTime: true, onLog: (m) => console.error(m),
   getPad: (p) => p !== 0 ? 0 : input.reduce((m, r) => host.frameIndex >= r.from && host.frameIndex <= r.to ? m | r.mask : m, 0),
 });
 host.hashing = !noHash;

@@ -8,6 +8,7 @@ use wasmtime::{Caller, Engine, Instance, Linker, Memory, Module, Store, TypedFun
 use wasmtime_wasi::WasiCtx;
 use wasmtime_wasi::p1::{self, WasiP1Ctx};
 
+use crate::assets::Assets;
 use crate::audio::AudioSink;
 use crate::gfx::Gfx;
 use crate::net::Net;
@@ -41,7 +42,7 @@ pub struct Host {
     pub virtual_time_ms: Option<f64>,
     pub frame_rate: f64,
     pub pads: [u32; 4],
-    pub assets: HashMap<String, Vec<u8>>,
+    pub assets: Assets,
     pub params: HashMap<String, String>,
     pub audio: Option<AudioSink>,
     pub gfx: Gfx,
@@ -64,7 +65,7 @@ pub struct Host {
 
 impl Host {
     pub fn new(
-        assets: HashMap<String, Vec<u8>>,
+        assets: impl Into<Assets>,
         params: HashMap<String, String>,
         audio: Option<AudioSink>,
         gfx: Gfx,
@@ -79,7 +80,7 @@ impl Host {
             virtual_time_ms: None,
             frame_rate: 60.0,
             pads: [0; 4],
-            assets,
+            assets: assets.into(),
             params,
             audio,
             gfx,
@@ -222,12 +223,11 @@ fn add_gasm_imports(linker: &mut Linker<Host>) -> wasmtime::Result<()> {
             let name = guest_str(&caller, ptr, len)?;
             let mem = memory(&caller)?;
             let (data, host) = mem.data_and_store_mut(&mut caller);
-            let Some(asset) = host.assets.get(&name) else { return Ok(-1) };
-            let start = (offset as usize).min(asset.len());
-            let n = (asset.len() - start).min(cap as usize);
-            guest_slice(data, dst, n as u64)?;
-            data[dst as usize..dst as usize + n].copy_from_slice(&asset[start..start + n]);
-            Ok(n as i32)
+            let Some(size) = host.assets.size(&name) else { return Ok(-1) };
+            let n = size.saturating_sub(offset as u64).min(cap as u64);
+            guest_slice(data, dst, n)?; // bounds check before touching guest memory
+            let dst = &mut data[dst as usize..dst as usize + n as usize];
+            Ok(host.assets.read_at(&name, offset as u64, dst).map_or(-1, |k| k as i32))
         },
     )?;
 
@@ -236,7 +236,7 @@ fn add_gasm_imports(linker: &mut Linker<Host>) -> wasmtime::Result<()> {
         "asset_size",
         |caller: Caller<'_, Host>, ptr: u32, len: u32| -> wasmtime::Result<i32> {
             let name = guest_str(&caller, ptr, len)?;
-            Ok(caller.data().assets.get(&name).map_or(-1, |a| a.len() as i32))
+            Ok(caller.data().assets.size(&name).map_or(-1, |n| n as i32))
         },
     )?;
 
@@ -247,11 +247,11 @@ fn add_gasm_imports(linker: &mut Linker<Host>) -> wasmtime::Result<()> {
             let name = guest_str(&caller, ptr, len)?;
             let mem = memory(&caller)?;
             let (data, host) = mem.data_and_store_mut(&mut caller);
-            let Some(asset) = host.assets.get(&name) else { return Ok(-1) };
-            let n = asset.len().min(cap as usize);
-            guest_slice(data, dst, n as u64)?; // bounds check
-            data[dst as usize..dst as usize + n].copy_from_slice(&asset[..n]);
-            Ok(n as i32)
+            let Some(size) = host.assets.size(&name) else { return Ok(-1) };
+            let n = size.min(cap as u64);
+            guest_slice(data, dst, n)?;
+            let dst = &mut data[dst as usize..dst as usize + n as usize];
+            Ok(host.assets.read_at(&name, 0, dst).map_or(-1, |k| k as i32))
         },
     )?;
     Ok(())

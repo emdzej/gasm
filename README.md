@@ -14,6 +14,7 @@ Games in this repo (all Rust except one C example):
 | `nes.wasm` | NES emulator on [tetanes-core](https://crates.io/crates/tetanes-core): 2D video, audio, input, assets | 1.5 MB |
 | `triangle.wasm` | Smallest `gasm:gfx` program (about 50 lines of Rust) | 25 KB |
 | `test-pattern.wasm` | Minimal C guest (proves the ABI is language-agnostic) | 87 KB |
+| `assetcheck.wasm` | Test guest for asset providers (folders, streaming, OPFS) | 34 KB |
 
 ```
                 ┌────────── game.wasm (one artifact) ──────────┐

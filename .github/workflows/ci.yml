@@ -19,6 +19,10 @@ jobs:
       - name: System packages (native runner)
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libasound2-dev libudev-dev pkg-config
 
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -51,6 +55,21 @@ jobs:
 
       - name: Network lockstep (native <-> node via gasm-relay)
         run: scripts/net-test.sh
+
+      - name: Asset providers
+        run: LARGE_MB=50 scripts/asset-test.sh
+
+      - name: "Unit tests (gasm-host: assets, keymap, net)"
+        working-directory: runners/native
+        run: cargo test --release --lib
+
+      - name: Asset providers (file-backed, folders, case-insensitive; 200 MB streaming)
+        run: scripts/asset-test.sh
+
+      - name: OPFS + Worker mode in Chrome (csfs import, lazy reads, memory)
+        run: |
+          scripts/vendor-web.sh
+          CHROME=$(command -v google-chrome || command -v chromium) node scripts/opfs-test.mjs 200
 
       - name: Parity (NES native vs wasm)
         run: make parity ROM=roms/cpu_instr_test.nes FRAMES=600
@@ -105,3 +124,6 @@ jobs:
 
       - name: Network lockstep (native <-> node via gasm-relay)
         run: scripts/net-test.sh
+
+      - name: Asset providers
+        run: LARGE_MB=50 scripts/asset-test.sh

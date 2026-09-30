@@ -1,6 +1,6 @@
 //! gasm-run — native runner for gasm ABI v0 games (wasmtime + wgpu + winit).
 
-use gasm_host::{audio, gfx, host, net, storage};
+use gasm_host::{assets, audio, gfx, host, keymap, net, storage};
 
 use std::collections::{HashMap, HashSet};
 use std::process::ExitCode;
@@ -25,13 +25,20 @@ usage: gasm-run <game.wasm|game.cwasm> [options]
 
 options:
   --rom <path>             shorthand for --asset rom=<path>
-  --asset <name>=<path>    expose a file to the guest as asset <name>
+  --asset <name>=<path>    expose a file to the guest as asset <name> (read on demand, not preloaded)
+  --asset-dir [<prefix>=]<dir>
+                           expose every file under <dir> (repeatable); names are relative paths
+                           like ART/ART.CAR (or <prefix>/ART/ART.CAR), looked up case-insensitively;
+                           symlinks and hidden files are skipped; --asset wins over folder entries
   --param <name>=<value>   launch parameter for the guest (repeatable)
   --allow-net              allow the guest to open network connections (gasm:net)
   --storage-dir <dir>      where the game's saves live (default: <data dir>/gasm/<game>;
                            headless runs use memory unless this is given)
   --storage-id <id>        storage namespace (default: the game file's name)
   --window <W>x<H>         initial window size in logical pixels (default 960x720)
+  --keymap <file>          keyboard layout (default: <data dir>/gasm/keymap.txt if it exists,
+                           else the built-in two-player layout below)
+  --print-keymap           print the active keyboard layout (a starting point for --keymap) and exit
   --mute                   no audio output
   --compile <out.cwasm>    AOT-compile the game to native code and exit
                            (then run the .cwasm instead of the .wasm)
@@ -42,17 +49,26 @@ options:
   --realtime               (headless) pace frames at the guest's rate
   --no-hash                (headless) skip hashing, for benchmarking
 
-keys: arrows = d-pad, X = A, Z = B, S = X, A = Y, Q/W = L/R,
-      Enter = Start, Right Shift = Select, Esc = quit";
+default keys (change with --keymap; one binding per line: <pad 1-4> <button> <key code>...):
+  pad 1: arrows = d-pad, X = A, Z = B, S = X, A = Y, Q/W = L/R,
+         Enter = Start, Right Shift = Select
+  pad 2: I/J/K/L = d-pad, . = A, , = B, M = X, N = Y, U/O = L/R,
+         Right Ctrl or keypad Enter = Start, Backspace = Select
+  Keyboard bindings for pad N >= 2 apply while fewer than N gamepads are connected;
+  gamepads take pads in connection order.
+Esc = quit";
 
 struct Args {
     wasm: String,
     assets: HashMap<String, String>,
+    asset_dirs: Vec<(Option<String>, String)>,
     params: HashMap<String, String>,
     allow_net: bool,
     storage_dir: Option<String>,
     storage_id: Option<String>,
     window: (u32, u32),
+    keymap: Option<String>,
+    print_keymap: bool,
     headless: Option<u64>,
     screenshot: Option<String>,
     compile: Option<String>,
@@ -67,11 +83,14 @@ fn parse_args() -> Result<Args, String> {
     let mut args = Args {
         wasm: String::new(),
         assets: HashMap::new(),
+        asset_dirs: Vec::new(),
         params: HashMap::new(),
         allow_net: false,
         storage_dir: None,
         storage_id: None,
         window: (960, 720),
+        keymap: None,
+        print_keymap: false,
         headless: None,
         screenshot: None,
         compile: None,
@@ -91,6 +110,15 @@ fn parse_args() -> Result<Args, String> {
                 let (k, p) = v.split_once('=').ok_or("--asset expects name=path")?;
                 args.assets.insert(k.into(), p.into());
             }
+            "--asset-dir" => {
+                let v = val("--asset-dir")?;
+                // "prefix=dir" if the part before '=' is a plain name; otherwise the whole value is a dir
+                let dir = match v.split_once('=') {
+                    Some((p, d)) if !p.is_empty() && !p.contains(['/', '\\']) => (Some(p.to_owned()), d.to_owned()),
+                    _ => (None, v),
+                };
+                args.asset_dirs.push(dir);
+            }
             "--param" => {
                 let v = val("--param")?;
                 let (k, p) = v.split_once('=').ok_or("--param expects name=value")?;
@@ -104,6 +132,8 @@ fn parse_args() -> Result<Args, String> {
                 let (w, h) = v.split_once('x').ok_or("--window expects WxH")?;
                 args.window = (w.parse().map_err(|_| "bad width")?, h.parse().map_err(|_| "bad height")?);
             }
+            "--keymap" => args.keymap = Some(val("--keymap")?),
+            "--print-keymap" => args.print_keymap = true,
             "--headless" => {
                 args.headless = Some(val("--headless")?.parse().map_err(|_| "--headless expects a number")?)
             }
@@ -118,7 +148,7 @@ fn parse_args() -> Result<Args, String> {
             s => args.wasm = s.into(),
         }
     }
-    if args.wasm.is_empty() {
+    if args.wasm.is_empty() && !args.print_keymap {
         return Err("missing <game.wasm>".into());
     }
     Ok(args)
@@ -164,10 +194,40 @@ fn main() -> ExitCode {
 
 struct Loaded {
     wasm: Vec<u8>,
-    assets: HashMap<String, Vec<u8>>,
+}
+
+/// Open (not read) every asset: explicit files first, so they win over folder entries.
+fn open_assets(args: &Args) -> Result<assets::Assets, String> {
+    let mut a = assets::Assets::new();
+    for (name, path) in &args.assets {
+        a.insert_file(name, std::path::Path::new(path))?;
+    }
+    for (prefix, dir) in &args.asset_dirs {
+        let n = a.add_dir(prefix.as_deref(), std::path::Path::new(dir))?;
+        eprintln!("[gasm] assets: {n} files from {dir}{}", prefix.as_ref().map_or(String::new(), |p| format!(" as {p}/")));
+    }
+    a.finish();
+    Ok(a)
+}
+
+/// --keymap FILE, else <data dir>/gasm/keymap.txt if present, else the default.
+fn load_keymap(args: &Args) -> Result<(keymap::Keymap, String, String), String> {
+    let (text, source) = match &args.keymap {
+        Some(p) => (std::fs::read_to_string(p).map_err(|e| format!("{p}: {e}"))?, p.clone()),
+        None => match storage::data_root().map(|r| r.join("keymap.txt")).filter(|p| p.is_file()) {
+            Some(p) => (std::fs::read_to_string(&p).map_err(|e| format!("{}: {e}", p.display()))?, p.display().to_string()),
+            None => (keymap::DEFAULT_KEYMAP.to_owned(), "built-in".to_owned()),
+        },
+    };
+    let map = keymap::parse(&text).map_err(|e| format!("keymap {source}:\n{e}"))?;
+    Ok((map, text, source))
 }
 
 fn run(args: Args) -> Result<i32, String> {
+    if args.print_keymap {
+        print!("{}", load_keymap(&args)?.1);
+        return Ok(0);
+    }
     let wasm = std::fs::read(&args.wasm).map_err(|e| format!("{}: {e}", args.wasm))?;
     if let Some(out) = &args.compile {
         let t0 = Instant::now();
@@ -176,11 +236,8 @@ fn run(args: Args) -> Result<i32, String> {
         eprintln!("[gasm] compiled {} -> {out} ({} bytes) in {:.0} ms", args.wasm, native.len(), t0.elapsed().as_secs_f64() * 1000.0);
         return Ok(0);
     }
-    let mut assets = HashMap::new();
-    for (name, path) in &args.assets {
-        assets.insert(name.clone(), std::fs::read(path).map_err(|e| format!("{path}: {e}"))?);
-    }
-    let loaded = Loaded { wasm, assets };
+    open_assets(&args)?; // fail fast on bad paths / oversized files, before opening a window
+    let loaded = Loaded { wasm };
     match args.headless {
         Some(frames) => headless(&args, loaded, frames),
         None => windowed(args, loaded),
@@ -210,7 +267,8 @@ fn open_storage(args: &Args) -> Result<Storage, Stop> {
 
 fn load(args: &Args, loaded: &Loaded, audio: Option<audio::AudioSink>, gfx: Gfx) -> Result<Game, Stop> {
     let storage = open_storage(args)?;
-    let mut host = Host::new(loaded.assets.clone(), args.params.clone(), audio, gfx, Net::new(args.allow_net), storage);
+    let assets = open_assets(args).map_err(Stop::Trap)?;
+    let mut host = Host::new(assets, args.params.clone(), audio, gfx, Net::new(args.allow_net), storage);
     if args.headless.is_some() {
         host.virtual_time_ms = Some(0.0);
     }
@@ -304,22 +362,8 @@ fn write_png(path: &str, w: u32, h: u32, rgba: &[u8]) -> Result<(), String> {
 
 // ---- windowed ---------------------------------------------------------------------------
 
-const KEYMAP: &[(KeyCode, u32)] = &[
-    (KeyCode::KeyX, 1 << 0),
-    (KeyCode::KeyZ, 1 << 1),
-    (KeyCode::KeyS, 1 << 2),
-    (KeyCode::KeyA, 1 << 3),
-    (KeyCode::KeyQ, 1 << 4),
-    (KeyCode::KeyW, 1 << 5),
-    (KeyCode::ShiftRight, 1 << 6),
-    (KeyCode::Enter, 1 << 7),
-    (KeyCode::ArrowUp, 1 << 8),
-    (KeyCode::ArrowDown, 1 << 9),
-    (KeyCode::ArrowLeft, 1 << 10),
-    (KeyCode::ArrowRight, 1 << 11),
-];
-
-fn gamepad_pads(gilrs: &mut Gilrs) -> [u32; 4] {
+/// Gamepads in connection order, plus how many are connected.
+fn gamepad_pads(gilrs: &mut Gilrs) -> ([u32; 4], usize) {
     const MAP: &[(Button, u32)] = &[
         (Button::East, 1 << 0),
         (Button::South, 1 << 1),
@@ -336,6 +380,7 @@ fn gamepad_pads(gilrs: &mut Gilrs) -> [u32; 4] {
     ];
     while gilrs.next_event().is_some() {}
     let mut pads = [0u32; 4];
+    let connected = gilrs.gamepads().count();
     for (i, (_, pad)) in gilrs.gamepads().take(4).enumerate() {
         pads[i] = MAP.iter().filter(|(b, _)| pad.is_pressed(*b)).fold(0, |m, (_, bit)| m | bit);
         let (x, y) = (pad.value(gilrs::Axis::LeftStickX), pad.value(gilrs::Axis::LeftStickY));
@@ -344,11 +389,12 @@ fn gamepad_pads(gilrs: &mut Gilrs) -> [u32; 4] {
         if y > 0.5 { pads[i] |= 1 << 8 }
         if y < -0.5 { pads[i] |= 1 << 9 }
     }
-    pads
+    (pads, connected)
 }
 
 struct App {
     args: Args,
+    keymap: keymap::Keymap,
     loaded: Loaded,
     window: Option<Arc<Window>>,
     game: Option<Game>,
@@ -383,8 +429,11 @@ impl App {
             let behind = ((now - self.next).as_secs_f64() / period.as_secs_f64()) as u32 + 1;
             let steps = behind.min(4);
             for k in 0..steps {
-                let mut pads = self.gilrs.as_mut().map(gamepad_pads).unwrap_or_default();
-                pads[0] |= KEYMAP.iter().filter(|(k, _)| self.keys.contains(k)).fold(0, |m, (_, b)| m | b);
+                let (mut pads, gamepads) = self.gilrs.as_mut().map(gamepad_pads).unwrap_or_default();
+                let kb = keymap::pads(&self.keymap, &self.keys, gamepads);
+                for (p, k) in pads.iter_mut().zip(kb) {
+                    *p |= k;
+                }
                 let host = game.host_mut();
                 host.pads = pads;
                 host.show_frame = k + 1 == steps;
@@ -491,8 +540,11 @@ impl ApplicationHandler for App {
 }
 
 fn windowed(args: Args, loaded: Loaded) -> Result<i32, String> {
+    let (keymap, _, source) = load_keymap(&args)?;
+    eprintln!("[gasm] keyboard layout: {source}");
     let event_loop = EventLoop::new().map_err(|e| e.to_string())?;
     let mut app = App {
+        keymap,
         args,
         loaded,
         window: None,

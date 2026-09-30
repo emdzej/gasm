@@ -81,8 +81,8 @@ export declare class Resampler {
 }
 
 export interface GasmHostOptions {
-  /** Read-only assets, e.g. `{ rom: bytes }`. */
-  assets?: Record<string, Uint8Array>;
+  /** Read-only assets: a GasmAssetProvider (see AssetTable), or `{ name: bytes }`. */
+  assets?: GasmAssetProvider | Record<string, Uint8Array>;
   /** Launch parameters (gasm.param). */
   params?: Record<string, string>;
   /** gasm:gfx backend. Default: NullGfx. */
@@ -111,7 +111,7 @@ export interface GasmHostOptions {
  */
 export declare class GasmHost {
   constructor(options?: GasmHostOptions);
-  assets: Record<string, Uint8Array>;
+  assets: GasmAssetProvider;
   params: Record<string, string>;
   gfx: GfxBackend;
   storage: StorageBackend;
@@ -136,3 +136,47 @@ export declare class GasmHost {
   /** The player is quitting: calls the guest's optional gasm_exit (flush saves). */
   exit(): void;
 }
+
+/** Keyboard layouts: "<pad 1-4> <button> <key code>..." per line (KeyboardEvent.code names). */
+export declare const BUTTONS: readonly string[];
+export declare const DEFAULT_KEYMAP: string;
+export interface KeyBinding { pad: number; bit: number }
+export declare function parseKeymap(text: string): { bindings: Map<string, KeyBinding[]>; errors: string[] };
+/** Pads from held keys; keyboard pad N (N >= 2) only while fewer than N gamepads are connected. */
+export declare function keyboardPads(bindings: Map<string, KeyBinding[]>, held: Iterable<string>, gamepads?: number): number[];
+
+/** Synchronous asset source (the ABI is synchronous). */
+export interface GasmAssetProvider {
+  /** Size in bytes, or -1 if missing. */
+  size(name: string): number;
+  /** Copy bytes from offset into dst; bytes copied, or -1 if missing. */
+  readAt(name: string, offset: number, dst: Uint8Array): number;
+}
+export interface AssetSource { size(): number; readAt(offset: number, dst: Uint8Array): number }
+/** Asset table with gasm's naming rules: exact names win; folder entries also match case-insensitively (ASCII). */
+export declare class AssetTable implements GasmAssetProvider {
+  constructor(log?: (message: string) => void);
+  add(name: string, source: AssetSource, options?: { fromDir?: boolean }): boolean;
+  merge(table: AssetTable, options?: { fromDir?: boolean }): this;
+  finish(): this;
+  size(name: string): number;
+  readAt(name: string, offset: number, dst: Uint8Array): number;
+  names(): string[];
+}
+export declare function isAssetProvider(value: unknown): value is GasmAssetProvider;
+export declare function bytesSource(bytes: Uint8Array): AssetSource;
+export declare function memoryAssets(record?: Record<string, Uint8Array>): AssetTable;
+export interface LoadProgress { done: number; total: number; bytes: number; name: string }
+export interface FolderOptions { prefix?: string; onProgress?: (p: LoadProgress) => void; log?: (message: string) => void }
+/** Folder from showDirectoryPicker(), preloaded into memory (main-thread mode). */
+export declare function directoryHandleAssets(handle: FileSystemDirectoryHandle, options?: FolderOptions): Promise<AssetTable>;
+/** [relative name, File] entries of a directory handle (sorted, hidden entries skipped). */
+export declare function directoryHandleEntries(handle: FileSystemDirectoryHandle): Promise<[string, File][]>;
+/** Folder from <input webkitdirectory> (root segment stripped), preloaded into memory. */
+export declare function fileListAssets(files: FileList | File[], options?: FolderOptions): Promise<AssetTable>;
+export declare function fileListEntries(files: FileList | File[]): [string, File][];
+export declare function preloadAssets(entries: [string, Blob][], options?: FolderOptions): Promise<AssetTable>;
+/** Worker only: lazy reads from File/Blob objects via FileReaderSync. */
+export declare function fileAssets(entries: [string, Blob][], options?: { prefix?: string; log?: (message: string) => void }): AssetTable;
+/** Worker only: lazy synchronous reads from an OPFS directory (FileSystemSyncAccessHandle). */
+export declare function opfsAssets(dir: string | FileSystemDirectoryHandle, options?: { prefix?: string; log?: (message: string) => void }): Promise<AssetTable>;

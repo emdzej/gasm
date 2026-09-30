@@ -173,8 +173,15 @@ resume the `AudioContext` from a user gesture.
 
 ### Step 9: input
 
-Map every device to virtual pads. Recommended mapping (keeps muscle memory
-consistent across runners):
+Map every device to virtual pads through a keyboard layout in the shared text
+format ([runner behaviour](/docs/abi#keyboard-layouts)): one binding per line,
+`<pad 1-4> <button> <key code>...`. The default keeps muscle memory
+consistent across runners, and gives player 2 its own keys (IJKL, `.`/`,`
+etc.). Gamepads take pads in connection order, and keyboard bindings for pad
+N ≥ 2 apply while fewer than N gamepads are connected. Parsers:
+`parseKeymap`/`keyboardPads` in `@emdzej/gasm-host`,
+[`keymap.rs`](https://github.com/emdzej/gasm/blob/main/runners/native/src/keymap.rs)
+in `gasm-host`. Player-1 defaults:
 
 | Bit | Button | Keyboard | Gamepad |
 |---|---|---|---|
@@ -188,6 +195,23 @@ consistent across runners):
 | 8–11 | Up/Down/Left/Right | Arrows | D-pad + left stick (±0.5) |
 
 Clear held keys when the window loses focus.
+
+### Assets: file-backed, folders, lazy providers
+
+Don't preload. Serve `asset_size`/`asset_read`/`asset_read_at` from a provider:
+
+- **Native:** open files at start and do positioned reads into guest memory
+  ([`assets.rs`](https://github.com/emdzej/gasm/blob/main/runners/native/src/assets.rs):
+  `pread`/`seek_read`, folders, case-insensitive index, 2 GiB limit, no panic
+  if a file shrinks).
+- **Browser:** the `GasmAssetProvider` interface
+  (`size(name)`, `readAt(name, offset, dst)`, synchronous) with `AssetTable`
+  for the naming rules. Lazy sources (OPFS sync access handles,
+  `FileReaderSync`) exist only in workers, so run such guests with
+  `GasmWorker`.
+- Rules: exact names first (explicit over folder entries), then ASCII
+  case-insensitive among folder entries (first in sorted order on
+  collisions), with hidden entries and symlinks skipped.
 
 ### Step 10: headless mode (strongly recommended)
 
@@ -221,6 +245,8 @@ cases in `scripts/determinism-test.sh`.
 - [ ] Keyboard + gamepad mapped as above
 - [ ] Unknown imports link as traps; `proc_exit(0)` ends cleanly; `gasm_exit` is called on user quit
 - [ ] Storage persists across runs (e.g. sumo's `record-bot`, NES battery saves)
+- [ ] Folder assets resolve case-insensitively and `scripts/asset-test.sh` hashes match (`assetcheck.wasm`)
+- [ ] Keyboard layouts load from the shared format; pad-2 keys yield to a second gamepad
 - [ ] Headless hashes match `gasm-run` for every case in `scripts/determinism-test.sh`
 - [ ] With `gasm:net`: a headless sumo peer on your runner reaches the same final
       state as a `gasm-run` peer through `gasm-relay` (`scripts/net-test.sh`)

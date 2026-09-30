@@ -11,3 +11,5 @@
 /site/public/play/
 /dist/
 /runners/native/relay-*
+/runners/web/vendor/
+/runners/web/node_modules/

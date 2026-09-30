@@ -214,11 +214,19 @@ function conformance() {
   return errors;
 }
 
+// The default keyboard layout is shared: runners/native/src/default-keymap.txt must equal
+// gasm-host.js DEFAULT_KEYMAP (same text format, same bindings on both runners).
+async function keymapCheck() {
+  const { DEFAULT_KEYMAP } = await import(join(ROOT, 'runners/web/gasm-host.js'));
+  return read('runners/native/src/default-keymap.txt') === DEFAULT_KEYMAP
+    ? [] : ['runners/native/src/default-keymap.txt differs from gasm-host.js DEFAULT_KEYMAP'];
+}
+
 // ---- main ----------------------------------------------------------------------------------
 
 const outputs = { 'spec/gasm.h': genHeader(), 'guests/gasm/src/sys.rs': genRust() };
 if (process.argv.includes('--check')) {
-  const errors = conformance();
+  const errors = [...conformance(), ...(await keymapCheck())];
   for (const [p, content] of Object.entries(outputs)) {
     if (read(p) !== content) errors.push(`${p} is out of date: run node scripts/gen-abi.mjs`);
   }

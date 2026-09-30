@@ -210,7 +210,12 @@ impl gasm::Game for MyGame {
 ```
 
 For large assets, `gasm::asset_read_at(name, offset, &mut buf)` reads a window
-instead of the whole file.
+instead of the whole file. Runners don't preload assets (native reads from
+disk on demand; the browser does too in Worker mode with OPFS or picked
+folders), so streaming a 200 MB soundtrack this way costs almost no memory.
+When a game ships data as a folder (a CD image, say), ask for names as you
+know them: folder assets match case-insensitively, so `Art/art.car` finds
+`ART/ART.CAR` on an upper-case CD.
 
 ### Network (`gasm:net`)
 

@@ -1,0 +1,46 @@
+lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: true
+  excludeLinksFromLockfile: false
+
+importers:
+
+  .:
+    devDependencies:
+      '@emdzej/csfs-core':
+        specifier: ^0.3.0
+        version: 0.3.0
+      '@emdzej/csfs-fsa':
+        specifier: ^0.3.0
+        version: 0.3.0
+      '@emdzej/csfs-opfs':
+        specifier: ^0.3.0
+        version: 0.3.0
+
+packages:
+
+  '@emdzej/csfs-core@0.3.0':
+    resolution: {integrity: sha512-iz/io4LGx+sA9ozHDd/ljrw2ZLN/rSbl4wZiFCuZCTVwlxYfoUk0okSdcHDvT+Y9Fg6wX5Z0SeAgUzNF6qDqjg==}
+    engines: {node: '>=22'}
+
+  '@emdzej/csfs-fsa@0.3.0':
+    resolution: {integrity: sha512-qw786ifR/N0nF8txCRk9Z4bb0k6VRbMiA9zWThXQjBtUP/wupkklOJcPtihRKUhxrqcDP0t4cAX1ta+kquKKTA==}
+    engines: {node: '>=22'}
+
+  '@emdzej/csfs-opfs@0.3.0':
+    resolution: {integrity: sha512-dHipXfdvotZ5ryhndnY68a8V5Zhml7WkiPfNHJCwzIgHFbkT5b8/IZeEFlTsSxkyFk99I2BUvmS2ODIofyEh7Q==}
+    engines: {node: '>=22'}
+
+snapshots:
+
+  '@emdzej/csfs-core@0.3.0': {}
+
+  '@emdzej/csfs-fsa@0.3.0':
+    dependencies:
+      '@emdzej/csfs-core': 0.3.0
+
+  '@emdzej/csfs-opfs@0.3.0':
+    dependencies:
+      '@emdzej/csfs-core': 0.3.0
+      '@emdzej/csfs-fsa': 0.3.0

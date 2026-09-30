@@ -5,6 +5,11 @@ file, and this crate runs it: wasmtime for the module, wgpu (Metal, Vulkan,
 D3D12) for `gasm:gfx`, cpal audio, gilrs gamepads, WebSocket networking
 (`ws://`/`wss://`, rustls) and per-game storage.
 
+Assets are never preloaded: files (`--asset`) and whole folders
+(`--asset-dir`, e.g. a mounted CD) are read on demand into guest memory, with
+case-insensitive names. Keyboard layouts are configurable
+(`--keymap`, `--print-keymap`); the default gives two players one keyboard.
+
 It ships two binaries:
 
 ```sh
@@ -20,10 +25,10 @@ another platform:
 
 ```rust
 use std::collections::HashMap;
-use gasm_host::{gfx::Gfx, host::{Game, Host}, net::Net, storage::Storage};
+use gasm_host::{assets::Assets, gfx::Gfx, host::{Game, Host}, net::Net, storage::Storage};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let host = Host::new(HashMap::new(), HashMap::new(), None, Gfx::null(), Net::new(false), Storage::memory());
+    let host = Host::new(Assets::new(), HashMap::new(), None, Gfx::null(), Net::new(false), Storage::memory());
     let mut game = Game::load(&std::fs::read("game.wasm")?, host)?;
     for _ in 0..600 {
         game.frame()?;                    // call at game.host().frame_rate Hz

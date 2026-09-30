@@ -26,7 +26,9 @@ export class GasmHost {
   constructor({ assets = {}, params = {}, gfx = new NullGfx(), storage = new MemoryStorage(), allowNet = false,
                 onPresent = () => {}, onAudio = () => {}, onLog = console.log,
                 getPad = () => 0, virtualTime = false } = {}) {
-    this.assets = assets;            // name -> Uint8Array
+    // GasmAssetProvider ({ size(name), readAt(name, offset, dst) }), or a plain
+    // { name: Uint8Array } record (wrapped as an in-memory provider).
+    this.assets = isAssetProvider(assets) ? assets : memoryAssets(assets);
     this.params = params;            // name -> string
     this.gfx = gfx;
     this.storage = storage;          // MemoryStorage (headless) or IdbStorage (browser)
@@ -101,20 +103,18 @@ export class GasmHost {
         return b.length;
       },
       asset_read_at: (ptr, len, offset, dst, cap) => {
-        const a = this.assets[this.str(ptr, len)];
-        if (!a) return -1;
-        const start = Math.min(offset >>> 0, a.length);
-        const n = Math.min(a.length - start, cap >>> 0);
-        this.bytes(dst, n).set(a.subarray(start, start + n));
-        return n;
+        const name = this.str(ptr, len);
+        const size = this.assets.size(name);
+        if (size < 0) return -1;
+        const n = Math.max(0, Math.min(size - (offset >>> 0), cap >>> 0));
+        return this.assets.readAt(name, offset >>> 0, this.bytes(dst, n));
       },
-      asset_size: (ptr, len) => { const a = this.assets[this.str(ptr, len)]; return a ? a.length : -1; },
+      asset_size: (ptr, len) => this.assets.size(this.str(ptr, len)),
       asset_read: (ptr, len, dst, cap) => {
-        const a = this.assets[this.str(ptr, len)];
-        if (!a) return -1;
-        const n = Math.min(a.length, cap);
-        this.bytes(dst, n).set(a.subarray(0, n));
-        return n;
+        const name = this.str(ptr, len);
+        const size = this.assets.size(name);
+        if (size < 0) return -1;
+        return this.assets.readAt(name, 0, this.bytes(dst, Math.min(size, cap >>> 0)));
       },
     };
   }
@@ -256,8 +256,11 @@ export class GasmHost {
   }
 
   frame() {
-    this.exports.gasm_frame();
-    this.frameIndex++;
+    try {
+      this.exports.gasm_frame();
+    } finally {
+      this.frameIndex++; // a frame that exits or traps still counts (as in the other runners)
+    }
   }
 
   // Best-effort "player is quitting" (optional gasm_exit export): games flush saves.
@@ -415,4 +418,263 @@ export class IdbStorage extends MemoryStorage {
     };
     return s;
   }
+}
+
+// ---- assets ------------------------------------------------------------------------
+// A GasmAssetProvider is synchronous (the ABI is): { size(name) -> bytes or -1,
+// readAt(name, offset, dst: Uint8Array) -> bytes copied or -1 }. AssetTable
+// implements the same naming rules as the native runner (runners/native/src/assets.rs):
+// exact names win (explicit entries over folder entries); folder entries also match
+// case-insensitively (ASCII), ties resolved by the first name in sorted order.
+
+export const isAssetProvider = (a) => a && typeof a.size === 'function' && typeof a.readAt === 'function';
+const asciiLower = (s) => s.replace(/[A-Z]/g, (c) => c.toLowerCase());
+const hidden = (segments) => segments.some((seg) => seg.startsWith('.'));
+
+/** An asset source: { size() -> number, readAt(offset, dst) -> bytes copied }. */
+export const bytesSource = (u8) => ({
+  size: () => u8.length,
+  readAt: (offset, dst) => {
+    const n = Math.max(0, Math.min(dst.length, u8.length - offset));
+    if (n > 0) dst.set(u8.subarray(offset, offset + n));
+    return n;
+  },
+});
+
+export class AssetTable {
+  constructor(log = () => {}) { this.exact = new Map(); this.folded = new Map(); this.log = log; }
+  /** Add a source. Explicit entries replace; folder entries never replace an existing name. */
+  add(name, source, { fromDir = false } = {}) {
+    if (fromDir && this.exact.has(name)) return false;
+    this.exact.set(name, { source, fromDir });
+    return true;
+  }
+  /** Merge another table's entries (as folder entries if `fromDir`). */
+  merge(table, { fromDir = true } = {}) {
+    for (const [name, e] of table.exact) this.add(name, e.source, { fromDir: fromDir || e.fromDir });
+    return this.finish();
+  }
+  /** Build the case-insensitive index; warns about names that differ only in case. */
+  finish() {
+    this.folded.clear();
+    for (const [name, e] of this.exact) {
+      if (!e.fromDir) continue;
+      const k = asciiLower(name);
+      (this.folded.get(k) ?? this.folded.set(k, []).get(k)).push(name);
+    }
+    for (const names of this.folded.values()) {
+      names.sort();
+      if (names.length > 1) this.log(`[gasm] assets: ${names.join(', ')} differ only in case; case-insensitive lookups use "${names[0]}"`);
+    }
+    return this;
+  }
+  resolve(name) {
+    const e = this.exact.get(name);
+    if (e) return e;
+    const k = this.folded.get(asciiLower(name));
+    return k ? this.exact.get(k[0]) : undefined;
+  }
+  size(name) { const e = this.resolve(name); return e ? e.source.size() : -1; }
+  readAt(name, offset, dst) { const e = this.resolve(name); return e ? e.source.readAt(offset, dst) : -1; }
+  names() { return [...this.exact.keys()].sort(); }
+}
+
+/** In-memory provider from { name: Uint8Array } (explicit entries: exact names only). */
+export function memoryAssets(record = {}) {
+  const t = new AssetTable();
+  for (const [name, bytes] of Object.entries(record)) t.add(name, bytesSource(bytes));
+  return t.finish();
+}
+
+const joinName = (prefix, rel) => (prefix ? `${prefix.replace(/\/+$/, '')}/${rel}` : rel);
+
+/**
+ * Folder from showDirectoryPicker() (Chromium). Preloads every file into memory
+ * (main-thread mode); in Worker mode prefer fileAssets()/opfsAssets() for lazy reads.
+ * onProgress({ done, total, bytes, name }) is called per file.
+ */
+export async function directoryHandleAssets(handle, { prefix = '', onProgress, log } = {}) {
+  return preload(await directoryHandleEntries(handle), prefix, onProgress, log);
+}
+
+/**
+ * Folder from <input type="file" webkitdirectory> (all browsers). The leading
+ * root-folder segment of webkitRelativePath is stripped, so names match the
+ * native runner's --asset-dir. Preloads into memory (see directoryHandleAssets).
+ */
+export async function fileListAssets(fileList, { prefix = '', onProgress, log } = {}) {
+  return preload(fileListEntries(fileList), prefix, onProgress, log);
+}
+
+/** [relative name, File] pairs from a webkitdirectory FileList (root segment stripped, hidden skipped). */
+export function fileListEntries(fileList) {
+  const out = [];
+  for (const f of fileList) {
+    const segs = (f.webkitRelativePath || f.name).split('/');
+    const rel = segs.length > 1 ? segs.slice(1) : segs;
+    if (!hidden(rel)) out.push([rel.join('/'), f]);
+  }
+  return out.sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
+}
+
+/** Preload [name, File|Blob] entries into memory as folder assets (main-thread mode). */
+export async function preloadAssets(entries, { prefix = '', onProgress, log } = {}) {
+  return preload(entries, prefix, onProgress, log);
+}
+
+/** [relative name, File] pairs from a showDirectoryPicker() handle (sorted, hidden skipped). */
+export async function directoryHandleEntries(handle) {
+  const files = [];
+  const walk = async (dir, segs) => {
+    const entries = [];
+    for await (const [name, h] of dir.entries()) entries.push([name, h]);
+    entries.sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
+    for (const [name, h] of entries) {
+      const s = [...segs, name];
+      if (hidden(s)) continue;
+      if (h.kind === 'directory') await walk(h, s);
+      else files.push([s.join('/'), await h.getFile()]);
+    }
+  };
+  await walk(handle, []);
+  return files;
+}
+
+async function preload(files, prefix, onProgress, log) {
+  const t = new AssetTable(log);
+  let bytes = 0;
+  for (let i = 0; i < files.length; i++) {
+    const [rel, file] = files[i];
+    const data = new Uint8Array(await file.arrayBuffer());
+    bytes += data.length;
+    t.add(joinName(prefix, rel), bytesSource(data), { fromDir: true });
+    onProgress?.({ done: i + 1, total: files.length, bytes, name: rel });
+  }
+  return t.finish();
+}
+
+/**
+ * Worker mode only: lazy, synchronous reads from File/Blob objects via FileReaderSync
+ * (e.g. a picked folder posted to the worker). entries: [[name, File], ...].
+ */
+export function fileAssets(entries, { prefix = '', log } = {}) {
+  if (typeof FileReaderSync === 'undefined') throw new Error('fileAssets needs a Worker (FileReaderSync)');
+  const reader = new FileReaderSync();
+  const t = new AssetTable(log);
+  for (const [rel, file] of entries) {
+    t.add(joinName(prefix, rel), {
+      size: () => file.size,
+      readAt: (offset, dst) => {
+        const n = Math.max(0, Math.min(dst.length, file.size - offset));
+        if (n > 0) dst.set(new Uint8Array(reader.readAsArrayBuffer(file.slice(offset, offset + n))));
+        return n;
+      },
+    }, { fromDir: true });
+  }
+  return t.finish();
+}
+
+/**
+ * Worker mode only: a directory in the origin private file system, read lazily and
+ * synchronously through FileSystemSyncAccessHandle. Nothing is preloaded: reads go
+ * straight from OPFS into guest memory. Handles are opened once, while loading:
+ * createSyncAccessHandle() is async and a synchronous read can't await it without
+ * SharedArrayBuffer (which would need COOP/COEP headers). Opening is cheap (~450 files
+ * for a CD), and each handle is then reused for every read.
+ * `dir` is a path like "openrf-cd" (relative to the OPFS root) or a directory handle.
+ */
+export async function opfsAssets(dir, { prefix = '', log } = {}) {
+  let handle = dir;
+  if (typeof dir === 'string') {
+    handle = await navigator.storage.getDirectory();
+    for (const seg of dir.split('/').filter(Boolean)) handle = await handle.getDirectoryHandle(seg);
+  }
+  const t = new AssetTable(log);
+  const walk = async (d, segs) => {
+    const entries = [];
+    for await (const [name, h] of d.entries()) entries.push([name, h]);
+    entries.sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
+    for (const [name, h] of entries) {
+      const s = [...segs, name];
+      if (hidden(s)) continue;
+      if (h.kind === 'directory') { await walk(h, s); continue; }
+      const access = await h.createSyncAccessHandle();
+      const size0 = access.getSize();
+      t.add(joinName(prefix, s.join('/')), {
+        size: () => { try { return access.getSize(); } catch { return size0; } },
+        readAt: (offset, dst) => (dst.length ? access.read(dst, { at: offset }) : 0),
+      }, { fromDir: true });
+    }
+  };
+  await walk(handle, []);
+  return t.finish();
+}
+
+// ---- keyboard layouts --------------------------------------------------------------
+// One text format for both runners (gasm-run --keymap FILE, the web player's "keys"
+// editor). A line per binding: <pad 1-4> <button> <key code> [<key code> ...].
+// Buttons: a b x y l r select start up down left right. Key codes are
+// KeyboardEvent.code names (KeyX, ArrowUp, Period, ControlRight, NumpadEnter...).
+// Keyboard bindings for pad N >= 2 apply while fewer than N gamepads are connected.
+
+export const BUTTONS = ['a', 'b', 'x', 'y', 'l', 'r', 'select', 'start', 'up', 'down', 'left', 'right'];
+
+export const DEFAULT_KEYMAP = `# gasm keyboard layout: <pad> <button> <key code>...  (KeyboardEvent.code names)
+# player 1
+1 up ArrowUp
+1 down ArrowDown
+1 left ArrowLeft
+1 right ArrowRight
+1 a KeyX
+1 b KeyZ
+1 x KeyS
+1 y KeyA
+1 l KeyQ
+1 r KeyW
+1 select ShiftRight
+1 start Enter
+# player 2 (used while fewer than two gamepads are connected)
+2 up KeyI
+2 down KeyK
+2 left KeyJ
+2 right KeyL
+2 a Period
+2 b Comma
+2 x KeyM
+2 y KeyN
+2 l KeyU
+2 r KeyO
+2 select Backspace
+2 start ControlRight NumpadEnter
+`;
+
+/** Parse a keymap. Returns { bindings: Map<code, [{pad, bit}]>, errors: string[] }. */
+export function parseKeymap(text) {
+  const bindings = new Map(), errors = [];
+  text.split('\n').forEach((raw, i) => {
+    const line = raw.replace(/#.*/, '').trim();
+    if (!line) return;
+    const [pad, button, ...keys] = line.split(/\s+/);
+    const p = Number(pad), bit = BUTTONS.indexOf((button ?? '').toLowerCase());
+    if (!(p >= 1 && p <= 4) || bit < 0 || !keys.length) {
+      errors.push(`line ${i + 1}: expected "<pad 1-4> <button> <key>...", got "${line}"`);
+      return;
+    }
+    for (const code of keys) {
+      if (code === 'Escape') { errors.push(`line ${i + 1}: Escape is reserved (quit)`); continue; }
+      (bindings.get(code) ?? bindings.set(code, []).get(code)).push({ pad: p - 1, bit });
+    }
+  });
+  return { bindings, errors };
+}
+
+/** Pads from held keys: pad N (N >= 1, zero-based) only while fewer than N+1 gamepads exist. */
+export function keyboardPads(bindings, held, gamepads = 0) {
+  const pads = [0, 0, 0, 0];
+  for (const code of held) {
+    for (const { pad, bit } of bindings.get(code) ?? []) {
+      if (pad === 0 || gamepads <= pad) pads[pad] |= 1 << bit;
+    }
+  }
+  return pads;
 }

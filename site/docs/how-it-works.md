@@ -263,10 +263,34 @@ A per-game key/value store for saves, settings and scores:
 
 ## Assets and params
 
-Assets are a flat, read-only `name → bytes` map provided at launch (CLI
-`--asset name=path`, a browser file picker). **Params** are `name → string`
-(CLI `--param k=v`, URL query in the browser). There is no filesystem: games
-can't read anything they weren't given.
+Assets are a flat, read-only `name → bytes` map provided at launch. **Params**
+are `name → string` (CLI `--param k=v`, URL query in the browser). There is no
+filesystem: games can't read anything they weren't given.
+
+Assets are designed for data-heavy games (a CD's worth of files, a streamed
+soundtrack):
+
+```
+native / Node:  --asset name=path   --asset-dir [prefix=]dir
+                files opened, not read -> positioned reads into guest memory
+browser main:   { name: bytes } | picked folder (preloaded, with progress)
+browser Worker: OPFS (FileSystemSyncAccessHandle) | File/Blob (FileReaderSync)
+                read on demand, synchronously, straight into guest memory
+```
+
+All providers share one set of naming rules: relative `/` paths, exact match
+first, then case-insensitive among folder entries, with hidden files and
+symlinks skipped. So a game finds `Art/art.car` whether the data is a mounted
+CD, a folder the player picked, or an OPFS copy. The ABI is synchronous, which
+is why lazy browser sources need a Worker: only workers can read OPFS and
+`File`s synchronously.
+
+**Worker mode** moves the guest off the main thread. The page sends each
+batch's input and receives the latest frame and the audio as *transferred*
+buffers, so it needs no `SharedArrayBuffer` and no cross-origin isolation.
+Populating OPFS is the embedding page's job. gasm's player does it with
+[csfs](https://github.com/emdzej/csfs) (`opfs.html`), and gasm itself only
+reads.
 
 ## Execution modes
 

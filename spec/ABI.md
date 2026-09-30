@@ -82,8 +82,10 @@ Physical mapping (face buttons by position, as on a SNES pad): East=A,
 South=B, North=X, West=Y.
 
 Assets are a flat, read-only name→bytes map chosen by whoever launches the
-game (CLI `--asset name=path`, a file picker, a package, …). By convention
-`rom` is the content file for emulator guests.
+game (CLI `--asset name=path`, a folder, a file picker, OPFS, a package, …). By
+convention `rom` is the content file for emulator guests. How runners provide
+them (file-backed reads, folders, case-insensitive names) is described in
+[Runner behaviour](#runner-behaviour).
 
 Params are a flat name→string map: CLI `--param name=value`, or URL query
 parameters in the browser runner. Use them for things like a relay URL or a
@@ -205,10 +207,88 @@ runners verify this with FNV-1a-32 hashes (`make test`). One caveat: wasm NaN
 bit patterns are nondeterministic by spec. Guests that hash or store NaN
 payloads can diverge.
 
+## Runner behaviour
+
+Not part of the import/export contract, but common to the reference runners
+(`gasm-run`, the browser runner, the Node headless runner) so games behave the
+same everywhere.
+
+### Assets
+
+- **File-backed, never preloaded (native, Node folders):** assets given by path
+  are opened, not read. `asset_size` comes from file metadata; `asset_read`
+  and `asset_read_at` do positioned reads straight into guest memory. A
+  200 MB asset streamed at random offsets costs no extra RAM (measured:
+  23.8 MB max RSS vs 23.7 MB with a tiny asset). A file that shrinks or
+  disappears while running yields fewer bytes (possibly 0) or `-1`; runners
+  never crash.
+- **Size limit:** sizes are 32-bit (`asset_size -> i32`). Files over
+  2 GiB − 1 are refused at start-up with an error (folder entries that large
+  are skipped with a warning).
+- **Folders:** a folder exposes every regular file under it, recursively.
+  The asset name is the `/`-separated path relative to the folder, as stored
+  (`ART/ART.CAR`), optionally with a prefix (`cd/ART/ART.CAR`). The set of
+  names is fixed at start-up.
+  - Symlinks are skipped (nothing outside the folder is reachable).
+  - Hidden entries are skipped: any path component starting with `.`, e.g.
+    `.DS_Store`, `._foo`, `.git`.
+  - Native: `--asset-dir [prefix=]dir`. Node: the same flag. Browser: a
+    directory handle (`showDirectoryPicker`), a `webkitdirectory` file list
+    (the leading root-folder segment of `webkitRelativePath` is stripped,
+    so names match), an OPFS directory, or `File` objects.
+- **Lookup:** an exact name always wins, and explicit assets (`--asset`)
+  override folder entries with the same name. Folder entries also match
+  **case-insensitively** (ASCII folding): `Art/art.car` finds
+  `ART/ART.CAR`. If folder entries differ only in case, runners warn at
+  start-up and resolve case-insensitive lookups to the first name in sorted
+  order.
+
+### Worker mode (browser runner)
+
+Games that don't import `gasm:gfx` can run in a dedicated Worker
+(`@emdzej/gasm-host/worker`). The page keeps input, display and audio.
+- **Per frame:** input for each frame is sent before it runs and is stable
+  within it. The worker returns the latest RGBA frame and the audio.
+  Buffers are *transferred*, so there's no `SharedArrayBuffer` and no
+  COOP/COEP requirement (GitHub Pages works).
+- **Unchanged:** frame pacing, the catch-up rule (only the last frame of a
+  batch is shown) and `begin_frame` semantics.
+- **Storage and net:** `gasm:storage` (IndexedDB) and `gasm:net` (WebSocket)
+  run inside the worker.
+- **Lazy asset providers,** only available in workers:
+  - **OPFS**, via `FileSystemSyncAccessHandle`: reads go straight from OPFS
+    into guest memory. Handles are opened while loading, because
+    `createSyncAccessHandle` is async and can't be awaited from a
+    synchronous read.
+  - **`File`/`Blob`**, via `FileReaderSync`.
+
+  Main-thread mode remains the default; `gasm:gfx` games always use it.
+
+Measured (Chrome, macOS): streaming 10 GB of random 64 KB reads from a
+200 MB OPFS file in Worker mode, the renderer's resident memory grew 4 MB,
+and the hashes matched the Node runner reading the same files from disk.
+
+### Keyboard layouts
+
+Both runners map keys to virtual pads through the same text format. There's
+one binding per line, `<pad 1-4> <button> <key code>...`. Buttons are
+`a b x y l r select start up down left right`; key codes are W3C
+`KeyboardEvent.code` names.
+- **Default:** pad 1 on the arrows plus `X`/`Z`/`S`/`A`/`Q`/`W`, `Enter` and
+  Right Shift; pad 2 on `IJKL` plus `.`/`,`/`M`/`N`/`U`/`O`, Right Ctrl or
+  keypad Enter, and Backspace.
+- **Gamepads** take pads in connection order. Keyboard bindings for pad
+  N ≥ 2 apply while fewer than N gamepads are connected.
+- **Changing it:** native uses `--keymap FILE` (default:
+  `<data dir>/gasm/keymap.txt` if present) and `--print-keymap`. The web
+  player has a "keys…" editor, stored in `localStorage`. Escape is reserved
+  for quitting.
+
 ## Roadmap (not in v0)
 
 - `.gasm` packages: one file bundling `game.wasm`, assets and a manifest.
 - `gasm:files`: a runner-provided file picker (the game only sees what the player picks).
+- Asset enumeration (`asset_count`, `asset_name`), if a game needs to discover a folder's contents.
 - `gasm:gfx` v1: textures and samplers, storage buffers, instancing examples,
   render bundles.
 - Capabilities manifest (custom section `gasm.manifest`) that declares required

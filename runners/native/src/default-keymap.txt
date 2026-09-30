@@ -1,0 +1,27 @@
+# gasm keyboard layout: <pad> <button> <key code>...  (KeyboardEvent.code names)
+# player 1
+1 up ArrowUp
+1 down ArrowDown
+1 left ArrowLeft
+1 right ArrowRight
+1 a KeyX
+1 b KeyZ
+1 x KeyS
+1 y KeyA
+1 l KeyQ
+1 r KeyW
+1 select ShiftRight
+1 start Enter
+# player 2 (used while fewer than two gamepads are connected)
+2 up KeyI
+2 down KeyK
+2 left KeyJ
+2 right KeyL
+2 a Period
+2 b Comma
+2 x KeyM
+2 y KeyN
+2 l KeyU
+2 r KeyO
+2 select Backspace
+2 start ControlRight NumpadEnter

@@ -27,6 +27,11 @@ pub fn valid_key(k: &str) -> bool {
 /// Default location: <data dir>/gasm/<game id>, e.g.
 /// ~/Library/Application Support/gasm/sumo on macOS.
 pub fn default_dir(game_id: &str) -> Option<PathBuf> {
+    data_root().map(|r| r.join(game_id))
+}
+
+/// `<data dir>/gasm`: saves live in subdirectories, `keymap.txt` next to them.
+pub fn data_root() -> Option<PathBuf> {
     let base = if cfg!(target_os = "macos") {
         std::env::var_os("HOME").map(|h| PathBuf::from(h).join("Library/Application Support"))
     } else if cfg!(windows) {
@@ -36,7 +41,7 @@ pub fn default_dir(game_id: &str) -> Option<PathBuf> {
             .map(PathBuf::from)
             .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")))
     };
-    base.map(|b| b.join("gasm").join(game_id))
+    base.map(|b| b.join("gasm"))
 }
 
 impl Storage {
