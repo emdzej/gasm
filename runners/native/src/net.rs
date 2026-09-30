@@ -22,6 +22,7 @@ pub const ERROR: u32 = 3;
 struct Conn {
     state: Arc<AtomicU32>,
     outgoing: Sender<Vec<u8>>,
+    thread: Option<std::thread::JoinHandle<()>>,
     incoming: Receiver<Vec<u8>>,
     queue: VecDeque<Vec<u8>>,
 }
@@ -50,10 +51,10 @@ impl Net {
         let (out_tx, out_rx) = mpsc::channel::<Vec<u8>>();
         let (in_tx, in_rx) = mpsc::channel::<Vec<u8>>();
         let (st, url_owned) = (state.clone(), url.to_owned());
-        std::thread::spawn(move || run(&url_owned, &st, out_rx, in_tx));
+        let thread = std::thread::spawn(move || run(&url_owned, &st, out_rx, in_tx));
         let h = self.next;
         self.next += 1;
-        self.conns.insert(h, Conn { state, outgoing: out_tx, incoming: in_rx, queue: VecDeque::new() });
+        self.conns.insert(h, Conn { state, outgoing: out_tx, incoming: in_rx, queue: VecDeque::new(), thread: Some(thread) });
         h
     }
 
@@ -88,6 +89,20 @@ impl Net {
 
     pub fn close(&mut self, h: i32) {
         self.conns.remove(&h); // dropping the sender ends the thread
+    }
+}
+
+impl Drop for Net {
+    /// Let connection threads flush what the guest already sent (e.g. the last
+    /// lockstep inputs before a game exits) instead of dropping it on exit.
+    fn drop(&mut self) {
+        let threads: Vec<_> = self.conns.drain().filter_map(|(_, mut c)| c.thread.take()).collect();
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        for t in threads {
+            while !t.is_finished() && std::time::Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        }
     }
 }
 

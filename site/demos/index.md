@@ -5,10 +5,10 @@ Every demo below is the **same `.wasm` file** you can also run natively with
 host with WebGPU for 3D.
 
 <div class="demo-grid">
-  <a class="demo-card" href="/play/?game=sumo.wasm&autostart" target="_blank"><strong>🥋 Sumo (3D)</strong><span>Push the other ball off the platform. Arrows move, X or Z dashes. Plays a bot, or a friend online through a relay.</span></a>
-  <a class="demo-card" href="/play/?game=triangle.wasm&autostart" target="_blank"><strong>🔺 GPU triangle</strong><span>The smallest gasm:gfx program: one shader, one vertex buffer, about 50 lines of Rust.</span></a>
-  <a class="demo-card" href="/play/?game=nes.wasm" target="_blank"><strong>👾 NES emulator</strong><span>tetanes-core compiled to wasm. Open or drop your own <code>.nes</code> file; nothing is uploaded.</span></a>
-  <a class="demo-card" href="/play/?game=test-pattern.wasm&autostart" target="_blank"><strong>🌈 Test pattern (C)</strong><span>A 70-line C game built with wasi-sdk: gradient, movable square, a tone while A is held.</span></a>
+  <a class="demo-card" href="/play/?game=sumo.wasm&autostart" target="_blank"><strong>Sumo (3D)</strong><span>Push the other ball off the platform. Arrows move, X or Z dashes. Plays a bot, or a friend online through a relay.</span></a>
+  <a class="demo-card" href="/play/?game=triangle.wasm&autostart" target="_blank"><strong>GPU triangle</strong><span>The smallest gasm:gfx program: one shader, one vertex buffer, about 50 lines of Rust.</span></a>
+  <a class="demo-card" href="/play/?game=nes.wasm" target="_blank"><strong>NES emulator</strong><span>tetanes-core compiled to wasm. Open or drop your own <code>.nes</code> file; nothing is uploaded.</span></a>
+  <a class="demo-card" href="/play/?game=test-pattern.wasm&autostart" target="_blank"><strong>Test pattern (C)</strong><span>A 70-line C game built with wasi-sdk: gradient, movable square, a tone while A is held.</span></a>
 </div>
 
 ## Try sumo right here

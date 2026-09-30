@@ -20,23 +20,17 @@ hero:
       link: /docs/how-it-works
 
 features:
-  - icon: 📦
-    title: One artifact
+  - title: One artifact
     details: A game is a single .wasm file. The same bytes run in a native window (wasmtime + wgpu), in any WebGPU browser, and headless in Node for CI.
-  - icon: 🎮
-    title: A small, stable ABI
+  - title: A small, stable ABI
     details: A 10-function core (video, audio, input, assets, params), plus optional GPU and network modules. A new runner is weeks of work, not years.
-  - icon: 🧊
-    title: 3D via WebGPU
+  - title: 3D via WebGPU
     details: gasm:gfx is a compact WebGPU subset with WGSL shaders. Browsers forward it almost 1:1; natively it runs on Metal, Vulkan and D3D12 through wgpu.
-  - icon: 🌐
-    title: Online multiplayer
+  - title: Online multiplayer
     details: gasm:net gives every runner WebSocket-style messaging. The sumo demo plays lockstep matches between native and browser players through a tiny relay.
-  - icon: 🎯
-    title: Bit-exact determinism
+  - title: Bit-exact determinism
     details: The same inputs produce the same frames, sounds and game state on every engine, and CI checks it with hashes. That's the basis for replays, tests and netplay.
-  - icon: 🛡️
-    title: Sandboxed by design
+  - title: Sandboxed by design
     details: Games only see their own memory and the ABI. No filesystem, network only with the player's opt-in, and every pointer and handle is checked.
 ---
 
