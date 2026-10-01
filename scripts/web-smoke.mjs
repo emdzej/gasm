@@ -17,10 +17,12 @@ const chrome = spawn(CHROME, ['--headless=new', `--remote-debugging-port=${port}
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 try {
   let target;
-  for (let i = 0; i < 50 && !target; i++) {
+  // a cold Chrome on a CI machine can take a while to open its debugging port
+  for (let i = 0; i < 300 && !target; i++) {
     await sleep(200);
     target = await fetch(`http://127.0.0.1:${port}/json`).then((r) => r.json()).then((t) => t.find((x) => x.type === 'page')).catch(() => null);
   }
+  if (!target) throw new Error('Chrome did not open its DevTools port within 60 s');
   const ws = new WebSocket(target.webSocketDebuggerUrl);
   await new Promise((r) => (ws.onopen = r));
   let id = 0; const pending = new Map(); const logs = [];
