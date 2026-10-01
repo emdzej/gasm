@@ -20,6 +20,7 @@ guests/              Rust workspace, target wasm32-unknown-unknown
   doom/                DOOM: platform layer for doomgeneric (C; engine fetched at build)
   triangle/            smallest GPU example
   textured/            textures, samplers, explicit layouts, dynamic offsets
+  inputtest/           raw keyboard, pointer, gamepads
   parity/              runs the NES game natively (parity + benchmarks)
   test-pattern/        C example (wasi-sdk)
 runners/native/      gasm-run + gasm-relay (Rust)
@@ -49,8 +50,9 @@ exports: memory, gasm_abi_version() -> 0, gasm_init() -> 0, gasm_frame()
 exports (optional): gasm_exit()   player is quitting: flush saves
 
 gasm        log · time_ms · set_frame_rate · param · video_present
-            audio_config · audio_push · input_pad · text_input · asset_size
-            asset_read · asset_read_at · asset_count · asset_name
+            audio_config · audio_push · input_pad · text_input · input_mode
+            key_state · key_events · pointer · gamepad · gamepad_name
+            asset_size · asset_read · asset_read_at · asset_count · asset_name
 gasm:gfx    width · height · create_shader · create_buffer · write_buffer
             create_texture · write_texture · create_sampler
             create_bind_group_layout · create_pipeline · create_bind_group
@@ -58,7 +60,7 @@ gasm:gfx    width · height · create_shader · create_buffer · write_buffer
             set_viewport · set_scissor_rect · set_vertex_buffer
             set_index_buffer · draw · draw_indexed · end_frame
 gasm:net    open · state · send · recv · close
-gasm:storage get · set · delete
+gasm:storage get · set · delete · count · key
 ```
 
 Full details: [ABI v0 specification](/docs/abi).

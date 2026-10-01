@@ -14,6 +14,7 @@ Games in this repo (Rust, plus two in C):
 | `nes.wasm` | NES emulator on [tetanes-core](https://crates.io/crates/tetanes-core): 2D video, audio, input, assets | 1.5 MB |
 | `doom.wasm` | DOOM ([doomgeneric](https://github.com/ozkl/doomgeneric), C) with OPL music, saves in `gasm:storage`, any IWAD as an asset ([guests/doom](guests/doom/README.md)) | 750 KB |
 | `triangle.wasm` | Smallest `gasm:gfx` program (about 50 lines of Rust) | 25 KB |
+| `inputtest.wasm` | Shows every raw input: keyboard (with modifiers), mouse, gamepads and joysticks | 75 KB |
 | `textured.wasm` | Textures with mipmaps, two samplers, explicit layouts, dynamic offsets, a storage buffer, 4:3 viewport and text input | 57 KB |
 | `test-pattern.wasm` | Minimal C guest (proves the ABI is language-agnostic) | 87 KB |
 | `assetcheck.wasm` | Test guest for asset providers (folders, streaming, OPFS) | 34 KB |
@@ -90,13 +91,14 @@ $R build/doom.wasm --asset wad=roms/doom1.wad
 
 Controls: arrows = D-pad, **X** = A, **Z** = B, **Enter** = Start,
 **Right Shift** = Select (plus S/A = X/Y, Q/W = L/R). Gamepads work in both
-runners. In sumo: move with the D-pad, **dash with A or B**, and push the other
+runners. Games can also read the keyboard, mouse and gamepads directly (DOOM
+does). Hold **Esc** to quit. In sumo: move with the D-pad, **dash with A or B**, and push the other
 ball off the platform. First to 5 wins.
 
 ## Results (Apple M1 Pro, this commit)
 
-**Portability.** `make test` checks 12 single-player cases (test pattern, the
-textured GPU test, sumo vs. bot, 5 NES test ROMs/demos, scripted Blade Buster gameplay, the DOOM and
+**Portability.** `make test` checks 14 single-player cases (test pattern, the
+textured GPU test, the input tester, DOOM on keyboard and mouse, sumo vs. bot, 5 NES test ROMs/demos, scripted Blade Buster gameplay, the DOOM and
 Freedoom attract-mode demos, and a scripted DOOM game that saves and loads). Each produces
 **bit-identical video, audio and GPU-upload streams** on wasmtime JIT,
 wasmtime AOT and V8. It also plays 3,600-frame online sumo matches through
@@ -133,6 +135,7 @@ guests/                      Rust workspace (wasm32-unknown-unknown)
   doom/                        DOOM: gasm platform layer for doomgeneric (engine fetched at build)
   triangle/                    smallest GPU example
   textured/                    textures, samplers, explicit layouts, dynamic offsets
+  inputtest/                   raw keyboard, pointer, gamepads (input tester)
   parity/                      runs the NES game natively (parity + benchmarks)
   test-pattern/                C guest (wasi-sdk)
 runners/native/              Rust: wasmtime + wasmtime-wasi, wgpu, winit, cpal, gilrs, tungstenite

@@ -7,7 +7,8 @@
 //! - Two samplers: repeat/linear (left half of the big quad) and clamp/nearest (right half).
 //! - One uniform buffer, one bind group, 256-byte slots picked with dynamic offsets.
 //! - One texture bind group shared by three pipelines (alpha, additive, instanced).
-//! - Typed text (`text_input`) tints the big quad.
+//! - Typed text (`text_input`) tints the big quad; the mouse wheel zooms it and
+//!   dragging with the left button turns it (raw pointer).
 
 use gasm::gfx::{self, BindGroup, Buffer, IndexFormat, Pipeline, Texture};
 
@@ -65,6 +66,8 @@ struct Textured {
     tex_group: BindGroup,
     inst_group: BindGroup,
     typed: String,
+    zoom: f32,
+    turn: f32,
 }
 
 type Mat = [f32; 16];
@@ -217,7 +220,7 @@ impl gasm::Game for Textured {
         ));
         Ok(Textured {
             frame: 0, alpha, additive, sprites, quad, indices, uniforms, instances, texture,
-            obj_group, tex_group, inst_group, typed: String::new(),
+            obj_group, tex_group, inst_group, typed: String::new(), zoom: 1.0, turn: 0.0,
         })
     }
 
@@ -238,6 +241,12 @@ impl gasm::Game for Textured {
                 gasm::log!("typed {:?} -> {:?}", text, self.typed);
             }
         }
+        if let Some(p) = gasm::input::pointer() {
+            self.zoom = (self.zoom * (1.0 - p.wheel_y * 0.1)).clamp(0.3, 2.0);
+            if p.buttons & gasm::input::MOUSE_LEFT != 0 {
+                self.turn += p.dx * 0.01;
+            }
+        }
         // tint from the typed text (white if none)
         let h = self.typed.bytes().fold(0u32, |h, b| h.wrapping_mul(31).wrapping_add(b as u32));
         let tint = if self.typed.is_empty() {
@@ -255,7 +264,7 @@ impl gasm::Game for Textured {
             u[o + 20..o + 24].copy_from_slice(&uv);
         };
         slot(0, full(0.9), [0.35, 0.35, 0.45, 1.0], [8.0, 6.0, 1.0, 1.0]);
-        slot(1, object(t * 0.5, 0.45, 0.0, 0.0, 0.5), tint, [2.0, 2.0, 1.4, 0.0]);
+        slot(1, object(t * 0.5 + self.turn, 0.45 * self.zoom, 0.0, 0.0, 0.5), tint, [2.0, 2.0, 1.4, 0.0]);
         for k in 0..ORBITERS {
             let a = t + k as f32 * std::f32::consts::TAU / ORBITERS as f32;
             let (s, c) = a.sin_cos();

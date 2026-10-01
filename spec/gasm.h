@@ -90,6 +90,178 @@ enum {
     GASM_NET_ERROR = 3,
 };
 
+/* ---- input modes ------------------------------------------------------------- */
+/* input_mode flags. */
+enum {
+    GASM_INPUT_KEYS_RAW = 1u << 0,
+    GASM_INPUT_POINTER_HIDDEN = 1u << 1,
+    GASM_INPUT_POINTER_LOCKED = 1u << 2,
+};
+
+/* ---- pointer ----------------------------------------------------------------- */
+/* pointer() layout and bits. Offsets of little-endian fields: f32 x 0, y 4
+ * (drawable px), fx 8, fy 12 (frame px), dx 16, dy 20 (relative motion),
+ * wheel_x 24, wheel_y 28 (lines; y > 0 = down), u32 buttons 32, pressed 36,
+ * released 40, flags 44. */
+enum {
+    GASM_POINTER_BYTES = 48,
+    GASM_MOUSE_LEFT = 1u << 0,
+    GASM_MOUSE_RIGHT = 1u << 1,
+    GASM_MOUSE_MIDDLE = 1u << 2,
+    GASM_MOUSE_BACK = 1u << 3,
+    GASM_MOUSE_FORWARD = 1u << 4,
+    GASM_POINTER_INSIDE = 1u << 0,
+    GASM_POINTER_IS_HIDDEN = 1u << 1,
+    GASM_POINTER_IS_LOCKED = 1u << 2,
+};
+
+/* ---- gamepad ----------------------------------------------------------------- */
+/* gamepad() layout: u32 flags 0, u32 buttons 4, u32 axes 8, f32 button values
+ * 12 (32), f32 axis values 140 (16). Standard mapping (W3C): buttons 0 south,
+ * 1 east, 2 west, 3 north, 4/5 shoulders, 6/7 triggers, 8 select, 9 start,
+ * 10/11 stick clicks, 12-15 d-pad up/down/left/right, 16 home; axes 0/1 left
+ * stick x/y, 2/3 right stick x/y (y > 0 = down). */
+enum {
+    GASM_GAMEPAD_BYTES = 204,
+    GASM_GAMEPAD_BUTTONS = 32,
+    GASM_GAMEPAD_AXES = 16,
+    GASM_GAMEPAD_CONNECTED = 1u << 0,
+    GASM_GAMEPAD_STANDARD = 1u << 1,
+};
+
+/* ---- keyboard ---------------------------------------------------------------- */
+/* key_state() size. */
+enum {
+    GASM_KEY_STATE_BYTES = 32,
+};
+
+/* ---- keys -------------------------------------------------------------------- */
+/* Physical keys (W3C KeyboardEvent.code names; layout-independent). The third
+ * column is the W3C name. */
+enum {
+    GASM_KEY_ESCAPE = 1,
+    GASM_KEY_F1 = 2,
+    GASM_KEY_F2 = 3,
+    GASM_KEY_F3 = 4,
+    GASM_KEY_F4 = 5,
+    GASM_KEY_F5 = 6,
+    GASM_KEY_F6 = 7,
+    GASM_KEY_F7 = 8,
+    GASM_KEY_F8 = 9,
+    GASM_KEY_F9 = 10,
+    GASM_KEY_F10 = 11,
+    GASM_KEY_F11 = 12,
+    GASM_KEY_F12 = 13,
+    GASM_KEY_BACKQUOTE = 14,
+    GASM_KEY_DIGIT0 = 15,
+    GASM_KEY_DIGIT1 = 16,
+    GASM_KEY_DIGIT2 = 17,
+    GASM_KEY_DIGIT3 = 18,
+    GASM_KEY_DIGIT4 = 19,
+    GASM_KEY_DIGIT5 = 20,
+    GASM_KEY_DIGIT6 = 21,
+    GASM_KEY_DIGIT7 = 22,
+    GASM_KEY_DIGIT8 = 23,
+    GASM_KEY_DIGIT9 = 24,
+    GASM_KEY_MINUS = 25,
+    GASM_KEY_EQUAL = 26,
+    GASM_KEY_BACKSPACE = 27,
+    GASM_KEY_TAB = 28,
+    GASM_KEY_KEY_A = 29,
+    GASM_KEY_KEY_B = 30,
+    GASM_KEY_KEY_C = 31,
+    GASM_KEY_KEY_D = 32,
+    GASM_KEY_KEY_E = 33,
+    GASM_KEY_KEY_F = 34,
+    GASM_KEY_KEY_G = 35,
+    GASM_KEY_KEY_H = 36,
+    GASM_KEY_KEY_I = 37,
+    GASM_KEY_KEY_J = 38,
+    GASM_KEY_KEY_K = 39,
+    GASM_KEY_KEY_L = 40,
+    GASM_KEY_KEY_M = 41,
+    GASM_KEY_KEY_N = 42,
+    GASM_KEY_KEY_O = 43,
+    GASM_KEY_KEY_P = 44,
+    GASM_KEY_KEY_Q = 45,
+    GASM_KEY_KEY_R = 46,
+    GASM_KEY_KEY_S = 47,
+    GASM_KEY_KEY_T = 48,
+    GASM_KEY_KEY_U = 49,
+    GASM_KEY_KEY_V = 50,
+    GASM_KEY_KEY_W = 51,
+    GASM_KEY_KEY_X = 52,
+    GASM_KEY_KEY_Y = 53,
+    GASM_KEY_KEY_Z = 54,
+    GASM_KEY_BRACKET_LEFT = 55,
+    GASM_KEY_BRACKET_RIGHT = 56,
+    GASM_KEY_BACKSLASH = 57,
+    GASM_KEY_CAPS_LOCK = 58,
+    GASM_KEY_SEMICOLON = 59,
+    GASM_KEY_QUOTE = 60,
+    GASM_KEY_ENTER = 61,
+    GASM_KEY_SHIFT_LEFT = 62,
+    GASM_KEY_INTL_BACKSLASH = 63,
+    GASM_KEY_COMMA = 64,
+    GASM_KEY_PERIOD = 65,
+    GASM_KEY_SLASH = 66,
+    GASM_KEY_SHIFT_RIGHT = 67,
+    GASM_KEY_CONTROL_LEFT = 68,
+    GASM_KEY_META_LEFT = 69,
+    GASM_KEY_ALT_LEFT = 70,
+    GASM_KEY_SPACE = 71,
+    GASM_KEY_ALT_RIGHT = 72,
+    GASM_KEY_META_RIGHT = 73,
+    GASM_KEY_CONTEXT_MENU = 74,
+    GASM_KEY_CONTROL_RIGHT = 75,
+    GASM_KEY_PRINT_SCREEN = 76,
+    GASM_KEY_SCROLL_LOCK = 77,
+    GASM_KEY_PAUSE = 78,
+    GASM_KEY_INSERT = 79,
+    GASM_KEY_HOME = 80,
+    GASM_KEY_PAGE_UP = 81,
+    GASM_KEY_DELETE = 82,
+    GASM_KEY_END = 83,
+    GASM_KEY_PAGE_DOWN = 84,
+    GASM_KEY_ARROW_UP = 85,
+    GASM_KEY_ARROW_LEFT = 86,
+    GASM_KEY_ARROW_DOWN = 87,
+    GASM_KEY_ARROW_RIGHT = 88,
+    GASM_KEY_NUM_LOCK = 89,
+    GASM_KEY_NUMPAD_DIVIDE = 90,
+    GASM_KEY_NUMPAD_MULTIPLY = 91,
+    GASM_KEY_NUMPAD_SUBTRACT = 92,
+    GASM_KEY_NUMPAD_ADD = 93,
+    GASM_KEY_NUMPAD_ENTER = 94,
+    GASM_KEY_NUMPAD_DECIMAL = 95,
+    GASM_KEY_NUMPAD0 = 96,
+    GASM_KEY_NUMPAD1 = 97,
+    GASM_KEY_NUMPAD2 = 98,
+    GASM_KEY_NUMPAD3 = 99,
+    GASM_KEY_NUMPAD4 = 100,
+    GASM_KEY_NUMPAD5 = 101,
+    GASM_KEY_NUMPAD6 = 102,
+    GASM_KEY_NUMPAD7 = 103,
+    GASM_KEY_NUMPAD8 = 104,
+    GASM_KEY_NUMPAD9 = 105,
+    GASM_KEY_NUMPAD_EQUAL = 106,
+    GASM_KEY_NUMPAD_COMMA = 107,
+    GASM_KEY_INTL_RO = 108,
+    GASM_KEY_INTL_YEN = 109,
+    GASM_KEY_F13 = 110,
+    GASM_KEY_F14 = 111,
+    GASM_KEY_F15 = 112,
+    GASM_KEY_F16 = 113,
+    GASM_KEY_F17 = 114,
+    GASM_KEY_F18 = 115,
+    GASM_KEY_F19 = 116,
+    GASM_KEY_F20 = 117,
+    GASM_KEY_F21 = 118,
+    GASM_KEY_F22 = 119,
+    GASM_KEY_F23 = 120,
+    GASM_KEY_F24 = 121,
+};
+
 /* ---- gasm -------------------------------------------------------------- */
 
 /* Write a line to the runner's log. */
@@ -113,6 +285,35 @@ GASM_IMPORT("input_pad") uint32_t gasm_input_pad(uint32_t player);
  * stable within a frame. Returns its length (copied only if length <= cap; cap
  * = 0 queries), or -1 if the runner has no keyboard. */
 GASM_IMPORT("text_input") int32_t gasm_text_input(char *dst, uint32_t cap);
+/* GASM_INPUT_* flags: KEYS_RAW (the runner stops mapping the keyboard to pads;
+ * gamepads still map), POINTER_HIDDEN (hide the system cursor over the game),
+ * POINTER_LOCKED (capture the pointer for relative motion; best effort, the
+ * browser needs a click). */
+GASM_IMPORT("input_mode") void gasm_input_mode(uint32_t flags);
+/* Held keys as a bitset indexed by GASM_KEY_* (bit k of byte k/8), stable
+ * within a frame. Copies min(len, GASM_KEY_STATE_BYTES) bytes; returns
+ * GASM_KEY_STATE_BYTES, or -1 if the runner has no keyboard. */
+GASM_IMPORT("key_state") int32_t gasm_key_state(uint8_t *dst, uint32_t len);
+/* Key presses and releases since the previous frame, in order: 4 bytes each
+ * (u16 GASM_KEY_* code, u8 1 = down / 0 = up, u8 0). Returns the byte length
+ * (copied only if <= cap; cap = 0 queries), or -1 if the runner has no
+ * keyboard. */
+GASM_IMPORT("key_events") int32_t gasm_key_events(uint8_t *dst, uint32_t cap);
+/* Mouse/touch state for this frame as GASM_POINTER_BYTES bytes (see ABI.md:
+ * position in drawable and frame pixels, relative motion, wheel, buttons
+ * held/pressed/released, flags). Copied only if cap is large enough; returns
+ * GASM_POINTER_BYTES, or -1 if the runner has no pointer. */
+GASM_IMPORT("pointer") int32_t gasm_pointer(void *dst, uint32_t cap);
+/* Raw gamepad/joystick in slot 0-3 (connection order) as GASM_GAMEPAD_BYTES
+ * bytes: u32 flags (GASM_GAMEPAD_CONNECTED, GASM_GAMEPAD_STANDARD), u32 button
+ * count, u32 axis count, f32 buttons[32] (0-1), f32 axes[16] (-1..1). Standard
+ * mapping: W3C button and axis order. Copied only if cap is large enough;
+ * returns GASM_GAMEPAD_BYTES, or -1 if slot > 3 or the runner has no gamepad
+ * support. */
+GASM_IMPORT("gamepad") int32_t gasm_gamepad(uint32_t slot, void *dst, uint32_t cap);
+/* Device name of the gamepad in slot: its length (copied only if <= cap), or
+ * -1 if the slot is empty. */
+GASM_IMPORT("gamepad_name") int32_t gasm_gamepad_name(uint32_t slot, char *dst, uint32_t cap);
 /* Size in bytes of asset name, or -1 if it does not exist. */
 GASM_IMPORT("asset_size") int32_t gasm_asset_size(const char *name, uint32_t name_len);
 /* Copy up to cap bytes of asset name into dst. Bytes copied, or -1 if missing. */
@@ -215,6 +416,11 @@ GASM_STORAGE_IMPORT("get") int32_t gasm_storage_get(const char *key, uint32_t ke
 GASM_STORAGE_IMPORT("set") int32_t gasm_storage_set(const char *key, uint32_t key_len, const void *data, uint32_t len);
 /* 0 if deleted, -1 if it did not exist. */
 GASM_STORAGE_IMPORT("delete") int32_t gasm_storage_delete(const char *key, uint32_t key_len);
+/* Number of keys in the namespace. */
+GASM_STORAGE_IMPORT("count") uint32_t gasm_storage_count(void);
+/* Key index (0 .. count-1, sorted): its length (copied only if <= cap; cap = 0
+ * queries), or -1 if out of range. */
+GASM_STORAGE_IMPORT("key") int32_t gasm_storage_key(uint32_t index, char *dst, uint32_t cap);
 
 #ifdef __cplusplus
 }

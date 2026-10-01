@@ -71,7 +71,27 @@ codes!(
     ShiftLeft, ShiftRight, ControlLeft, ControlRight, AltLeft, AltRight, SuperLeft, SuperRight,
     Comma, Period, Slash, Semicolon, Quote, BracketLeft, BracketRight, Backslash, Minus, Equal, Backquote, IntlBackslash,
     Insert, Delete, Home, End, PageUp, PageDown,
+    F13, F14, F15, F16, F17, F18, F19, F20, F21, F22, F23, F24,
+    PrintScreen, ScrollLock, Pause, NumLock, ContextMenu, IntlRo, IntlYen,
 );
+
+/// gasm raw key codes (GASM_KEY_*): index = code, W3C KeyboardEvent.code names.
+/// Must equal spec/abi.json (checked by scripts/gen-abi.mjs --check).
+pub const KEY_CODES: [&str; 122] = [
+    "", "Escape", "F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8", "F9", "F10", "F11", "F12", "Backquote", "Digit0", "Digit1", "Digit2", "Digit3", "Digit4", "Digit5", "Digit6", "Digit7", "Digit8", "Digit9", "Minus", "Equal", "Backspace", "Tab", "KeyA", "KeyB", "KeyC", "KeyD", "KeyE", "KeyF", "KeyG", "KeyH", "KeyI", "KeyJ", "KeyK", "KeyL", "KeyM", "KeyN", "KeyO", "KeyP", "KeyQ", "KeyR", "KeyS", "KeyT", "KeyU", "KeyV", "KeyW", "KeyX", "KeyY", "KeyZ", "BracketLeft", "BracketRight", "Backslash", "CapsLock", "Semicolon", "Quote", "Enter", "ShiftLeft", "IntlBackslash", "Comma", "Period", "Slash", "ShiftRight", "ControlLeft", "MetaLeft", "AltLeft", "Space", "AltRight", "MetaRight", "ContextMenu", "ControlRight", "PrintScreen", "ScrollLock", "Pause", "Insert", "Home", "PageUp", "Delete", "End", "PageDown", "ArrowUp", "ArrowLeft", "ArrowDown", "ArrowRight", "NumLock", "NumpadDivide", "NumpadMultiply", "NumpadSubtract", "NumpadAdd", "NumpadEnter", "NumpadDecimal", "Numpad0", "Numpad1", "Numpad2", "Numpad3", "Numpad4", "Numpad5", "Numpad6", "Numpad7", "Numpad8", "Numpad9", "NumpadEqual", "NumpadComma", "IntlRo", "IntlYen", "F13", "F14", "F15", "F16", "F17", "F18", "F19", "F20", "F21", "F22", "F23", "F24",
+];
+
+/// GASM_KEY_* code of a winit key (0 if it has none).
+pub fn gasm_key(code: KeyCode) -> u16 {
+    use std::sync::OnceLock;
+    static MAP: OnceLock<Vec<(KeyCode, u16)>> = OnceLock::new();
+    MAP.get_or_init(|| {
+        KEY_CODES.iter().enumerate().skip(1).filter_map(|(i, n)| key_from_code(normalize(n)).map(|k| (k, i as u16))).collect()
+    })
+    .iter()
+    .find(|(k, _)| *k == code)
+    .map_or(0, |(_, i)| *i)
+}
 
 /// Browser names for keys whose winit name differs.
 pub fn normalize(s: &str) -> &str {

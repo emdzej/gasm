@@ -89,6 +89,11 @@ worker renders straight into the canvas. If `start` rejects with a WebGPU
 error, run the game on the main thread. `keyboard: true` plus
 `frames(steps, true, { texts })` forwards typed text for `text_input`.
 
+Raw keyboard, mouse and gamepads: `const input = new BrowserInput(canvas).attach()`,
+then `host.input = input.frame(true)` before each frame (or
+`frames(steps, true, { inputs })` in a Worker) and `input.setMode(host.inputMode)`
+after it, which hides or captures the cursor as the game asked.
+
 Embedding natively:
 
 ```rust

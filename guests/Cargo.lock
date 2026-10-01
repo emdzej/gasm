@@ -139,7 +139,7 @@ dependencies = [
 
 [[package]]
 name = "gasm-sdk"
-version = "0.4.0"
+version = "0.5.0"
 
 [[package]]
 name = "getrandom"
@@ -151,6 +151,13 @@ dependencies = [
  "libc",
  "r-efi",
  "rand_core",
+]
+
+[[package]]
+name = "inputtest"
+version = "0.1.0"
+dependencies = [
+ "gasm-sdk",
 ]
 
 [[package]]

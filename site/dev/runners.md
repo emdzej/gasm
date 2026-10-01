@@ -18,7 +18,7 @@ machine-readable ABI ([`spec/abi.json`](https://github.com/emdzej/gasm/blob/main
 lists every function to implement; `scripts/gen-abi.mjs --check` verifies the
 reference runners against it.
 
-A minimal runner implements only the core `gasm` module (14 functions).
+A minimal runner implements only the core `gasm` module (20 functions).
 `gasm:gfx` and `gasm:net` are optional: games that don't import them run
 anyway.
 
@@ -82,6 +82,10 @@ ignore silently.
 | `audio_config(rate,ch)` | Accept 8000–192000 Hz, 1–2 channels. |
 | `audio_push(ptr,frames)` | Read `frames*ch*4` bytes of little-endian f32. Resample to the device rate and enqueue. |
 | `input_pad(player)` | Return the mask sampled *before* this `gasm_frame`. `0` for players ≥ 4. |
+| `input_mode(flags)` | Remember the flags: `KEYS_RAW` stops the keymap from feeding pads; `POINTER_HIDDEN`/`LOCKED` hide or capture the cursor (report what you achieved in the pointer flags). |
+| `key_state` / `key_events` | Physical keys by `GASM_KEY_*` (the W3C `code` table in `abi.json`; `gen-abi.mjs --check` compares your table). Events: transitions only, no auto-repeat; a tap gives down and up in the same frame. A tap of Escape is a key; holding it ~1 s quits. |
+| `pointer` | Position in drawable pixels, plus the frame position (undo your `video_present` letterbox with the formula in the spec), relative motion (raw device motion if you have it), wheel (~1 per notch, y > 0 down), held/pressed/released buttons. |
+| `gamepad` / `gamepad_name` | First four connected devices, in the order your pads use. W3C standard mapping when you know the layout (flip stick y to point down), raw device order otherwise. |
 | `text_input(dst, cap)` | Text typed since the previous frame (backspace `\b`, enter `\n`), collected before this `gasm_frame`; length, copied if it fits. `-1` without a keyboard. |
 | `asset_count()` / `asset_name(i, dst, cap)` | The asset names sorted by UTF-8 bytes (compute once; the set is fixed at start-up). |
 | `asset_size/read` | Flat map; `-1` if missing; copy `min(len, cap)`. |
@@ -165,7 +169,7 @@ Map the calls onto WebGPU (browser) or a WebGPU implementation (wgpu, Dawn):
 - Browser: load the namespace from IndexedDB *before* instantiating, serve
   reads from memory, persist writes asynchronously (`IdbStorage` in `gasm-host.js`).
 - Headless: in-memory and empty unless told otherwise, to keep runs reproducible.
-- Call the optional `gasm_exit` export when the user quits (window close, Esc,
+- Call the optional `gasm_exit` export when the user quits (window close, Esc held for a second,
   `pagehide`, end of a headless run), but not after `proc_exit` or a trap.
 
 ### Step 8: audio

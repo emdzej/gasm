@@ -21,7 +21,7 @@ are. For the normative interface, see the [ABI spec](/docs/abi).
 A **guest** (game) is a single WebAssembly module. A **runner** (host) is a
 native or web program that loads the module, provides the functions the guest
 imports, and drives it frame by frame. The **ABI** is the contract between them.
-Its core is small (14 imports, 3 exports), and GPU, network and storage are
+Its core is small (20 imports, 3 exports), and GPU, network and storage are
 optional modules on top.
 
 ## Components in this repository
@@ -197,6 +197,13 @@ gamepads are OR-ed together. The mask is sampled once before each `gasm_frame`.
 Face buttons are named by position, so a physical layout maps the same way on
 every platform.
 
+Games that need more read the devices **raw**: physical keys (W3C
+`KeyboardEvent.code` names, so Shift+Left or Ctrl+S just work), the mouse
+(position in window and in frame pixels, relative motion, wheel, buttons),
+and every button and axis of up to four gamepads or joysticks. A game that
+reads the keyboard itself sets `KEYS_RAW`, and the runner stops turning keys
+into pads. Escape is shared: a tap goes to the game, holding it quits.
+
 ## Networking (`gasm:net`) and lockstep
 
 The lowest common denominator decides the API: browsers can't open raw TCP or
@@ -257,7 +264,7 @@ A per-game key/value store for saves, settings and scores:
 - **Reproducible tests:** headless runs start empty and keep everything in
   memory, so storage never makes two test runs differ.
 - **Flushing on quit:** runners call the optional `gasm_exit` export when the
-  player closes the window, presses Esc or leaves the page. Games also save
+  player closes the window, holds Esc or leaves the page. Games also save
   periodically, because a crash skips it. The NES game checks its battery RAM
   every 5 s; sumo writes its record when a match ends.
 

@@ -194,7 +194,179 @@ pub mod storage {
     pub fn delete(key: &str) -> bool {
         unsafe { sys::storage_delete(key.as_ptr(), key.len() as u32) == 0 }
     }
+
+    /// All keys of this game, sorted.
+    pub fn keys() -> Vec<String> {
+        let n = unsafe { sys::storage_count() };
+        (0..n)
+            .filter_map(|i| {
+                let len = unsafe { sys::storage_key(i, std::ptr::null_mut(), 0) };
+                if len < 0 {
+                    return None;
+                }
+                let mut buf = vec![0u8; len as usize];
+                unsafe { sys::storage_key(i, buf.as_mut_ptr(), len as u32) };
+                Some(String::from_utf8_lossy(&buf).into_owned())
+            })
+            .collect()
+    }
 }
+
+// ---- raw input ---------------------------------------------------------------------
+
+/// Raw keyboard, pointer and gamepads (next to the virtual [`pad`]s).
+///
+/// ```ignore
+/// use gasm::{input, keys};
+/// input::set_mode(input::KEYS_RAW);              // read the keyboard directly, no keymap pads
+/// let k = input::keys().unwrap_or_default();
+/// if k.held(keys::SHIFT_LEFT) && k.held(keys::ARROW_LEFT) { … }
+/// if let Some(p) = input::pointer() && p.pressed & input::MOUSE_LEFT != 0 { click(p.frame_x, p.frame_y) }
+/// ```
+pub mod input {
+    use crate::sys;
+
+    /// The runner stops mapping the keyboard to pads (gamepads still map).
+    pub const KEYS_RAW: u32 = 1 << 0;
+    /// Hide the system cursor over the game.
+    pub const POINTER_HIDDEN: u32 = 1 << 1;
+    /// Capture the pointer for relative motion (best effort; the browser needs a click).
+    pub const POINTER_LOCKED: u32 = 1 << 2;
+
+    pub const MOUSE_LEFT: u32 = 1 << 0;
+    pub const MOUSE_RIGHT: u32 = 1 << 1;
+    pub const MOUSE_MIDDLE: u32 = 1 << 2;
+    pub const MOUSE_BACK: u32 = 1 << 3;
+    pub const MOUSE_FORWARD: u32 = 1 << 4;
+
+    /// `KEYS_RAW | POINTER_HIDDEN | POINTER_LOCKED`, any combination.
+    pub fn set_mode(flags: u32) {
+        unsafe { sys::input_mode(flags) }
+    }
+
+    /// Keys held this frame; index with [`crate::keys`] constants.
+    #[derive(Clone, Copy, Default, PartialEq, Eq)]
+    pub struct Keys(pub [u8; 32]);
+
+    impl Keys {
+        pub fn held(&self, code: u32) -> bool {
+            (code as usize) < 256 && self.0[code as usize / 8] & (1 << (code % 8)) != 0
+        }
+    }
+
+    /// `None` if the runner has no keyboard.
+    pub fn keys() -> Option<Keys> {
+        let mut k = Keys::default();
+        (unsafe { sys::key_state(k.0.as_mut_ptr(), 32) } >= 0).then_some(k)
+    }
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub struct KeyEvent {
+        pub code: u32,
+        pub down: bool,
+    }
+
+    /// Presses and releases since the previous frame, in order (`None`: no keyboard).
+    pub fn key_events() -> Option<Vec<KeyEvent>> {
+        let n = unsafe { sys::key_events(std::ptr::null_mut(), 0) };
+        if n < 0 {
+            return None;
+        }
+        let mut b = vec![0u8; n as usize];
+        if n > 0 {
+            unsafe { sys::key_events(b.as_mut_ptr(), n as u32) };
+        }
+        Some(b.chunks_exact(4).map(|e| KeyEvent { code: u16::from_le_bytes([e[0], e[1]]) as u32, down: e[2] != 0 }).collect())
+    }
+
+    #[derive(Clone, Copy, Debug, Default, PartialEq)]
+    pub struct Pointer {
+        /// position in drawable pixels (gfx width/height space)
+        pub x: f32,
+        pub y: f32,
+        /// position in the last presented frame's pixels (2D games)
+        pub frame_x: f32,
+        pub frame_y: f32,
+        /// relative motion since the previous frame (also while locked)
+        pub dx: f32,
+        pub dy: f32,
+        /// about 1 per wheel notch; y > 0 = down
+        pub wheel_x: f32,
+        pub wheel_y: f32,
+        pub buttons: u32,
+        /// went down / up since the previous frame (a quick click shows in both)
+        pub pressed: u32,
+        pub released: u32,
+        pub flags: u32,
+    }
+
+    impl Pointer {
+        pub fn inside(&self) -> bool {
+            self.flags & 1 != 0
+        }
+        pub fn locked(&self) -> bool {
+            self.flags & 4 != 0
+        }
+    }
+
+    /// `None` if the runner has no pointer.
+    pub fn pointer() -> Option<Pointer> {
+        let mut b = [0u8; 48];
+        if unsafe { sys::pointer(b.as_mut_ptr(), 48) } < 0 {
+            return None;
+        }
+        let f = |i: usize| f32::from_le_bytes([b[i], b[i + 1], b[i + 2], b[i + 3]]);
+        let u = |i: usize| u32::from_le_bytes([b[i], b[i + 1], b[i + 2], b[i + 3]]);
+        Some(Pointer {
+            x: f(0), y: f(4), frame_x: f(8), frame_y: f(12), dx: f(16), dy: f(20), wheel_x: f(24), wheel_y: f(28),
+            buttons: u(32), pressed: u(36), released: u(40), flags: u(44),
+        })
+    }
+
+    /// Raw gamepad or joystick. With `standard`, W3C order: buttons 0 south, 1 east,
+    /// 2 west, 3 north, 4/5 shoulders, 6/7 triggers, 8 select, 9 start, 10/11 sticks,
+    /// 12-15 d-pad, 16 home; axes 0/1 left stick, 2/3 right stick (y > 0 = down).
+    #[derive(Clone, Debug, Default, PartialEq)]
+    pub struct Gamepad {
+        pub connected: bool,
+        pub standard: bool,
+        pub buttons: Vec<f32>,
+        pub axes: Vec<f32>,
+    }
+
+    /// Slot 0-3 (connection order). `None` if the runner has no gamepad support.
+    pub fn gamepad(slot: u32) -> Option<Gamepad> {
+        let mut b = [0u8; 204];
+        if unsafe { sys::gamepad(slot, b.as_mut_ptr(), 204) } < 0 {
+            return None;
+        }
+        let u = |i: usize| u32::from_le_bytes([b[i], b[i + 1], b[i + 2], b[i + 3]]);
+        let f = |i: usize| f32::from_le_bytes([b[i], b[i + 1], b[i + 2], b[i + 3]]);
+        let (flags, nb, na) = (u(0), (u(4) as usize).min(32), (u(8) as usize).min(16));
+        Some(Gamepad {
+            connected: flags & 1 != 0,
+            standard: flags & 2 != 0,
+            buttons: (0..nb).map(|i| f(12 + i * 4)).collect(),
+            axes: (0..na).map(|i| f(140 + i * 4)).collect(),
+        })
+    }
+
+    /// Device name, if a gamepad is connected in `slot`.
+    pub fn gamepad_name(slot: u32) -> Option<String> {
+        let n = unsafe { sys::gamepad_name(slot, std::ptr::null_mut(), 0) };
+        if n < 0 {
+            return None;
+        }
+        let mut b = vec![0u8; n as usize];
+        if n > 0 {
+            unsafe { sys::gamepad_name(slot, b.as_mut_ptr(), n as u32) };
+        }
+        Some(String::from_utf8_lossy(&b).into_owned())
+    }
+}
+
+/// Raw key codes (`GASM_KEY_*`, W3C `KeyboardEvent.code` names in [`keys::NAMES`]).
+pub use sys::keys;
 
 // ---- gfx ---------------------------------------------------------------------------
 

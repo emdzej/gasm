@@ -77,9 +77,63 @@ export declare class NullGfx implements GfxBackend {
   endFrame(): void;
 }
 
+/** One frame of raw input for GasmHost.input (null fields: no such device, the import returns -1). */
+export interface RawPointer {
+  /** drawable pixels */
+  x: number; y: number;
+  dx: number; dy: number; wheelX: number; wheelY: number;
+  /** GASM_MOUSE_* bits */
+  buttons: number; pressed: number; released: number;
+  /** GASM_POINTER_INSIDE | IS_HIDDEN | IS_LOCKED */
+  flags: number;
+  /** drawable size, for the frame position */
+  drawable: [width: number, height: number];
+}
+export interface RawGamepad { connected: boolean; standard: boolean; buttons: number[]; axes: number[]; name: string; }
+export interface RawInput {
+  /** KEY_STATE_BYTES bitset indexed by GASM_KEY_* */
+  keys: Uint8Array | null;
+  /** [code, down] since the previous frame, in order */
+  keyEvents: [code: number, down: boolean][];
+  pointer: RawPointer | null;
+  /** 4 slots */
+  gamepads: RawGamepad[] | null;
+}
+/** GASM_KEY_* code -> W3C KeyboardEvent.code name (index 0 unused). */
+export declare const KEY_CODES: readonly string[];
+/** GASM_KEY_* code for a KeyboardEvent.code (0 if none). */
+export declare function keyCode(code: string): number;
+export declare const KEY_STATE_BYTES: number;
+export declare const POINTER_BYTES: number;
+export declare const GAMEPAD_BYTES: number;
+export declare const INPUT_KEYS_RAW: number;
+export declare const INPUT_POINTER_HIDDEN: number;
+export declare const INPUT_POINTER_LOCKED: number;
+/** A drawable position mapped into a frame (as letterboxed by the runners). */
+export declare function framePosition(x: number, y: number, drawable: [number, number], frame: [number, number]): [number, number];
+/** navigator.getGamepads() as RawInput.gamepads. */
+export declare function browserGamepads(): RawGamepad[];
+/**
+ * Collects keyboard, pointer and gamepads on a page:
+ *   const input = new BrowserInput(canvas).attach();
+ *   host.input = input.frame(true);   // before each frame (true: first of a batch)
+ *   input.setMode(host.inputMode);    // after: hide / lock the cursor as the guest asked
+ */
+export declare class BrowserInput {
+  constructor(element: HTMLElement, options?: { ignore?: (e: Event) => boolean });
+  attach(): this;
+  detach(): void;
+  /** Follow a new canvas. */
+  setElement(element: HTMLElement): void;
+  setMode(flags: number): void;
+  frame(first?: boolean): RawInput;
+}
+
 /** gasm:storage backend. */
 export interface StorageBackend {
   get(key: string): Uint8Array | undefined;
+  /** All keys, sorted (gasm:storage count/key). */
+  keys?(): string[];
   /** Returns an error message, or null on success. */
   set(key: string, value: Uint8Array): string | null;
   delete(key: string): boolean;
@@ -146,6 +200,10 @@ export declare class GasmHost {
   getPad: (player: number) => number;
   /** Text typed since the previous frame, for text_input; set it before each frame. null = no keyboard (-1). */
   text: string | null;
+  /** Raw keyboard, pointer and gamepads for the next frame (BrowserInput.frame()). */
+  input: RawInput;
+  /** GASM_INPUT_* flags the guest asked for (input_mode). Runners: skip keymap pads with KEYS_RAW, apply the cursor mode. */
+  inputMode: number;
   /** false during catch-up frames: gfx begin_frame then returns 0. */
   showFrame: boolean;
   /** Set by the guest (gasm.set_frame_rate). */

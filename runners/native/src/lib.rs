@@ -15,4 +15,5 @@ pub mod gfx;
 pub mod host;
 pub mod keymap;
 pub mod net;
+pub mod script;
 pub mod storage;

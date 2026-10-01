@@ -37,6 +37,27 @@ are not free; use your own copies.
 
 ## Controls
 
+**Keyboard and mouse** (DOOM reads them directly, with its original keys):
+
+| Key | Action |
+|---|---|
+| Arrows | move and turn |
+| Ctrl | fire |
+| Space | use (doors, switches) |
+| Shift | run |
+| Alt + arrows, `,` / `.` | strafe |
+| 1-7 | weapons |
+| Tab | automap |
+| Esc (tap) | menu; Enter selects, `y`/`n` answer prompts |
+| F1-F12, `-` / `=` | help, save, load, …, screen size |
+| Mouse (while playing) | turn; left fires, right strafes, middle moves forward |
+
+The mouse is captured while you play and freed in the menus (in the browser,
+click the game to capture it). Moving the mouse up and down doesn't walk.
+Hold Esc for a second to quit the runner. Save games get the names you type.
+
+**Gamepads** use a context-dependent mapping on virtual pad 1:
+
 | gasm button | Keyboard (default) | In the game | In menus | Yes/no prompts |
 |---|---|---|---|---|
 | D-pad | arrows | move and turn | navigate | |
@@ -48,9 +69,8 @@ are not free; use your own copies.
 | Start | Enter | menu | select | cancel |
 | Select | Right Shift | automap | close menu | |
 
-There is no keyboard for naming save games, so an empty slot is named
-`SLOT n`. Esc belongs to the runner (it quits); use **Quit Game** in DOOM's
-menu to leave from inside the game.
+A gamepad can't type, so saving to an empty slot from the pad names it
+`SLOT n`.
 
 ## How it maps onto gasm
 
@@ -67,8 +87,12 @@ menu to leave from inside the game.
   `fopen`/`remove`/`rename`. Reads come from assets (the WAD, read on demand)
   or from `gasm:storage`; writes go to storage when the file is closed. The
   keys are `default.cfg`, `doomgenericdoom.cfg` and `doomsav0.dsg` ... `doomsav7.dsg`.
+- **Input:** the glue asks for `KEYS_RAW` (no keymap pads) and hides the
+  cursor; it locks the pointer while a level is being played. Raw keys become
+  DOOM keys, mouse motion and buttons become DOOM mouse events, and pad 1
+  (gamepads) keeps the mapping above.
 - **Settings:** volume, screen size, gamma and messages persist. Key bindings
-  don't (controls come from the pad mapping above).
+  don't (controls come from the mappings above).
 
 ## Engine changes (`engine.patch`)
 

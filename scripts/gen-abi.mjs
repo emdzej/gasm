@@ -181,6 +181,15 @@ pub use imports::*;
 #[cfg(not(target_arch = "wasm32"))]
 pub use crate::native::abi::*;
 `);
+  for (const c of abi.constants.filter((c) => c.rust_module)) {
+    const strip = (k) => k.replace(/^GASM_[A-Z]+_/, '');
+    out.push(`/// ${c.doc}`, `pub mod ${c.rust_module} {`);
+    for (const [k, v] of c.values) out.push(`    pub const ${strip(k)}: u32 = ${v};`);
+    out.push(`    /// W3C names by code (index 0 is unused).`);
+    out.push(`    pub const NAMES: [&str; ${c.values.length + 1}] = [`);
+    out.push(`        "", ${c.values.map((x) => JSON.stringify(x[2])).join(', ')},`);
+    out.push('    ];', '}', '');
+  }
   return out.join('\n');
 }
 
@@ -220,6 +229,17 @@ function conformance() {
   const wantStub = new Set(abi.modules.flatMap((m) => m.functions.map((f) => rustName(m, f))));
   compare('guests/gasm native stub', wantStub, stub);
   if (!/proc_exit:/.test(hostJs)) errors.push('runners/web: WASI proc_exit missing');
+  // key code tables in both runners: index = GASM_KEY_* value, W3C names
+  const keys = ['', ...abi.constants.find((c) => c.group === 'keys').values.map((v) => v[2])].join(',');
+  const table = (text, start) => {
+    const i = text.indexOf(start);
+    if (i < 0) return null;
+    const open = text.indexOf('= [', i) + 2;
+    const body = text.slice(open, text.indexOf(']', open) + 1);
+    return [...body.matchAll(/"([^"]*)"|'([^']*)'/g)].map((m) => m[1] ?? m[2]).join(',');
+  };
+  if (table(hostJs, 'export const KEY_CODES') !== keys) errors.push('runners/web: KEY_CODES differs from abi.json keys');
+  if (table(read('runners/native/src/keymap.rs'), 'pub const KEY_CODES') !== keys) errors.push('runners/native: keymap.rs KEY_CODES differs from abi.json keys');
   return errors;
 }
 

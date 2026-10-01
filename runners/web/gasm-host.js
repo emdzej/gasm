@@ -39,6 +39,12 @@ export class GasmHost {
     this.onLog = onLog;
     this.getPad = getPad;            // (player) -> bitmask
     this.text = null;                // text typed since the previous frame (set per frame); null = no keyboard
+    // Raw input for the next frame (set per frame by the runner; null = no such device):
+    //   keys: Uint8Array(KEY_STATE_BYTES) bitset, keyEvents: [[code, down], ...],
+    //   pointer: { x, y, dx, dy, wheelX, wheelY, buttons, pressed, released, flags, drawable: [w, h] },
+    //   gamepads: [{ connected, standard, buttons: number[], axes: number[], name }] x 4
+    this.input = { keys: null, keyEvents: [], pointer: null, gamepads: null };
+    this.inputMode = 0;              // GASM_INPUT_* flags requested by the guest
     this.virtualTime = virtualTime;  // true: time_ms derived from frame count
     this.frameRate = 60;
     this.audioRate = 44100;
@@ -96,6 +102,55 @@ export class GasmHost {
         this.onAudio(samples, this.audioRate, this.audioChannels);
       },
       input_pad: (player) => player < 4 ? (this.getPad(player) >>> 0) : 0,
+      input_mode: (flags) => { this.inputMode = flags & 7; },
+      key_state: (dst, len) => {
+        const k = this.input.keys;
+        if (!k) return -1;
+        this.bytes(dst, Math.min(len >>> 0, KEY_STATE_BYTES)).set(k.subarray(0, Math.min(len >>> 0, KEY_STATE_BYTES)));
+        return KEY_STATE_BYTES;
+      },
+      key_events: (dst, cap) => {
+        if (!this.input.keys) return -1;
+        const ev = this.input.keyEvents ?? [];
+        const b = new Uint8Array(ev.length * 4);
+        ev.forEach(([code, down], i) => { b[i * 4] = code & 255; b[i * 4 + 1] = code >> 8; b[i * 4 + 2] = down ? 1 : 0; });
+        if (b.length <= cap >>> 0) this.bytes(dst, b.length).set(b);
+        return b.length;
+      },
+      pointer: (dst, cap) => {
+        const p = this.input.pointer;
+        if (!p) return -1;
+        if (cap >>> 0 >= POINTER_BYTES) {
+          const [fx, fy] = framePosition(p.x, p.y, p.drawable, [this.width, this.height]);
+          const b = new Uint8Array(POINTER_BYTES), dv = new DataView(b.buffer);
+          [p.x, p.y, fx, fy, p.dx, p.dy, p.wheelX, p.wheelY].forEach((v, i) => dv.setFloat32(i * 4, v, true));
+          [p.buttons, p.pressed, p.released, p.flags].forEach((v, i) => dv.setUint32(32 + i * 4, v >>> 0, true));
+          this.bytes(dst, POINTER_BYTES).set(b);
+        }
+        return POINTER_BYTES;
+      },
+      gamepad: (slot, dst, cap) => {
+        const pads = this.input.gamepads;
+        if (!pads || slot >>> 0 > 3) return -1;
+        if (cap >>> 0 >= GAMEPAD_BYTES) {
+          const g = pads[slot] ?? { connected: false, buttons: [], axes: [] };
+          const nb = Math.min(g.buttons.length, 32), na = Math.min(g.axes.length, 16);
+          const b = new Uint8Array(GAMEPAD_BYTES), dv = new DataView(b.buffer);
+          dv.setUint32(0, g.connected ? (1 | (g.standard ? 2 : 0)) : 0, true);
+          dv.setUint32(4, nb, true); dv.setUint32(8, na, true);
+          for (let i = 0; i < nb; i++) dv.setFloat32(12 + i * 4, g.buttons[i], true);
+          for (let i = 0; i < na; i++) dv.setFloat32(140 + i * 4, g.axes[i], true);
+          this.bytes(dst, GAMEPAD_BYTES).set(b);
+        }
+        return GAMEPAD_BYTES;
+      },
+      gamepad_name: (slot, dst, cap) => {
+        const g = this.input.gamepads?.[slot >>> 0];
+        if (!g?.connected) return -1;
+        const b = new TextEncoder().encode(g.name ?? '');
+        if (b.length <= cap >>> 0) this.bytes(dst, b.length).set(b);
+        return b.length;
+      },
       text_input: (dst, cap) => {
         if (this.text === null) return -1;
         const b = new TextEncoder().encode(this.text);
@@ -217,6 +272,14 @@ export class GasmHost {
         return 0;
       },
       delete: (kp, kl) => (st.delete(this.str(kp, kl)) ? 0 : -1),
+      count: () => (st.keys?.() ?? []).length,
+      key: (index, dst, cap) => {
+        const k = (st.keys?.() ?? [])[index >>> 0];
+        if (k === undefined) return -1;
+        const b = new TextEncoder().encode(k);
+        if (b.length <= cap >>> 0) this.bytes(dst, b.length).set(b);
+        return b.length;
+      },
     };
   }
 
@@ -342,6 +405,130 @@ export class Resampler {
     }
     return out.subarray(0, n);
   }
+}
+
+// ---- raw input ---------------------------------------------------------------------
+
+/** gasm raw key codes (GASM_KEY_*): index = code, W3C KeyboardEvent.code names (spec/abi.json). */
+export const KEY_CODES = [
+  '', 'Escape', 'F1', 'F2', 'F3', 'F4', 'F5', 'F6', 'F7', 'F8', 'F9', 'F10', 'F11', 'F12', 'Backquote', 'Digit0', 'Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5', 'Digit6', 'Digit7', 'Digit8', 'Digit9', 'Minus', 'Equal', 'Backspace', 'Tab', 'KeyA', 'KeyB', 'KeyC', 'KeyD', 'KeyE', 'KeyF', 'KeyG', 'KeyH', 'KeyI', 'KeyJ', 'KeyK', 'KeyL', 'KeyM', 'KeyN', 'KeyO', 'KeyP', 'KeyQ', 'KeyR', 'KeyS', 'KeyT', 'KeyU', 'KeyV', 'KeyW', 'KeyX', 'KeyY', 'KeyZ', 'BracketLeft', 'BracketRight', 'Backslash', 'CapsLock', 'Semicolon', 'Quote', 'Enter', 'ShiftLeft', 'IntlBackslash', 'Comma', 'Period', 'Slash', 'ShiftRight', 'ControlLeft', 'MetaLeft', 'AltLeft', 'Space', 'AltRight', 'MetaRight', 'ContextMenu', 'ControlRight', 'PrintScreen', 'ScrollLock', 'Pause', 'Insert', 'Home', 'PageUp', 'Delete', 'End', 'PageDown', 'ArrowUp', 'ArrowLeft', 'ArrowDown', 'ArrowRight', 'NumLock', 'NumpadDivide', 'NumpadMultiply', 'NumpadSubtract', 'NumpadAdd', 'NumpadEnter', 'NumpadDecimal', 'Numpad0', 'Numpad1', 'Numpad2', 'Numpad3', 'Numpad4', 'Numpad5', 'Numpad6', 'Numpad7', 'Numpad8', 'Numpad9', 'NumpadEqual', 'NumpadComma', 'IntlRo', 'IntlYen', 'F13', 'F14', 'F15', 'F16', 'F17', 'F18', 'F19', 'F20', 'F21', 'F22', 'F23', 'F24',
+];
+const KEY_INDEX = new Map(KEY_CODES.map((n, i) => [n, i]).filter(([n]) => n));
+/** GASM_KEY_* code for a KeyboardEvent.code (0 if none). */
+export const keyCode = (code) => KEY_INDEX.get(code) ?? KEY_INDEX.get({ OSLeft: 'MetaLeft', OSRight: 'MetaRight' }[code]) ?? 0;
+export const KEY_STATE_BYTES = 32;
+export const POINTER_BYTES = 48;
+export const GAMEPAD_BYTES = 204;
+export const INPUT_KEYS_RAW = 1, INPUT_POINTER_HIDDEN = 2, INPUT_POINTER_LOCKED = 4;
+
+/**
+ * A drawable position mapped into the last video_present frame (letterboxed as the
+ * runners display it). Same arithmetic as runners/native/src/host.rs frame_position.
+ */
+export function framePosition(x, y, [dw, dh] = [0, 0], [fw, fh] = [0, 0]) {
+  if (!fw || !fh || !(dw > 0) || !(dh > 0)) return [x, y];
+  const scale = Math.min(dw / fw, dh / fh);
+  return [(x - (dw - fw * scale) / 2) / scale, (y - (dh - fh * scale) / 2) / scale];
+}
+
+const MOUSE_BITS = [1, 4, 2, 8, 16];   // DOM MouseEvent.button 0..4 -> GASM_MOUSE_* (left, middle, right, back, forward)
+// W3C standard gamepads: the browser already reports the standard order.
+
+/**
+ * Collects keyboard, pointer and gamepad input on a page for GasmHost.input (or
+ * GasmWorker.frames). `element`: the canvas (pointer coordinates, pointer lock).
+ *   const input = new BrowserInput(canvas).attach();
+ *   host.input = input.frame(true);       // before each frame; true = first of a batch
+ *   input.setMode(host.inputMode);        // after frames: hide / lock the cursor
+ */
+export class BrowserInput {
+  constructor(element, { ignore = (e) => e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement } = {}) {
+    this.el = element; this.ignore = ignore;
+    this.keys = new Uint8Array(KEY_STATE_BYTES); this.events = [];
+    this.p = { x: 0, y: 0, dx: 0, dy: 0, wheelX: 0, wheelY: 0, buttons: 0, pressed: 0, released: 0, inside: false };
+    this.mode = 0;
+    this.handlers = []; this.elHandlers = [];
+  }
+  on(target, type, fn, opts) { target.addEventListener(type, fn, opts); this.handlers.push([target, type, fn, opts]); }
+  setKey(code, down) {
+    const k = keyCode(code);
+    if (!k) return;
+    const bit = 1 << (k & 7), was = (this.keys[k >> 3] & bit) !== 0;
+    if (was === down) return;   // auto-repeat
+    if (down) this.keys[k >> 3] |= bit; else this.keys[k >> 3] &= ~bit;
+    this.events.push([k, down]);
+  }
+  attach() {
+    this.on(globalThis, 'keydown', (e) => { if (!this.ignore(e)) this.setKey(e.code, true); });
+    this.on(globalThis, 'keyup', (e) => this.setKey(e.code, false));
+    this.on(globalThis, 'blur', () => { for (let k = 1; k < KEY_CODES.length; k++) if (this.keys[k >> 3] & (1 << (k & 7))) this.setKey(KEY_CODES[k], false); });
+    this.on(globalThis, 'pointerup', (e) => { const bit = MOUSE_BITS[e.button] ?? 0; this.p.buttons &= ~bit; this.p.released |= bit; });
+    this.setElement(this.el);
+    return this;
+  }
+  /** Follow a new canvas (pointer coordinates and lock are relative to it). */
+  setElement(el) {
+    for (const [t, type, fn, opts] of this.elHandlers) t.removeEventListener(type, fn, opts);
+    this.elHandlers = [];
+    this.el = el;
+    const dpr = () => globalThis.devicePixelRatio || 1;
+    const on = (type, fn, opts) => { el.addEventListener(type, fn, opts); this.elHandlers.push([el, type, fn, opts]); };
+    const pos = (e) => { this.p.x = e.offsetX * dpr(); this.p.y = e.offsetY * dpr(); };
+    on('pointermove', (e) => { pos(e); this.p.inside = true; this.p.dx += e.movementX * dpr(); this.p.dy += e.movementY * dpr(); });
+    on('pointerenter', () => { this.p.inside = true; });
+    on('pointerleave', () => { this.p.inside = false; });
+    on('pointerdown', (e) => {
+      pos(e);
+      const bit = MOUSE_BITS[e.button] ?? 0;
+      this.p.buttons |= bit; this.p.pressed |= bit;
+      if (this.mode & INPUT_POINTER_LOCKED && document.pointerLockElement !== el) el.requestPointerLock?.();
+    });
+    on('contextmenu', (e) => e.preventDefault());
+    on('wheel', (e) => {
+      // about 1 per wheel notch (DOM: pixels ~100/notch, lines ~3/notch)
+      const k = e.deltaMode === 1 ? 1 / 3 : e.deltaMode === 2 ? 1 : 1 / 100;
+      this.p.wheelX += e.deltaX * k; this.p.wheelY += e.deltaY * k;
+      e.preventDefault();
+    }, { passive: false });
+    this.setMode(this.mode);
+  }
+  detach() {
+    for (const [t, type, fn, opts] of [...this.handlers, ...this.elHandlers]) t.removeEventListener(type, fn, opts);
+    this.handlers = []; this.elHandlers = [];
+  }
+  /** Hide / lock the cursor (GASM_INPUT_POINTER_*). Locking happens on the next click (browser rule). */
+  setMode(flags) {
+    this.mode = flags & 6;
+    this.el.style.cursor = this.mode ? 'none' : '';
+    if (!(this.mode & INPUT_POINTER_LOCKED) && globalThis.document?.pointerLockElement === this.el) document.exitPointerLock();
+  }
+  /** Raw input for one frame. `first`: the first frame of a catch-up batch gets the deltas and events. */
+  frame(first = true) {
+    const r = this.el.getBoundingClientRect?.() ?? { width: 0, height: 0 }, dpr = globalThis.devicePixelRatio || 1;
+    const drawable = [Math.round(r.width * dpr), Math.round(r.height * dpr)];
+    const p = this.p, locked = document.pointerLockElement === this.el;
+    const pointer = {
+      x: p.x, y: p.y, dx: first ? p.dx : 0, dy: first ? p.dy : 0, wheelX: first ? p.wheelX : 0, wheelY: first ? p.wheelY : 0,
+      buttons: p.buttons, pressed: first ? p.pressed : 0, released: first ? p.released : 0,
+      flags: (p.inside || locked ? 1 : 0) | (this.mode ? 2 : 0) | (locked ? 4 : 0), drawable,
+    };
+    if (first) { p.dx = p.dy = p.wheelX = p.wheelY = 0; p.pressed = p.released = 0; }
+    const events = first ? this.events : [];
+    if (first) this.events = [];
+    return { keys: this.keys.slice(), keyEvents: events, pointer, gamepads: browserGamepads() };
+  }
+}
+
+/** navigator.getGamepads() as GasmHost.input.gamepads: connected pads in order, 4 slots. */
+export function browserGamepads() {
+  const out = Array.from({ length: 4 }, () => ({ connected: false, standard: false, buttons: [], axes: [], name: '' }));
+  let i = 0;
+  for (const gp of globalThis.navigator?.getGamepads?.() ?? []) {
+    if (!gp || i > 3) continue;
+    out[i++] = { connected: true, standard: gp.mapping === 'standard', name: gp.id,
+      buttons: gp.buttons.map((b) => b.value), axes: [...gp.axes] };
+  }
+  return out;
 }
 
 // Clamp [x, x+w) x [y, y+h) to a width x height drawable -> [x, y, w, h].
@@ -561,6 +748,8 @@ export const validKey = (k) => /^[A-Za-z0-9._-]{1,128}$/.test(k) && k !== '.' &&
 export class MemoryStorage {
   constructor(entries = []) { this.map = new Map(entries); }
   get(k) { return this.map.get(k); }
+  /** All keys, sorted (ASCII, so the same order as the native runner). */
+  keys() { return [...this.map.keys()].sort(); }
   set(k, v) {
     if (!validKey(k)) return `invalid key ${JSON.stringify(k)}`;
     if (v.length > STORAGE_MAX_VALUE) return `value for ${k} is ${v.length} bytes (max ${STORAGE_MAX_VALUE})`;

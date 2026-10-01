@@ -12,45 +12,12 @@ import { closeSync, fstatSync, openSync, readFileSync, readSync, readdirSync, wr
 import { join } from 'node:path';
 import { deflateSync } from 'node:zlib';
 import { AssetTable, GasmHost, ProcExit, bytesSource } from './gasm-host.js';
+import { InputScript } from './input-script.mjs';
 
 const argv = process.argv.slice(2);
-let wasm, frames = 600, screenshot, input = [], noHash = false, allowNet = false, realtime = false;
-const BUTTONS = ['A', 'B', 'X', 'Y', 'L', 'R', 'SELECT', 'START', 'UP', 'DOWN', 'LEFT', 'RIGHT'];
-// FROM-TO:BTN+BTN,... and FRAME:"text" (same syntax as gasm-run --input; commas
-// inside quotes are literal; escapes \n enter, \b backspace, \\ and \")
-const texts = [];
-const parseInput = (spec) => {
-  const items = [];
-  let cur = '', quoted = false, escaped = false;
-  for (const ch of spec) {
-    if (escaped) { cur += ch; escaped = false; }
-    else if (ch === '\\' && quoted) { cur += ch; escaped = true; }
-    else if (ch === '"') { quoted = !quoted; cur += ch; }
-    else if (ch === ',' && !quoted) { items.push(cur); cur = ''; }
-    else cur += ch;
-  }
-  items.push(cur);
-  const out = [];
-  for (const item of items) {
-    const i = item.indexOf(':');
-    if (i < 0) throw new Error(`bad --input item ${item}`);
-    const range = item.slice(0, i), rest = item.slice(i + 1);
-    if (rest.startsWith('"')) {
-      if (!rest.endsWith('"') || rest.length < 2) throw new Error(`bad --input item ${item}`);
-      const text = rest.slice(1, -1).replace(/\\(.)/g, (_, c) => (c === 'n' ? '\n' : c === 'b' ? '\b' : c));
-      texts.push({ frame: Number(range), text });
-      continue;
-    }
-    const [from, to = from] = range.split('-').map(Number);
-    const mask = rest.split('+').reduce((m, b) => {
-      const bit = BUTTONS.indexOf(b.toUpperCase());
-      if (bit < 0) throw new Error(`bad --input item ${item}`);
-      return m | (1 << bit);
-    }, 0);
-    out.push({ from, to, mask });
-  }
-  return out;
-};
+let wasm, frames = 600, screenshot, noHash = false, allowNet = false, realtime = false;
+// --input: see input-script.mjs (same syntax as gasm-run --input)
+let script = new InputScript();
 const assets = {}, params = {}, assetDirs = [];
 for (let i = 0; i < argv.length; i++) {
   const a = argv[i];
@@ -58,7 +25,7 @@ for (let i = 0; i < argv.length; i++) {
   else if (a === '--asset') { const [k, p] = argv[++i].split('='); assets[k] = new Uint8Array(readFileSync(p)); }
   else if (a === '--headless') frames = Number(argv[++i]);
   else if (a === '--screenshot') screenshot = argv[++i];
-  else if (a === '--input') input = parseInput(argv[++i]);
+  else if (a === '--input') script = new InputScript(argv[++i]);
   else if (a === '--no-hash') noHash = true;
   else if (a === '--asset-dir') {
     const v = argv[++i], k = v.indexOf('=');
@@ -103,7 +70,7 @@ table.finish();
 
 const host = new GasmHost({
   assets: table, params, allowNet, virtualTime: true, onLog: (m) => console.error(m),
-  getPad: (p) => p !== 0 ? 0 : input.reduce((m, r) => host.frameIndex >= r.from && host.frameIndex <= r.to ? m | r.mask : m, 0),
+  getPad: (p) => (p !== 0 ? 0 : script.pad(host.frameIndex)),
 });
 host.hashing = !noHash;
 const t0 = performance.now();
@@ -115,9 +82,11 @@ console.error(`[gasm-node] loaded ${wasm} in ${(performance.now() - t0).toFixed(
 const tick = () => new Promise((r) => setImmediate(r));
 const t1 = performance.now();
 let ran = 0, exitCode = null;
+const scriptState = {};
 try {
   for (; ran < frames; ran++) {
-    host.text = texts.filter((t) => t.frame === ran).map((t) => t.text).join('');
+    host.text = script.textAt(ran);
+    host.input = script.raw(ran, scriptState, [host.gfx.width(), host.gfx.height()], host.inputMode);
     host.frame();
     if (realtime) {
       const due = t1 + (ran + 1) * 1000 / host.frameRate;

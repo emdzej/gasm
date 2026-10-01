@@ -13,7 +13,7 @@ It has three import modules:
 
 | Module | Status | Contents |
 |---|---|---|
-| `gasm` | core | log, time, frame rate, 2D video, audio, input, text input, assets, params |
+| `gasm` | core | log, time, frame rate, 2D video, audio, input (pads, text, raw keyboard, pointer, gamepads), assets, params |
 | `gasm:gfx` | optional | GPU rendering: a WebGPU subset |
 | `gasm:net` | optional | message connections (WebSocket semantics) |
 | `gasm:storage` | optional | persistent per-game key/value store (saves, settings) |
@@ -26,7 +26,8 @@ Additions (new imports, new descriptor fields) keep it: runners link unknown
 imports as traps, so an older runner still loads a newer guest and fails only
 if the guest calls something it lacks, and an older guest never calls the
 new imports. Textures, samplers, explicit layouts, viewport/scissor, text
-input and asset enumeration were added this way; the version is still 0.
+input, raw keyboard/pointer/gamepads and asset and storage enumeration were
+added this way; the version is still 0.
 
 ## Module shape
 
@@ -59,7 +60,7 @@ behind, e.g. wasm-bindgen glue in Rust crates that also target browsers.
    each call.
 5. The game ends when the user quits, when an export traps, or when the guest
    calls WASI `proc_exit(code)`. Code 0 is a normal exit; runners stop cleanly
-   and report the code. When the *user* quits (window closed, Esc, page left,
+   and report the code. When the *user* quits (window closed, Esc held, page left,
    headless run finished), runners first call `gasm_exit()` if it's exported.
    This is best effort (a crash or killed process skips it), so games should
    also save periodically.
@@ -79,6 +80,12 @@ All pointers are `i32` offsets into guest memory. Strings are UTF-8 `(ptr, len)`
 | `audio_config` | `(rate, channels)` | Format for `audio_push`: 8–192 kHz, 1 or 2 channels. Default 44100/2. |
 | `audio_push` | `(ptr, frames)` | `frames × channels` interleaved `f32` in [-1, 1]. The runner resamples and buffers (~60 ms target latency). It drops the oldest audio if the guest runs ahead and plays silence on underrun. |
 | `input_pad` | `(player) -> u32` | Bitmask of buttons for virtual pad 0–3, stable within one `gasm_frame`. |
+| `input_mode` | `(flags)` | `GASM_INPUT_*` flags, see [Raw input](#raw-input). |
+| `key_state` | `(dst, len) -> i32` | Held keys as a bitset indexed by `GASM_KEY_*` (bit `k % 8` of byte `k / 8`), stable within a frame. Copies min(`len`, 32) bytes; returns `GASM_KEY_STATE_BYTES` (32), or `-1` if the runner has no keyboard. |
+| `key_events` | `(dst, cap) -> i32` | Presses and releases since the previous frame, in order, 4 bytes each: `u16` key code, `u8` 1 = down / 0 = up, `u8` 0. No auto-repeat. Returns the byte length (copied only if ≤ `cap`; `cap = 0` queries), or `-1` without a keyboard. |
+| `pointer` | `(dst, cap) -> i32` | Mouse/touch state as 48 bytes, see [Raw input](#raw-input). Copied only if `cap` ≥ 48; returns 48, or `-1` if the runner has no pointer. |
+| `gamepad` | `(slot, dst, cap) -> i32` | Gamepad or joystick in slot 0–3 as 204 bytes, see [Raw input](#raw-input). Copied only if `cap` ≥ 204; returns 204, or `-1` if `slot` > 3 or the runner has no gamepad support. |
+| `gamepad_name` | `(slot, dst, cap) -> i32` | Device name: its length (copied only if ≤ `cap`), or `-1` if the slot is empty. |
 | `text_input` | `(dst, cap) -> i32` | UTF-8 text typed since the previous frame, stable within one `gasm_frame`: backspace is `\b` (0x08), enter is `\n`. Returns its length (copied only if length ≤ `cap`; `cap = 0` queries), or `-1` if the runner has no keyboard. Keys bound to pads still produce text; the guest decides what it wants. Headless: from the `--input` script (`FRAME:"text"`). |
 | `asset_size` | `(name_ptr, name_len) -> i32` | Byte size, or `-1` if missing. |
 | `asset_read` | `(name_ptr, name_len, dst, cap) -> i32` | Copy ≤ `cap` bytes, return count or `-1`. |
@@ -231,6 +238,8 @@ By default the namespace is the game file's name (`sumo.wasm` → `sumo`).
 | `get` | `(key_ptr, key_len, dst, cap) -> i32` | Value length, or `-1` if the key doesn't exist. Copied only if length ≤ `cap` (call with `cap = 0` to query the size). |
 | `set` | `(key_ptr, key_len, data_ptr, data_len) -> i32` | Store a value: `0`, or `-1` on an invalid key, size or quota violation, or I/O error. |
 | `delete` | `(key_ptr, key_len) -> i32` | `0` if deleted, `-1` if it didn't exist. |
+| `count` | `() -> u32` | Number of keys in the namespace. |
+| `key` | `(index, dst, cap) -> i32` | Key `index` (0 … `count`−1, sorted): its length (copied only if ≤ `cap`; `cap = 0` queries), or `-1` if out of range. Lets games list save slots. |
 
 Limits: keys are 1–128 bytes of `[A-Za-z0-9._-]` (not `.` or `..`), values up
 to 1 MiB, total 16 MiB per namespace. Durability: native writes are atomic and
@@ -251,6 +260,53 @@ guarantee: `fd_write` (fd 1/2 → log), `fd_close`, `fd_seek` (ESPIPE),
 `fd_fdstat_get` (fds 0–2), `clock_time_get`, `random_get`, `args_*`,
 `environ_*` (empty), `proc_exit`. Other WASI functions may exist but may
 return `ENOSYS` (52). There is **no filesystem**; use assets.
+
+## Raw input
+
+Next to the four virtual pads (`input_pad`, mapped from keyboards and gamepads by
+the runner's keymap), guests can read devices directly. Like pads, everything is
+sampled before `gasm_frame` and stable within it.
+
+**Keyboard.** Keys are physical keys, numbered by `GASM_KEY_*` (in `abi.json`, with
+their W3C `KeyboardEvent.code` names: `GASM_KEY_SHIFT_LEFT` is `ShiftLeft`). A key
+is the same key on every layout; typed characters come from `text_input`.
+Modifiers are ordinary keys, so Shift+Left is `key_state` with both bits set.
+`key_events` gives the order and catches taps shorter than a frame. Keys bound
+to pads still show up as raw keys.
+
+**`input_mode(flags)`:**
+
+| Flag | Meaning |
+|---|---|
+| `GASM_INPUT_KEYS_RAW` (1) | The guest reads the keyboard itself: the runner stops mapping keys to pads (gamepads still map), so nothing arrives twice. |
+| `GASM_INPUT_POINTER_HIDDEN` (2) | Hide the system cursor over the game (the game draws its own). |
+| `GASM_INPUT_POINTER_LOCKED` (4) | Capture the pointer for relative motion (mouselook). Best effort: browsers lock on the next click; the pointer's flags say what happened. |
+
+**Pointer** (48 bytes, little-endian):
+
+| Offset | Field | |
+|---|---|---|
+| 0, 4 | `f32 x, y` | position in drawable pixels (the `width`/`height` space of `gasm:gfx`) |
+| 8, 12 | `f32 fx, fy` | the same position in the last `video_present` frame's pixels (the runner undoes its letterboxing; outside the frame it's < 0 or ≥ the size) |
+| 16, 20 | `f32 dx, dy` | relative motion since the previous frame, also while locked |
+| 24, 28 | `f32 wheel_x, wheel_y` | wheel since the previous frame, about 1 per notch; `y` > 0 = down |
+| 32 | `u32 buttons` | held: `GASM_MOUSE_LEFT` 1, `RIGHT` 2, `MIDDLE` 4, `BACK` 8, `FORWARD` 16 |
+| 36, 40 | `u32 pressed, released` | buttons that went down / up since the previous frame (a click inside one frame shows in both) |
+| 44 | `u32 flags` | `GASM_POINTER_INSIDE` 1, `IS_HIDDEN` 2, `IS_LOCKED` 4 |
+
+The frame position uses the same arithmetic as the display: scale =
+min(drawable / frame) per axis, centred.
+
+**Gamepads and joysticks** (204 bytes per slot, little-endian): `u32 flags`
+(`GASM_GAMEPAD_CONNECTED` 1, `GASM_GAMEPAD_STANDARD` 2), `u32` button count,
+`u32` axis count, `f32 buttons[32]` (0–1, analog triggers included), `f32
+axes[16]` (−1…1). Slots follow connection order, like the pads. Known
+controllers use the **W3C standard mapping**: buttons 0 south, 1 east, 2
+west, 3 north, 4/5 shoulders, 6/7 triggers, 8 select, 9 start, 10/11 stick
+clicks, 12–15 d-pad up/down/left/right, 16 home; axes 0/1 left stick, 2/3
+right stick, `y` > 0 = down. Other devices (flight sticks, wheels, pedals)
+report their buttons and axes in device order, without the `STANDARD` flag;
+`gamepad_name` tells them apart.
 
 ## Determinism
 
@@ -342,8 +398,32 @@ one binding per line, `<pad 1-4> <button> <key code>...`. Buttons are
   N ≥ 2 apply while fewer than N gamepads are connected.
 - **Changing it:** native uses `--keymap FILE` (default:
   `<data dir>/gasm/keymap.txt` if present) and `--print-keymap`. The web
-  player has a "keys…" editor, stored in `localStorage`. Escape is reserved
-  for quitting.
+  player has a "keys…" editor, stored in `localStorage`. Escape can't be
+  bound to a pad.
+
+### Escape
+
+A tap of Escape goes to the game (`key_state`, `key_events`). Holding it for a
+second quits natively and stops the game in the browser, after `gasm_exit`.
+Closing the window or the page also quits.
+
+### Scripted input (headless)
+
+`--input` (both headless runners) takes comma-separated `FRAMES:ACTION` items;
+`FRAMES` is `N` or `FROM-TO` (inclusive). Commas inside quotes or parentheses
+don't split items.
+
+| Action | |
+|---|---|
+| `A+B+START` | pad 1 buttons (`A B X Y L R SELECT START UP DOWN LEFT RIGHT`) |
+| `"text"` | typed text on frame `N` (escapes `\n` enter, `\b` backspace, `\\`, `\"`) |
+| `KEY(ShiftLeft+ArrowLeft)` | raw keys held (W3C names); events come from the changes between frames |
+| `PTR(x,y)`, `PTR(x,y,L+R)` | pointer position in drawable pixels (1280×720 headless) and buttons (`L R M BACK FWD`); the position stays until the next `PTR` |
+| `MOVE(dx,dy)`, `WHEEL(x,y)` | relative motion, wheel, per frame |
+| `GP0(B0+B9+A1=0.5)` | gamepad slot 0–3: buttons by index, axes `An=value`; slots used anywhere in the script are connected, standard mapping, named `scripted` |
+
+Headless runs have a keyboard, a pointer and four gamepad slots, so the raw
+imports never return `-1` there, and the cursor modes count as achieved.
 
 ## Roadmap (not in v0)
 

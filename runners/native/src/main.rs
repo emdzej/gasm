@@ -1,6 +1,6 @@
 //! gasm-run — native runner for gasm ABI v0 games (wasmtime + wgpu + winit).
 
-use gasm_host::{assets, audio, gfx, host, keymap, net, storage};
+use gasm_host::{assets, audio, gfx, host, keymap, net, script, storage};
 
 use std::collections::{HashMap, HashSet};
 use std::process::ExitCode;
@@ -10,13 +10,13 @@ use std::time::{Duration, Instant};
 use gilrs::{Button, Gilrs};
 use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
-use winit::event::{ElementState, WindowEvent};
+use winit::event::{DeviceEvent, DeviceId, ElementState, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{Key, KeyCode, NamedKey, PhysicalKey};
-use winit::window::{Window, WindowId};
+use winit::window::{CursorGrabMode, Window, WindowId};
 
 use gfx::Gfx;
-use host::{Game, Host, Stop};
+use host::{Game, Gamepad, Host, KEY_STATE_BYTES, Pointer, RawInput, Stop};
 use net::Net;
 use storage::Storage;
 
@@ -44,9 +44,11 @@ options:
                            (then run the .cwasm instead of the .wasm)
   --headless <frames>      run N frames without window/audio, print hashes
   --screenshot <out.png>   (headless) write the last frame as PNG (renders gfx on the GPU)
-  --input <script>         (headless) scripted input: FROM-TO:BTN+BTN,... (frame ranges,
-                           buttons A B X Y L R SELECT START UP DOWN LEFT RIGHT), and
-                           FRAME:\"text\" for text_input (escapes \\n enter, \\b backspace, \\\\ \\\")
+  --input <script>         (headless) scripted input, FRAMES:ACTION,... with FRAMES = N or FROM-TO:
+                           A+B+START (pad 1: A B X Y L R SELECT START UP DOWN LEFT RIGHT),
+                           \"text\" (text_input; escapes \\n \\b), KEY(ShiftLeft+ArrowLeft) (raw keys),
+                           PTR(x,y[,L+R+M]) (pointer, drawable px), MOVE(dx,dy), WHEEL(x,y),
+                           GP0(B0+B9+A1=0.5) (gamepad slot 0-3: buttons, axes)
   --realtime               (headless) pace frames at the guest's rate
   --no-hash                (headless) skip hashing, for benchmarking
 
@@ -73,9 +75,8 @@ struct Args {
     headless: Option<u64>,
     screenshot: Option<String>,
     compile: Option<String>,
-    input: Vec<(u64, u64, u32)>,
-    /// (frame, text) typed in headless runs
-    text: Vec<(u64, String)>,
+    /// headless scripted input
+    script: script::Script,
     realtime: bool,
     mute: bool,
     no_hash: bool,
@@ -97,8 +98,7 @@ fn parse_args() -> Result<Args, String> {
         headless: None,
         screenshot: None,
         compile: None,
-        input: Vec::new(),
-        text: Vec::new(),
+        script: script::Script::default(),
         realtime: false,
         mute: false,
         no_hash: false,
@@ -143,7 +143,7 @@ fn parse_args() -> Result<Args, String> {
             }
             "--screenshot" => args.screenshot = Some(val("--screenshot")?),
             "--compile" => args.compile = Some(val("--compile")?),
-            "--input" => (args.input, args.text) = parse_input_script(&val("--input")?)?,
+            "--input" => args.script = script::Script::parse(&val("--input")?)?,
             "--realtime" => args.realtime = true,
             "--mute" => args.mute = true,
             "--no-hash" => args.no_hash = true,
@@ -156,63 +156,6 @@ fn parse_args() -> Result<Args, String> {
         return Err("missing <game.wasm>".into());
     }
     Ok(args)
-}
-
-/// Parse `FROM-TO:BTN+BTN,...` into (from, to_inclusive, mask) ranges, and
-/// `FRAME:"text"` items into typed text (commas inside quotes are literal).
-type InputScript = (Vec<(u64, u64, u32)>, Vec<(u64, String)>);
-fn parse_input_script(spec: &str) -> Result<InputScript, String> {
-    const NAMES: [&str; 12] = ["A", "B", "X", "Y", "L", "R", "SELECT", "START", "UP", "DOWN", "LEFT", "RIGHT"];
-    // split on commas outside quotes
-    let (mut items, mut cur, mut quoted, mut escaped) = (Vec::new(), String::new(), false, false);
-    for ch in spec.chars() {
-        if escaped {
-            cur.push(ch);
-            escaped = false;
-        } else if ch == '\\' && quoted {
-            cur.push(ch);
-            escaped = true;
-        } else if ch == '"' {
-            quoted = !quoted;
-            cur.push(ch);
-        } else if ch == ',' && !quoted {
-            items.push(std::mem::take(&mut cur));
-        } else {
-            cur.push(ch);
-        }
-    }
-    items.push(cur);
-    let (mut pads, mut text) = (Vec::new(), Vec::new());
-    for item in items {
-        let bad = || format!("bad --input item {item:?}");
-        let (range, rest) = item.split_once(':').ok_or_else(bad)?;
-        if let Some(q) = rest.strip_prefix('"') {
-            let body = q.strip_suffix('"').ok_or_else(bad)?;
-            let mut t = String::new();
-            let mut chars = body.chars();
-            while let Some(c) = chars.next() {
-                t.push(if c != '\\' {
-                    c
-                } else {
-                    match chars.next().ok_or_else(bad)? {
-                        'n' => '\n',
-                        'b' => '\u{8}',
-                        other => other,
-                    }
-                });
-            }
-            text.push((range.parse().map_err(|_| bad())?, t));
-            continue;
-        }
-        let (from, to) = range.split_once('-').unwrap_or((range, range));
-        let mut mask = 0;
-        for b in rest.split('+') {
-            let bit = NAMES.iter().position(|n| n.eq_ignore_ascii_case(b)).ok_or_else(bad)?;
-            mask |= 1 << bit;
-        }
-        pads.push((from.parse().map_err(|_| bad())?, to.parse().map_err(|_| bad())?, mask));
-    }
-    Ok((pads, text))
 }
 
 fn main() -> ExitCode {
@@ -341,13 +284,16 @@ fn headless(args: &Args, loaded: Loaded, frames: u64) -> Result<i32, String> {
     let t0 = Instant::now();
     let mut exit = None;
     let mut ran = 0;
+    let mut script_state = script::ScriptState::default();
     for i in 0..frames {
         let rate = game.host().frame_rate;
-        let pad = args.input.iter().filter(|(f, t, _)| (*f..=*t).contains(&i)).fold(0, |m, (_, _, b)| m | b);
         let host = game.host_mut();
         host.virtual_time_ms = Some(i as f64 * 1000.0 / rate);
-        host.pads = [pad, 0, 0, 0];
-        host.text = Some(args.text.iter().filter(|(f, _)| *f == i).map(|(_, t)| t.as_str()).collect());
+        host.pads = [args.script.pad(i), 0, 0, 0];
+        host.text = Some(args.script.text(i));
+        let (w, h) = host.gfx.size();
+        let mode = host.input_mode;
+        host.input = args.script.raw(i, &mut script_state, (w as f32, h as f32), mode);
         host.show_frame = args.screenshot.is_some() && i + 1 == frames;
         ran = i + 1;
         match game.frame() {
@@ -436,6 +382,67 @@ fn gamepad_pads(gilrs: &mut Gilrs) -> ([u32; 4], usize) {
     (pads, connected)
 }
 
+/// Mouse input collected between frames (window pixels).
+#[derive(Default)]
+struct MouseState {
+    x: f32,
+    y: f32,
+    inside: bool,
+    buttons: u32,
+    /// buttons that went down / up since the last frame (a click inside one frame counts)
+    pressed: u32,
+    released: u32,
+    dx: f32,
+    dy: f32,
+    wheel_x: f32,
+    wheel_y: f32,
+}
+
+/// Hold Escape this long to quit (a tap goes to the game).
+const ESC_HOLD: Duration = Duration::from_millis(1000);
+
+fn mouse_bit(b: MouseButton) -> u32 {
+    match b {
+        MouseButton::Left => 1,
+        MouseButton::Right => 2,
+        MouseButton::Middle => 4,
+        MouseButton::Back => 8,
+        MouseButton::Forward => 16,
+        MouseButton::Other(_) => 0,
+    }
+}
+
+/// Raw gamepads (first 4 connected, the same order as the pads). Known
+/// controllers in the W3C standard layout; others raw, ordered by code.
+fn gamepads_raw(gilrs: &Gilrs) -> [Gamepad; 4] {
+    use gilrs::{Axis, MappingSource};
+    const BUTTONS: [Button; 17] = [
+        Button::South, Button::East, Button::West, Button::North, Button::LeftTrigger, Button::RightTrigger,
+        Button::LeftTrigger2, Button::RightTrigger2, Button::Select, Button::Start, Button::LeftThumb,
+        Button::RightThumb, Button::DPadUp, Button::DPadDown, Button::DPadLeft, Button::DPadRight, Button::Mode,
+    ];
+    let mut out: [Gamepad; 4] = Default::default();
+    for (slot, (_, pad)) in gilrs.gamepads().take(4).enumerate() {
+        let g = &mut out[slot];
+        g.connected = true;
+        g.name = pad.name().to_owned();
+        if pad.mapping_source() != MappingSource::None {
+            g.standard = true;
+            g.buttons = BUTTONS.iter().map(|b| pad.button_data(*b).map_or(0.0, |d| d.value())).collect();
+            // W3C: y axes point down
+            g.axes = vec![pad.value(Axis::LeftStickX), -pad.value(Axis::LeftStickY), pad.value(Axis::RightStickX), -pad.value(Axis::RightStickY)];
+        } else {
+            let mut b: Vec<_> = pad.state().buttons().map(|(c, d)| (c.into_u32(), d.value())).collect();
+            let mut a: Vec<_> = pad.state().axes().map(|(c, d)| (c.into_u32(), d.value())).collect();
+            b.sort_by_key(|x| x.0);
+            a.sort_by_key(|x| x.0);
+            g.buttons = b.into_iter().map(|x| x.1).take(host::GAMEPAD_BUTTONS).collect();
+            g.axes = a.into_iter().map(|x| x.1).take(host::GAMEPAD_AXES).collect();
+        }
+    }
+    out
+}
+
 struct App {
     args: Args,
     keymap: keymap::Keymap,
@@ -445,6 +452,15 @@ struct App {
     keys: HashSet<KeyCode>,
     /// text typed since the last frame (for text_input)
     typed: String,
+    /// raw key presses/releases since the last frame
+    key_events: Vec<(u16, bool)>,
+    /// Escape: a tap goes to the game, holding it quits
+    esc_down: Option<Instant>,
+    mouse: MouseState,
+    /// cursor mode currently applied to the window (GASM_INPUT_POINTER_*)
+    applied_mode: u32,
+    /// GASM_POINTER_IS_HIDDEN / IS_LOCKED as actually achieved
+    pointer_flags: u32,
     gilrs: Option<Gilrs>,
     next: Instant,
     fps_t: Instant,
@@ -458,7 +474,25 @@ impl App {
         el.exit();
     }
 
-    /// The player closed the window / pressed Esc: let the game save, then stop.
+    /// Hide / lock the cursor as the guest asked (input_mode), when it changes.
+    fn apply_input_mode(&mut self) {
+        let (Some(game), Some(w)) = (&self.game, &self.window) else { return };
+        let want = game.host().input_mode & 6;
+        if want == self.applied_mode {
+            return;
+        }
+        self.applied_mode = want;
+        let locked = want & 4 != 0
+            && w.set_cursor_grab(CursorGrabMode::Locked).or_else(|_| w.set_cursor_grab(CursorGrabMode::Confined)).is_ok();
+        if want & 4 == 0 {
+            let _ = w.set_cursor_grab(CursorGrabMode::None);
+        }
+        // locked implies hidden
+        w.set_cursor_visible(want == 0);
+        self.pointer_flags = if want != 0 { 2 } else { 0 } | if locked { 4 } else { 0 };
+    }
+
+    /// The player closed the window / held Esc: let the game save, then stop.
     fn quit(&mut self, el: &ActiveEventLoop) {
         if let Some(g) = &mut self.game {
             g.exit();
@@ -474,16 +508,56 @@ impl App {
             // Fixed timestep: catch up at most 4 frames, only the last one is shown.
             let behind = ((now - self.next).as_secs_f64() / period.as_secs_f64()) as u32 + 1;
             let steps = behind.min(4);
+            // Escape held long enough: quit (a short tap went to the game as a key)
+            if self.esc_down.is_some_and(|t| t.elapsed() >= ESC_HOLD) {
+                return self.quit(el);
+            }
+            let mut keys = [0u8; KEY_STATE_BYTES];
+            for &c in &self.keys {
+                let k = keymap::gasm_key(c);
+                if k != 0 {
+                    keys[k as usize / 8] |= 1 << (k % 8);
+                }
+            }
+            let raw_pads = self.gilrs.as_ref().map(gamepads_raw);
+            let drawable = game.host().gfx.size();
             for k in 0..steps {
                 let (mut pads, gamepads) = self.gilrs.as_mut().map(gamepad_pads).unwrap_or_default();
-                let kb = keymap::pads(&self.keymap, &self.keys, gamepads);
-                for (p, k) in pads.iter_mut().zip(kb) {
-                    *p |= k;
+                // a guest that reads the keyboard itself (KEYS_RAW) gets no keymap pads
+                if game.host().input_mode & 1 == 0 {
+                    let kb = keymap::pads(&self.keymap, &self.keys, gamepads);
+                    for (p, k) in pads.iter_mut().zip(kb) {
+                        *p |= k;
+                    }
                 }
                 let host = game.host_mut();
                 host.pads = pads;
-                // typed text goes to the first frame of a catch-up batch
-                host.text = Some(if k == 0 { std::mem::take(&mut self.typed) } else { String::new() });
+                // typed text, key events and relative motion go to the first frame of a catch-up batch
+                let first = k == 0;
+                host.text = Some(if first { std::mem::take(&mut self.typed) } else { String::new() });
+                let m = &mut self.mouse;
+                let pointer = Pointer {
+                    x: m.x,
+                    y: m.y,
+                    dx: if first { m.dx } else { 0.0 },
+                    dy: if first { m.dy } else { 0.0 },
+                    wheel_x: if first { m.wheel_x } else { 0.0 },
+                    wheel_y: if first { m.wheel_y } else { 0.0 },
+                    buttons: m.buttons,
+                    pressed: if first { m.pressed } else { 0 },
+                    released: if first { m.released } else { 0 },
+                    flags: m.inside as u32 | self.pointer_flags,
+                    drawable: (drawable.0 as f32, drawable.1 as f32),
+                };
+                if first {
+                    (m.dx, m.dy, m.wheel_x, m.wheel_y, m.pressed, m.released) = (0.0, 0.0, 0.0, 0.0, 0, 0);
+                }
+                host.input = RawInput {
+                    keys: Some(keys),
+                    key_events: if first { std::mem::take(&mut self.key_events) } else { Vec::new() },
+                    pointer: Some(pointer),
+                    gamepads: Some(raw_pads.clone().unwrap_or_default()),
+                };
                 host.show_frame = k + 1 == steps;
                 host.gfx.used = false;
                 match game.frame() {
@@ -506,6 +580,7 @@ impl App {
                 host.rgba = rgba;
             }
         }
+        self.apply_input_mode();
         if self.fps_t.elapsed() >= Duration::from_secs(1) {
             if let Some(w) = &self.window {
                 w.set_title(&format!("gasm — {} — {} fps", self.args.wasm, self.fps_n));
@@ -565,11 +640,53 @@ impl ApplicationHandler for App {
                     g.host_mut().gfx.resize(size.width, size.height);
                 }
             }
-            WindowEvent::Focused(false) => self.keys.clear(),
+            WindowEvent::Focused(false) => {
+                for c in self.keys.drain() {
+                    let k = keymap::gasm_key(c);
+                    if k != 0 {
+                        self.key_events.push((k, false));
+                    }
+                }
+                self.esc_down = None;
+                self.mouse.inside = false;
+            }
+            WindowEvent::CursorMoved { position, .. } => {
+                self.mouse.x = position.x as f32;
+                self.mouse.y = position.y as f32;
+                self.mouse.inside = true;
+            }
+            WindowEvent::CursorEntered { .. } => self.mouse.inside = true,
+            WindowEvent::CursorLeft { .. } => self.mouse.inside = false,
+            WindowEvent::MouseInput { state, button, .. } => {
+                let bit = mouse_bit(button);
+                match state {
+                    ElementState::Pressed => {
+                        self.mouse.buttons |= bit;
+                        self.mouse.pressed |= bit;
+                    }
+                    ElementState::Released => {
+                        self.mouse.buttons &= !bit;
+                        self.mouse.released |= bit;
+                    }
+                }
+            }
+            WindowEvent::MouseWheel { delta, .. } => {
+                // gasm: about 1 per wheel notch, y > 0 = down (W3C sign); winit's is the opposite
+                let (x, y) = match delta {
+                    MouseScrollDelta::LineDelta(x, y) => (x, y),
+                    MouseScrollDelta::PixelDelta(p) => (p.x as f32 / 100.0, p.y as f32 / 100.0),
+                };
+                self.mouse.wheel_x -= x;
+                self.mouse.wheel_y -= y;
+            }
             WindowEvent::KeyboardInput { event, .. } => {
                 if let PhysicalKey::Code(code) = event.physical_key {
-                    if code == KeyCode::Escape {
-                        return self.quit(el);
+                    if code == KeyCode::Escape && !event.repeat {
+                        self.esc_down = (event.state == ElementState::Pressed).then(Instant::now);
+                    }
+                    let k = keymap::gasm_key(code);
+                    if !event.repeat && k != 0 {
+                        self.key_events.push((k, event.state == ElementState::Pressed));
                     }
                     match event.state {
                         ElementState::Pressed => self.keys.insert(code),
@@ -593,6 +710,16 @@ impl ApplicationHandler for App {
         }
     }
 
+    fn device_event(&mut self, _el: &ActiveEventLoop, _id: DeviceId, event: DeviceEvent) {
+        // raw (unaccelerated) motion, also while the cursor is locked
+        if let DeviceEvent::MouseMotion { delta } = event
+            && self.window.as_ref().is_some_and(|w| w.has_focus())
+        {
+            self.mouse.dx += delta.0 as f32;
+            self.mouse.dy += delta.1 as f32;
+        }
+    }
+
     fn about_to_wait(&mut self, el: &ActiveEventLoop) {
         self.tick(el);
     }
@@ -610,6 +737,11 @@ fn windowed(args: Args, loaded: Loaded) -> Result<i32, String> {
         game: None,
         keys: HashSet::new(),
         typed: String::new(),
+        key_events: Vec::new(),
+        esc_down: None,
+        mouse: MouseState::default(),
+        applied_mode: 0,
+        pointer_flags: 0,
         gilrs: Gilrs::new().ok(),
         next: Instant::now(),
         fps_t: Instant::now(),

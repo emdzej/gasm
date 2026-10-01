@@ -6,8 +6,11 @@
  *            never the wall clock, so a run is reproducible on every runner.
  *   video    the 320x200 palettized screen, stretched to 640x480 (4:3, as on
  *            a CRT) and presented as RGBA8.
- *   input    virtual pad 1 is translated into DOOM key events; what a button
- *            means depends on context (game, menu, yes/no prompt, save name).
+ *   input    the raw keyboard with DOOM's own keys (Ctrl fire, Space use, Shift
+ *            run, Alt strafe, Esc menu, typed save names), the mouse while
+ *            playing (locked: turn, fire, strafe, forward), and gamepads through
+ *            virtual pad 1, whose buttons mean what the context needs (game,
+ *            menu, yes/no prompt, save name).
  *   files    no filesystem: the WAD is an asset read on demand, the config and
  *            save games live in gasm:storage.
  *   audio    sound effects mixed here, music from the OPL emulator
@@ -25,6 +28,7 @@
 #include "gasm.h"
 #include "gasm_doom.h"
 
+#include "d_event.h"
 #include "doomgeneric.h"
 #include "doomkeys.h"
 #include "doomstat.h"
@@ -191,7 +195,68 @@ static unsigned char key_for(int button) {
     }
 }
 
+/* DOOM key for a raw gasm key (0: unused). Vanilla's keyboard layout. */
+static unsigned char doom_key(uint32_t code) {
+    if (code >= GASM_KEY_KEY_A && code <= GASM_KEY_KEY_Z) return (unsigned char)('a' + code - GASM_KEY_KEY_A);
+    if (code >= GASM_KEY_DIGIT0 && code <= GASM_KEY_DIGIT9) return (unsigned char)('0' + code - GASM_KEY_DIGIT0);
+    if (code >= GASM_KEY_F1 && code <= GASM_KEY_F12) return (unsigned char)(KEY_F1 + code - GASM_KEY_F1);
+    switch (code) {
+    case GASM_KEY_ARROW_UP: return KEY_UPARROW;
+    case GASM_KEY_ARROW_DOWN: return KEY_DOWNARROW;
+    case GASM_KEY_ARROW_LEFT: return KEY_LEFTARROW;
+    case GASM_KEY_ARROW_RIGHT: return KEY_RIGHTARROW;
+    case GASM_KEY_CONTROL_LEFT: case GASM_KEY_CONTROL_RIGHT: return KEY_FIRE;
+    case GASM_KEY_SPACE: return KEY_USE;
+    case GASM_KEY_SHIFT_LEFT: case GASM_KEY_SHIFT_RIGHT: return KEY_RSHIFT;
+    case GASM_KEY_ALT_LEFT: case GASM_KEY_ALT_RIGHT: return KEY_RALT;
+    case GASM_KEY_COMMA: return KEY_STRAFE_L;
+    case GASM_KEY_PERIOD: return KEY_STRAFE_R;
+    case GASM_KEY_ENTER: case GASM_KEY_NUMPAD_ENTER: return KEY_ENTER;
+    case GASM_KEY_ESCAPE: return KEY_ESCAPE;
+    case GASM_KEY_TAB: return KEY_TAB;
+    case GASM_KEY_BACKSPACE: return KEY_BACKSPACE;
+    case GASM_KEY_MINUS: case GASM_KEY_NUMPAD_SUBTRACT: return KEY_MINUS;
+    case GASM_KEY_EQUAL: case GASM_KEY_NUMPAD_ADD: return KEY_EQUALS;
+    case GASM_KEY_PAUSE: return KEY_PAUSE;
+    default: return 0;
+    }
+}
+
+static uint8_t key_buf[256 * 4];
+static uint32_t mode_set = ~0u;
+static uint32_t mouse_buttons;
+
+/* Keyboard and mouse, read raw. The mouse is locked while playing a level. */
+static void poll_raw(void) {
+    int n = gasm_key_events(key_buf, sizeof key_buf);
+    for (int i = 0; i + 3 < n; i += 4) {
+        unsigned char k = doom_key(key_buf[i] | key_buf[i + 1] << 8);
+        if (k) post_key(key_buf[i + 2], k);
+    }
+    int playing = gamestate == GS_LEVEL && !menuactive && !demoplayback && !paused;
+    uint32_t mode = GASM_INPUT_KEYS_RAW | GASM_INPUT_POINTER_HIDDEN | (playing ? GASM_INPUT_POINTER_LOCKED : 0);
+    if (mode != mode_set) gasm_input_mode(mode_set = mode);
+
+    uint8_t p[GASM_POINTER_BYTES];
+    if (gasm_pointer(p, sizeof p) < 0) return;
+    float dx;
+    uint32_t buttons, flags;
+    memcpy(&dx, p + 16, 4);
+    memcpy(&buttons, p + 32, 4);
+    memcpy(&flags, p + 44, 4);
+    if (!(flags & GASM_POINTER_IS_LOCKED)) buttons = 0;   /* the click that locks it isn't a shot */
+    int motion = (flags & GASM_POINTER_IS_LOCKED) ? (int)dx : 0;
+    /* DOOM's mouse buttons: left fire, right strafe, middle forward. No vertical motion. */
+    uint32_t b = (buttons & GASM_MOUSE_LEFT ? 1 : 0) | (buttons & GASM_MOUSE_RIGHT ? 2 : 0) | (buttons & GASM_MOUSE_MIDDLE ? 4 : 0);
+    if (motion != 0 || b != mouse_buttons) {
+        event_t ev = { .type = ev_mouse, .data1 = (int)b, .data2 = motion, .data3 = 0 };
+        D_PostEvent(&ev);
+        mouse_buttons = b;
+    }
+}
+
 static void poll_input(void) {
+    poll_raw();
     /* A tap must stay down for one tic, or the game never sees it. */
     if (tap_release) {
         post_key(0, tap_release);

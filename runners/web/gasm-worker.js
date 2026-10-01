@@ -62,6 +62,7 @@ export class GasmWorker {
     this.onLog = onLog;
     this.onAudio = onAudio;
     this.frameRate = 60;
+    this.inputMode = 0;   // GASM_INPUT_* flags the guest asked for (cursor, keymap)
     this.waiters = [];
     this.stats = null;
     worker.onmessage = (e) => this.message(e.data);
@@ -76,6 +77,7 @@ export class GasmWorker {
       for (const a of m.audio) this.onAudio(a.samples, a.rate, a.channels);
       this.frameRate = m.frameRate;
       this.stats = m.stats;
+      this.inputMode = m.inputMode;
       if (m.exit !== null) { this.resolve('done', m); return this.fail(new ProcExit(m.exit)); }
       if (m.error !== null) return this.fail(new Error(m.error));
     }
@@ -97,10 +99,10 @@ export class GasmWorker {
    * last is shown (catch-up rule) if `show`. Resolves with { frame?, stats, frameIndex }.
    * Rejects with ProcExit when the guest exits.
    */
-  frames(steps, show = true, { texts = null, size = null } = {}) {
+  frames(steps, show = true, { texts = null, inputs = null, size = null } = {}) {
     if (this.failed) return Promise.reject(this.failed);
     const done = this.next('done');
-    this.worker.postMessage({ type: 'frames', steps, show, texts, size });
+    this.worker.postMessage({ type: 'frames', steps, show, texts, inputs, size });
     return done;
   }
 
@@ -172,6 +174,7 @@ if (inWorker) {
         const pads = m.steps[i];
         host.getPad = (p) => pads[p] ?? 0;
         host.text = keyboard ? (m.texts?.[i] ?? '') : null;
+        host.input = m.inputs?.[i] ?? { keys: null, keyEvents: [], pointer: null, gamepads: null };
         host.showFrame = m.show && i === m.steps.length - 1;
         if (gfx) gfx.used = false;
         try { host.frame(); } catch (err) {
@@ -192,7 +195,7 @@ if (inWorker) {
       }
       const out = audio; audio = [];
       const transfer = [...(frame ? [frame.rgba.buffer] : []), ...out.map((a) => a.samples.buffer)];
-      post({ type: 'done', frame, audio: out, stats: stats(), frameIndex: host.frameIndex, frameRate: host.frameRate, exit, error }, transfer);
+      post({ type: 'done', frame, audio: out, stats: stats(), frameIndex: host.frameIndex, frameRate: host.frameRate, inputMode: host.inputMode, exit, error }, transfer);
     } else if (m.type === 'exit') {
       try { host?.exit(); await host?.net.closeAll(); } catch {}
       post({ type: 'exited' });

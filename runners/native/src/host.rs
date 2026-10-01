@@ -34,6 +34,63 @@ impl Fnv {
     }
 }
 
+/// Raw input for one frame, set by the runner before each `gasm_frame`.
+/// `None` fields mean the runner has no such device (the import returns -1).
+#[derive(Default)]
+pub struct RawInput {
+    /// held keys, bit k = GASM_KEY code k
+    pub keys: Option<[u8; KEY_STATE_BYTES]>,
+    /// (code, down) since the previous frame, in order
+    pub key_events: Vec<(u16, bool)>,
+    pub pointer: Option<Pointer>,
+    pub gamepads: Option<[Gamepad; 4]>,
+}
+
+pub const KEY_STATE_BYTES: usize = 32;
+pub const POINTER_BYTES: usize = 48;
+pub const GAMEPAD_BYTES: usize = 204;
+pub const GAMEPAD_BUTTONS: usize = 32;
+pub const GAMEPAD_AXES: usize = 16;
+
+#[derive(Default, Clone, Copy)]
+pub struct Pointer {
+    /// position in drawable pixels; the frame position is derived by the host
+    pub x: f32,
+    pub y: f32,
+    pub dx: f32,
+    pub dy: f32,
+    pub wheel_x: f32,
+    pub wheel_y: f32,
+    pub buttons: u32,
+    pub pressed: u32,
+    pub released: u32,
+    /// GASM_POINTER_INSIDE | IS_HIDDEN | IS_LOCKED
+    pub flags: u32,
+    /// drawable size the position refers to
+    pub drawable: (f32, f32),
+}
+
+#[derive(Default, Clone)]
+pub struct Gamepad {
+    pub connected: bool,
+    pub standard: bool,
+    pub buttons: Vec<f32>,
+    pub axes: Vec<f32>,
+    pub name: String,
+}
+
+/// Map a drawable position into the last video_present frame (letterboxed as the
+/// runners display it). Same arithmetic in runners/web/gasm-host.js.
+pub fn frame_position(x: f32, y: f32, drawable: (f32, f32), frame: (usize, usize)) -> (f32, f32) {
+    if frame.0 == 0 || frame.1 == 0 || drawable.0 <= 0.0 || drawable.1 <= 0.0 {
+        return (x, y);
+    }
+    let (dw, dh, fw, fh) = (drawable.0 as f64, drawable.1 as f64, frame.0 as f64, frame.1 as f64);
+    let scale = (dw / fw).min(dh / fh);
+    let (ox, oy) = ((dw - fw * scale) / 2.0, (dh - fh * scale) / 2.0);
+    (((x as f64 - ox) / scale) as f32, ((y as f64 - oy) / scale) as f32)
+}
+
 pub struct Host {
     wasi: WasiP1Ctx,
     memory: Option<Memory>,
@@ -45,6 +102,9 @@ pub struct Host {
     /// UTF-8 typed since the previous frame (set by the runner before each frame);
     /// None: no keyboard, text_input returns -1
     pub text: Option<String>,
+    pub input: RawInput,
+    /// GASM_INPUT_* flags requested by the guest (input_mode)
+    pub input_mode: u32,
     pub assets: Assets,
     /// sorted asset names, computed on first asset_count/asset_name
     asset_names: Option<Vec<String>>,
@@ -86,6 +146,8 @@ impl Host {
             frame_rate: 60.0,
             pads: [0; 4],
             text: None,
+            input: RawInput::default(),
+            input_mode: 0,
             assets: assets.into(),
             asset_names: None,
             params,
@@ -219,6 +281,110 @@ fn add_gasm_imports(linker: &mut Linker<Host>) -> wasmtime::Result<()> {
                 data[dst as usize..dst as usize + t.len()].copy_from_slice(t);
             }
             Ok(t.len() as i32)
+        },
+    )?;
+
+    linker.func_wrap("gasm", "input_mode", |mut caller: Caller<'_, Host>, flags: u32| {
+        caller.data_mut().input_mode = flags & 7;
+    })?;
+
+    linker.func_wrap(
+        "gasm",
+        "key_state",
+        |mut caller: Caller<'_, Host>, dst: u32, len: u32| -> wasmtime::Result<i32> {
+            let mem = memory(&caller)?;
+            let (data, host) = mem.data_and_store_mut(&mut caller);
+            let Some(keys) = host.input.keys else { return Ok(-1) };
+            let n = (len as usize).min(KEY_STATE_BYTES);
+            guest_slice(data, dst, n as u64)?;
+            data[dst as usize..dst as usize + n].copy_from_slice(&keys[..n]);
+            Ok(KEY_STATE_BYTES as i32)
+        },
+    )?;
+
+    linker.func_wrap(
+        "gasm",
+        "key_events",
+        |mut caller: Caller<'_, Host>, dst: u32, cap: u32| -> wasmtime::Result<i32> {
+            let mem = memory(&caller)?;
+            let (data, host) = mem.data_and_store_mut(&mut caller);
+            if host.input.keys.is_none() {
+                return Ok(-1);
+            }
+            let bytes: Vec<u8> = host.input.key_events.iter().flat_map(|&(c, d)| { let c = c.to_le_bytes(); [c[0], c[1], d as u8, 0] }).collect();
+            if bytes.len() <= cap as usize {
+                guest_slice(data, dst, bytes.len() as u64)?;
+                data[dst as usize..dst as usize + bytes.len()].copy_from_slice(&bytes);
+            }
+            Ok(bytes.len() as i32)
+        },
+    )?;
+
+    linker.func_wrap(
+        "gasm",
+        "pointer",
+        |mut caller: Caller<'_, Host>, dst: u32, cap: u32| -> wasmtime::Result<i32> {
+            let mem = memory(&caller)?;
+            let (data, host) = mem.data_and_store_mut(&mut caller);
+            let Some(p) = host.input.pointer else { return Ok(-1) };
+            if cap as usize >= POINTER_BYTES {
+                let (fx, fy) = frame_position(p.x, p.y, p.drawable, (host.width, host.height));
+                let mut b = Vec::with_capacity(POINTER_BYTES);
+                for v in [p.x, p.y, fx, fy, p.dx, p.dy, p.wheel_x, p.wheel_y] {
+                    b.extend_from_slice(&v.to_le_bytes());
+                }
+                for v in [p.buttons, p.pressed, p.released, p.flags] {
+                    b.extend_from_slice(&v.to_le_bytes());
+                }
+                guest_slice(data, dst, POINTER_BYTES as u64)?;
+                data[dst as usize..dst as usize + POINTER_BYTES].copy_from_slice(&b);
+            }
+            Ok(POINTER_BYTES as i32)
+        },
+    )?;
+
+    linker.func_wrap(
+        "gasm",
+        "gamepad",
+        |mut caller: Caller<'_, Host>, slot: u32, dst: u32, cap: u32| -> wasmtime::Result<i32> {
+            let mem = memory(&caller)?;
+            let (data, host) = mem.data_and_store_mut(&mut caller);
+            let (Some(pads), true) = (&host.input.gamepads, slot < 4) else { return Ok(-1) };
+            if cap as usize >= GAMEPAD_BYTES {
+                let g = &pads[slot as usize];
+                let nb = g.buttons.len().min(GAMEPAD_BUTTONS);
+                let na = g.axes.len().min(GAMEPAD_AXES);
+                let flags = if g.connected { 1 | if g.standard { 2 } else { 0 } } else { 0u32 };
+                let mut b = Vec::with_capacity(GAMEPAD_BYTES);
+                for v in [flags, nb as u32, na as u32] {
+                    b.extend_from_slice(&v.to_le_bytes());
+                }
+                for i in 0..GAMEPAD_BUTTONS {
+                    b.extend_from_slice(&g.buttons.get(i).copied().unwrap_or(0.0).to_le_bytes());
+                }
+                for i in 0..GAMEPAD_AXES {
+                    b.extend_from_slice(&g.axes.get(i).copied().unwrap_or(0.0).to_le_bytes());
+                }
+                guest_slice(data, dst, GAMEPAD_BYTES as u64)?;
+                data[dst as usize..dst as usize + GAMEPAD_BYTES].copy_from_slice(&b);
+            }
+            Ok(GAMEPAD_BYTES as i32)
+        },
+    )?;
+
+    linker.func_wrap(
+        "gasm",
+        "gamepad_name",
+        |mut caller: Caller<'_, Host>, slot: u32, dst: u32, cap: u32| -> wasmtime::Result<i32> {
+            let mem = memory(&caller)?;
+            let (data, host) = mem.data_and_store_mut(&mut caller);
+            let Some(g) = host.input.gamepads.as_ref().and_then(|p| p.get(slot as usize)).filter(|g| g.connected) else { return Ok(-1) };
+            let n = g.name.as_bytes();
+            if n.len() <= cap as usize {
+                guest_slice(data, dst, n.len() as u64)?;
+                data[dst as usize..dst as usize + n.len()].copy_from_slice(n);
+            }
+            Ok(n.len() as i32)
         },
     )?;
 
@@ -484,6 +650,19 @@ fn add_storage_imports(linker: &mut Linker<Host>) -> wasmtime::Result<()> {
                 -1
             }
         })
+    })?;
+    linker.func_wrap(M, "count", |c: Caller<'_, Host>| c.data().storage.keys().len() as u32)?;
+    linker.func_wrap(M, "key", |mut c: Caller<'_, Host>, index: u32, dst: u32, cap: u32| -> wasmtime::Result<i32> {
+        let mem = memory(&c)?;
+        let (data, host) = mem.data_and_store_mut(&mut c);
+        let keys = host.storage.keys();
+        let Some(k) = keys.get(index as usize) else { return Ok(-1) };
+        let k = k.as_bytes();
+        if k.len() <= cap as usize {
+            guest_slice(data, dst, k.len() as u64)?;
+            data[dst as usize..dst as usize + k.len()].copy_from_slice(k);
+        }
+        Ok(k.len() as i32)
     })?;
     linker.func_wrap(M, "delete", |mut c: Caller<'_, Host>, kp: u32, kl: u32| -> wasmtime::Result<i32> {
         let key = guest_str(&c, kp, kl)?;

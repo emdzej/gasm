@@ -9,7 +9,7 @@ EXE=""; [[ "$PLATFORM" == windows* ]] && EXE=".exe"
 PKG="dist/gasm-$VERSION-$PLATFORM"
 rm -rf "$PKG"; mkdir -p "$PKG/games"
 cp "$BIN/gasm-run$EXE" "$BIN/gasm-relay$EXE" "$PKG/"
-cp build/sumo.wasm build/nes.wasm build/doom.wasm build/triangle.wasm build/test-pattern.wasm "$PKG/games/"
+cp build/sumo.wasm build/nes.wasm build/doom.wasm build/triangle.wasm build/test-pattern.wasm build/inputtest.wasm "$PKG/games/"
 cat > "$PKG/games/doom-LICENSE.txt" <<TXT
 doom.wasm is DOOM (doomgeneric, chocolate-doom) for gasm, licensed under the
 GNU General Public License version 2. Its complete source code is
@@ -19,7 +19,7 @@ The game data (WAD files) is not included and has its own license.
 TXT
 
 if [ -z "$EXE" ]; then
-  for g in triangle test-pattern; do
+  for g in triangle test-pattern inputtest; do
     printf '#!/bin/sh\ncd "$(dirname "$0")"\nexec ./gasm-run games/%s.wasm "$@"\n' "$g" > "$PKG/run-$g.sh"
   done
   cat > "$PKG/run-sumo.sh" <<'SH'
@@ -53,7 +53,7 @@ cd "$(dirname "$0")" && exec ./gasm-relay "${1:-0.0.0.0:9000}"
 SH
   chmod +x "$PKG"/*.sh "$PKG/gasm-run" "$PKG/gasm-relay"
 else
-  for g in triangle test-pattern; do
+  for g in triangle test-pattern inputtest; do
     printf '@echo off\r\ncd /d "%%~dp0"\r\ngasm-run.exe games\\%s.wasm %%*\r\n' "$g" > "$PKG/run-$g.cmd"
   done
   printf '@echo off\r\nrem Sumo vs. the bot: run-sumo.cmd    Online: run-sumo.cmd ws://HOST:9000 [room]\r\ncd /d "%%~dp0"\r\nif "%%~1"=="" (gasm-run.exe games\\sumo.wasm) else (if "%%~2"=="" (gasm-run.exe games\\sumo.wasm --allow-net --param relay=%%1 --param room=sumo) else (gasm-run.exe games\\sumo.wasm --allow-net --param relay=%%1 --param room=%%2))\r\n' > "$PKG/run-sumo.cmd"
@@ -69,13 +69,14 @@ https://gasm.emdzej.pl
   gasm-run$EXE      native runner (wasmtime + wgpu)   gasm-run$EXE --help
   gasm-relay$EXE    WebSocket room relay for online play
   games/           sumo.wasm (3D, 2 players), nes.wasm (NES emulator),
-                   doom.wasm (DOOM, GPL-2.0), triangle.wasm, test-pattern.wasm
+                   doom.wasm (DOOM, GPL-2.0), triangle.wasm, test-pattern.wasm,
+                   inputtest.wasm (shows keyboard, mouse, gamepads)
 
 Quick start: run-sumo (vs. bot), run-sumo ws://HOST:9000 (online, start
 run-relay somewhere first), run-nes <rom.nes>, run-doom <doom1.wad>,
 run-triangle.
 
-Controls: arrows = D-pad, X = A, Z = B, Enter = Start, Esc = quit. Gamepads work.
+Controls: arrows = D-pad, X = A, Z = B, Enter = Start, hold Esc = quit. Gamepads work.
 The same .wasm files run in the browser: https://gasm.emdzej.pl/demos/
 TXT
 echo "$PKG"

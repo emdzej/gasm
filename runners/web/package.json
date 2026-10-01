@@ -1,6 +1,6 @@
 {
   "name": "@emdzej/gasm-host",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Run gasm games (portable WebAssembly games) in the browser or Node: the gasm ABI host with WebGPU, WebSocket networking, storage and a headless runner",
   "type": "module",
   "exports": {
@@ -27,6 +27,7 @@
     "webgpu-gfx.js",
     "webgpu-gfx.d.ts",
     "headless.mjs",
+    "input-script.mjs",
     "README.md",
     "gasm-worker.js",
     "gasm-worker.d.ts"

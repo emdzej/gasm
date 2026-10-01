@@ -20,7 +20,7 @@ TOOLCHAIN ?= stable
 RUSTC_W  := $(shell $(RUSTUP) which --toolchain $(TOOLCHAIN) rustc 2>/dev/null)
 CARGO_W  := $(shell $(RUSTUP) which --toolchain $(TOOLCHAIN) cargo 2>/dev/null)
 RUST_OUT := guests/target/wasm32-unknown-unknown/release
-RUST_SRC := $(shell find guests/gasm guests/sumo guests/nes guests/triangle guests/textured guests/assetcheck -name '*.rs' -o -name Cargo.toml) guests/Cargo.toml
+RUST_SRC := $(shell find guests/gasm guests/sumo guests/nes guests/triangle guests/textured guests/inputtest guests/assetcheck -name '*.rs' -o -name Cargo.toml) guests/Cargo.toml
 
 # --- C guest (guests/test-pattern) via wasi-sdk -------------------------------------
 WASI_SDK ?= $(CURDIR)/tools/wasi-sdk
@@ -29,7 +29,7 @@ TARGET   := --target=wasm32-wasip1
 REACTOR  := -mexec-model=reactor
 OPT      := -O2 -DNDEBUG
 
-GUESTS   := $(BUILD)/test-pattern.wasm $(BUILD)/nes.wasm $(BUILD)/sumo.wasm $(BUILD)/triangle.wasm $(BUILD)/textured.wasm $(BUILD)/assetcheck.wasm $(BUILD)/doom.wasm
+GUESTS   := $(BUILD)/test-pattern.wasm $(BUILD)/nes.wasm $(BUILD)/sumo.wasm $(BUILD)/triangle.wasm $(BUILD)/textured.wasm $(BUILD)/inputtest.wasm $(BUILD)/assetcheck.wasm $(BUILD)/doom.wasm
 
 .PHONY: all guests native test web relay roms parity clean rust-toolchain doom
 all: guests native
@@ -80,7 +80,7 @@ $(BUILD)/test-pattern.wasm: guests/test-pattern/main.c spec/gasm.h | $(WASI_SDK)
 $(BUILD)/.rust-guests: $(RUST_SRC) | rust-toolchain $(WASI_SDK)/bin/clang
 	@mkdir -p $(@D)
 	cd guests && RUSTC=$(RUSTC_W) CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_LINKER=$(WASI_SDK)/bin/wasm-ld \
-	  $(CARGO_W) build --release --target wasm32-unknown-unknown -p sumo -p nes -p triangle -p textured -p assetcheck
+	  $(CARGO_W) build --release --target wasm32-unknown-unknown -p sumo -p nes -p triangle -p textured -p inputtest -p assetcheck
 	@touch $@
 
 $(RUST_OUT)/%.wasm: $(BUILD)/.rust-guests ;

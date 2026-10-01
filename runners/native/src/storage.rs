@@ -92,6 +92,13 @@ impl Storage {
         Ok(())
     }
 
+    /// All keys, sorted (keys are ASCII, so byte order = JS sort order).
+    pub fn keys(&self) -> Vec<String> {
+        let mut k: Vec<String> = self.values.keys().cloned().collect();
+        k.sort();
+        k
+    }
+
     pub fn delete(&mut self, key: &str) -> bool {
         if self.values.remove(key).is_none() {
             return false;

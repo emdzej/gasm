@@ -1,9 +1,11 @@
 /*
  * test-pattern — smallest useful gasm guest.
- * Scrolling gradient, a square moved by the d-pad, a tone while A is held.
+ * Scrolling gradient, a square moved by the d-pad (twice as fast with Shift),
+ * dragged with the mouse, and a tone while A is held.
  */
 #include <math.h>
 #include <stdio.h>
+#include <string.h>
 #include "gasm.h"
 
 #define W 256
@@ -21,6 +23,7 @@ GASM_EXPORT("gasm_abi_version") int32_t abi_version(void) { return GASM_ABI_VERS
 GASM_EXPORT("gasm_init") int32_t init(void) {
     gasm_set_frame_rate(60.0);
     gasm_audio_config(RATE, 1);
+    gasm_input_mode(GASM_INPUT_POINTER_HIDDEN);   /* the square is the cursor */
     printf("test-pattern: hello from WASI stdout\n");
     gasm_log_str("test-pattern: init ok");
     return 0;
@@ -28,10 +31,26 @@ GASM_EXPORT("gasm_init") int32_t init(void) {
 
 GASM_EXPORT("gasm_frame") void frame_tick(void) {
     uint32_t pad = gasm_input_pad(0);
-    if (pad & GASM_BTN_LEFT)  px -= 2;
-    if (pad & GASM_BTN_RIGHT) px += 2;
-    if (pad & GASM_BTN_UP)    py -= 2;
-    if (pad & GASM_BTN_DOWN)  py += 2;
+    /* raw keyboard: either Shift doubles the speed (the arrows still arrive as the pad) */
+    uint8_t keys[GASM_KEY_STATE_BYTES] = {0};
+    gasm_key_state(keys, sizeof keys);
+    int fast = (keys[GASM_KEY_SHIFT_LEFT / 8] >> (GASM_KEY_SHIFT_LEFT % 8) & 1) |
+               (keys[GASM_KEY_SHIFT_RIGHT / 8] >> (GASM_KEY_SHIFT_RIGHT % 8) & 1);
+    int step = fast ? 4 : 2;
+    if (pad & GASM_BTN_LEFT)  px -= step;
+    if (pad & GASM_BTN_RIGHT) px += step;
+    if (pad & GASM_BTN_UP)    py -= step;
+    if (pad & GASM_BTN_DOWN)  py += step;
+    /* mouse: drag the square (position in frame pixels) */
+    uint8_t ptr[GASM_POINTER_BYTES];
+    if (gasm_pointer(ptr, sizeof ptr) > 0) {
+        float fx, fy;
+        uint32_t buttons;
+        memcpy(&fx, ptr + 8, 4);
+        memcpy(&fy, ptr + 12, 4);
+        memcpy(&buttons, ptr + 32, 4);
+        if (buttons & GASM_MOUSE_LEFT) { px = (int)fx; py = (int)fy; }
+    }
     px = (px + W) % W;
     py = (py + H) % H;
 

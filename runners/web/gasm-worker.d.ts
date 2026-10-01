@@ -45,11 +45,15 @@ export declare class GasmWorker {
   }): Promise<GasmWorker>;
   readonly worker: Worker;
   frameRate: number;
+  /** GASM_INPUT_* flags the guest asked for, after the last batch. */
+  inputMode: number;
   stats: WorkerStats | null;
   /** Run one frame per entry (each [pad0..pad3]); only the last is shown. Rejects with ProcExit on exit. */
   frames(steps: number[][], show?: boolean, options?: {
     /** Text typed before each frame (text_input), one entry per step. */
     texts?: string[] | null;
+    /** Raw input per step (BrowserInput.frame(i === 0)). */
+    inputs?: import('./gasm-host.js').RawInput[] | null;
     /** gasm:gfx canvas display size in device pixels. */
     size?: [width: number, height: number] | null;
   }): Promise<FramesResult>;

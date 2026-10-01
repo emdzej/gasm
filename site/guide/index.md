@@ -75,8 +75,9 @@ DOOM takes any IWAD as the asset `wad` (shareware `doom1.wad`, `doom.wad`,
 [guests/doom](https://github.com/emdzej/gasm/blob/main/guests/doom/README.md)
 for its controls.
 
-The window is resizable. Its title shows the game's frame rate. Press **Esc**
-or close the window to quit.
+The window is resizable. Its title shows the game's frame rate. **Hold Esc**
+for a second, or close the window, to quit (a short tap of Esc goes to the
+game, for example DOOM's menu).
 
 ### Games with lots of data
 
@@ -175,6 +176,13 @@ $R build/sumo.wasm --allow-net --param relay=ws://RELAY_HOST:9000 --param room=f
 | Start | Enter | Start | Start | — | menu; select in menus |
 | Select | Right Shift (web: either Shift) | Select/Back | Select | — | automap |
 
+The DOOM column is for gamepads. With a keyboard, DOOM reads the keys directly
+and uses its original layout: arrows move, **Ctrl** fires, **Space** opens
+doors, **Shift** runs, **Alt** + arrows or `,` `.` strafe, **1**–**7** pick
+weapons, **Tab** shows the map, a tap of **Esc** opens the menu. While you
+play, the mouse turns, the left button fires, the right one strafes and the
+middle one moves forward (the cursor is captured; open the menu to free it).
+
 Keyboard and the first gamepad both drive player 1. **Player 2 has its own
 keys by default:** I/J/K/L move, `.` = A, `,` = B, M = X, N = Y, U/O = L/R,
 Right Ctrl or keypad Enter = Start, Backspace = Select. So two people can
@@ -242,7 +250,7 @@ win/loss record; the NES emulator keeps battery-backed cartridge saves
 
 `<game>` is the file name without extension (`sumo`, `nes`). Delete the
 folder to reset. Games save on change and when you quit normally (close the
-window or press Esc).
+window or hold Esc).
 
 ### Precompiling (AOT)
 
@@ -269,10 +277,18 @@ frames=2400 presented=2400 size=256x240
 video_fnv32=fd15bbc8 audio_fnv32=56acada3 audio_frames=1916721
 ```
 
-Input script syntax: comma-separated `FROM-TO:BUTTON+BUTTON`, frame numbers
-starting at 0, ranges inclusive (`FROM:...` alone means a single frame).
-Buttons: `A B X Y L R SELECT START UP DOWN LEFT RIGHT` (case-insensitive).
-Scripts drive player 1.
+Input script syntax: comma-separated `FROM-TO:ACTION`, frame numbers
+starting at 0, ranges inclusive (`N:...` alone means a single frame). Actions:
+`A+B+START` (player 1's pad: `A B X Y L R SELECT START UP DOWN LEFT RIGHT`),
+`"text"` (typed text), `KEY(ShiftLeft+ArrowLeft)` (raw keys),
+`PTR(x,y)` / `PTR(x,y,L+R)` (mouse position and buttons), `MOVE(dx,dy)`,
+`WHEEL(x,y)` and `GP0(B0+A1=0.5)` (raw gamepad). Details in the
+[ABI spec](/docs/abi#scripted-input-headless).
+
+```sh
+$R build/doom.wasm --asset wad=roms/freedoom2.wad --param "args=-warp 1" --headless 520 \
+   --input '40-200:KEY(ControlLeft+ArrowUp),300-400:MOVE(12,0),470:KEY(Escape)'
+```
 
 The Node runner accepts the same headless options (plus `--param`,
 `--allow-net`, `--realtime`):

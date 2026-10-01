@@ -26,6 +26,18 @@ mod imports {
         pub fn input_pad(player: u32) -> u32;
         /// UTF-8 text typed since the previous frame (backspace = \b, enter = \n), stable within a frame. Returns its length (copied only if length <= cap; cap = 0 queries), or -1 if the runner has no keyboard.
         pub fn text_input(dst: *mut u8, cap: u32) -> i32;
+        /// GASM_INPUT_* flags: KEYS_RAW (the runner stops mapping the keyboard to pads; gamepads still map), POINTER_HIDDEN (hide the system cursor over the game), POINTER_LOCKED (capture the pointer for relative motion; best effort, the browser needs a click).
+        pub fn input_mode(flags: u32);
+        /// Held keys as a bitset indexed by GASM_KEY_* (bit k of byte k/8), stable within a frame. Copies min(len, GASM_KEY_STATE_BYTES) bytes; returns GASM_KEY_STATE_BYTES, or -1 if the runner has no keyboard.
+        pub fn key_state(dst: *mut u8, len: u32) -> i32;
+        /// Key presses and releases since the previous frame, in order: 4 bytes each (u16 GASM_KEY_* code, u8 1 = down / 0 = up, u8 0). Returns the byte length (copied only if <= cap; cap = 0 queries), or -1 if the runner has no keyboard.
+        pub fn key_events(dst: *mut u8, cap: u32) -> i32;
+        /// Mouse/touch state for this frame as GASM_POINTER_BYTES bytes (see ABI.md: position in drawable and frame pixels, relative motion, wheel, buttons held/pressed/released, flags). Copied only if cap is large enough; returns GASM_POINTER_BYTES, or -1 if the runner has no pointer.
+        pub fn pointer(dst: *mut u8, cap: u32) -> i32;
+        /// Raw gamepad/joystick in slot 0-3 (connection order) as GASM_GAMEPAD_BYTES bytes: u32 flags (GASM_GAMEPAD_CONNECTED, GASM_GAMEPAD_STANDARD), u32 button count, u32 axis count, f32 buttons[32] (0-1), f32 axes[16] (-1..1). Standard mapping: W3C button and axis order. Copied only if cap is large enough; returns GASM_GAMEPAD_BYTES, or -1 if slot > 3 or the runner has no gamepad support.
+        pub fn gamepad(slot: u32, dst: *mut u8, cap: u32) -> i32;
+        /// Device name of the gamepad in slot: its length (copied only if <= cap), or -1 if the slot is empty.
+        pub fn gamepad_name(slot: u32, dst: *mut u8, cap: u32) -> i32;
         /// Size in bytes of asset name, or -1 if it does not exist.
         pub fn asset_size(name: *const u8, name_len: u32) -> i32;
         /// Copy up to cap bytes of asset name into dst. Bytes copied, or -1 if missing.
@@ -134,6 +146,12 @@ mod imports {
         /// 0 if deleted, -1 if it did not exist.
         #[link_name = "delete"]
         pub fn storage_delete(key: *const u8, key_len: u32) -> i32;
+        /// Number of keys in the namespace.
+        #[link_name = "count"]
+        pub fn storage_count() -> u32;
+        /// Key index (0 .. count-1, sorted): its length (copied only if <= cap; cap = 0 queries), or -1 if out of range.
+        #[link_name = "key"]
+        pub fn storage_key(index: u32, dst: *mut u8, cap: u32) -> i32;
     }
 
     #[link(wasm_import_module = "wasi_snapshot_preview1")]
@@ -148,3 +166,132 @@ pub use imports::*;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub use crate::native::abi::*;
+
+/// Physical keys (W3C KeyboardEvent.code names; layout-independent). The third column is the W3C name.
+pub mod keys {
+    pub const ESCAPE: u32 = 1;
+    pub const F1: u32 = 2;
+    pub const F2: u32 = 3;
+    pub const F3: u32 = 4;
+    pub const F4: u32 = 5;
+    pub const F5: u32 = 6;
+    pub const F6: u32 = 7;
+    pub const F7: u32 = 8;
+    pub const F8: u32 = 9;
+    pub const F9: u32 = 10;
+    pub const F10: u32 = 11;
+    pub const F11: u32 = 12;
+    pub const F12: u32 = 13;
+    pub const BACKQUOTE: u32 = 14;
+    pub const DIGIT0: u32 = 15;
+    pub const DIGIT1: u32 = 16;
+    pub const DIGIT2: u32 = 17;
+    pub const DIGIT3: u32 = 18;
+    pub const DIGIT4: u32 = 19;
+    pub const DIGIT5: u32 = 20;
+    pub const DIGIT6: u32 = 21;
+    pub const DIGIT7: u32 = 22;
+    pub const DIGIT8: u32 = 23;
+    pub const DIGIT9: u32 = 24;
+    pub const MINUS: u32 = 25;
+    pub const EQUAL: u32 = 26;
+    pub const BACKSPACE: u32 = 27;
+    pub const TAB: u32 = 28;
+    pub const KEY_A: u32 = 29;
+    pub const KEY_B: u32 = 30;
+    pub const KEY_C: u32 = 31;
+    pub const KEY_D: u32 = 32;
+    pub const KEY_E: u32 = 33;
+    pub const KEY_F: u32 = 34;
+    pub const KEY_G: u32 = 35;
+    pub const KEY_H: u32 = 36;
+    pub const KEY_I: u32 = 37;
+    pub const KEY_J: u32 = 38;
+    pub const KEY_K: u32 = 39;
+    pub const KEY_L: u32 = 40;
+    pub const KEY_M: u32 = 41;
+    pub const KEY_N: u32 = 42;
+    pub const KEY_O: u32 = 43;
+    pub const KEY_P: u32 = 44;
+    pub const KEY_Q: u32 = 45;
+    pub const KEY_R: u32 = 46;
+    pub const KEY_S: u32 = 47;
+    pub const KEY_T: u32 = 48;
+    pub const KEY_U: u32 = 49;
+    pub const KEY_V: u32 = 50;
+    pub const KEY_W: u32 = 51;
+    pub const KEY_X: u32 = 52;
+    pub const KEY_Y: u32 = 53;
+    pub const KEY_Z: u32 = 54;
+    pub const BRACKET_LEFT: u32 = 55;
+    pub const BRACKET_RIGHT: u32 = 56;
+    pub const BACKSLASH: u32 = 57;
+    pub const CAPS_LOCK: u32 = 58;
+    pub const SEMICOLON: u32 = 59;
+    pub const QUOTE: u32 = 60;
+    pub const ENTER: u32 = 61;
+    pub const SHIFT_LEFT: u32 = 62;
+    pub const INTL_BACKSLASH: u32 = 63;
+    pub const COMMA: u32 = 64;
+    pub const PERIOD: u32 = 65;
+    pub const SLASH: u32 = 66;
+    pub const SHIFT_RIGHT: u32 = 67;
+    pub const CONTROL_LEFT: u32 = 68;
+    pub const META_LEFT: u32 = 69;
+    pub const ALT_LEFT: u32 = 70;
+    pub const SPACE: u32 = 71;
+    pub const ALT_RIGHT: u32 = 72;
+    pub const META_RIGHT: u32 = 73;
+    pub const CONTEXT_MENU: u32 = 74;
+    pub const CONTROL_RIGHT: u32 = 75;
+    pub const PRINT_SCREEN: u32 = 76;
+    pub const SCROLL_LOCK: u32 = 77;
+    pub const PAUSE: u32 = 78;
+    pub const INSERT: u32 = 79;
+    pub const HOME: u32 = 80;
+    pub const PAGE_UP: u32 = 81;
+    pub const DELETE: u32 = 82;
+    pub const END: u32 = 83;
+    pub const PAGE_DOWN: u32 = 84;
+    pub const ARROW_UP: u32 = 85;
+    pub const ARROW_LEFT: u32 = 86;
+    pub const ARROW_DOWN: u32 = 87;
+    pub const ARROW_RIGHT: u32 = 88;
+    pub const NUM_LOCK: u32 = 89;
+    pub const NUMPAD_DIVIDE: u32 = 90;
+    pub const NUMPAD_MULTIPLY: u32 = 91;
+    pub const NUMPAD_SUBTRACT: u32 = 92;
+    pub const NUMPAD_ADD: u32 = 93;
+    pub const NUMPAD_ENTER: u32 = 94;
+    pub const NUMPAD_DECIMAL: u32 = 95;
+    pub const NUMPAD0: u32 = 96;
+    pub const NUMPAD1: u32 = 97;
+    pub const NUMPAD2: u32 = 98;
+    pub const NUMPAD3: u32 = 99;
+    pub const NUMPAD4: u32 = 100;
+    pub const NUMPAD5: u32 = 101;
+    pub const NUMPAD6: u32 = 102;
+    pub const NUMPAD7: u32 = 103;
+    pub const NUMPAD8: u32 = 104;
+    pub const NUMPAD9: u32 = 105;
+    pub const NUMPAD_EQUAL: u32 = 106;
+    pub const NUMPAD_COMMA: u32 = 107;
+    pub const INTL_RO: u32 = 108;
+    pub const INTL_YEN: u32 = 109;
+    pub const F13: u32 = 110;
+    pub const F14: u32 = 111;
+    pub const F15: u32 = 112;
+    pub const F16: u32 = 113;
+    pub const F17: u32 = 114;
+    pub const F18: u32 = 115;
+    pub const F19: u32 = 116;
+    pub const F20: u32 = 117;
+    pub const F21: u32 = 118;
+    pub const F22: u32 = 119;
+    pub const F23: u32 = 120;
+    pub const F24: u32 = 121;
+    /// W3C names by code (index 0 is unused).
+    pub const NAMES: [&str; 122] = [
+        "", "Escape", "F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8", "F9", "F10", "F11", "F12", "Backquote", "Digit0", "Digit1", "Digit2", "Digit3", "Digit4", "Digit5", "Digit6", "Digit7", "Digit8", "Digit9", "Minus", "Equal", "Backspace", "Tab", "KeyA", "KeyB", "KeyC", "KeyD", "KeyE", "KeyF", "KeyG", "KeyH", "KeyI", "KeyJ", "KeyK", "KeyL", "KeyM", "KeyN", "KeyO", "KeyP", "KeyQ", "KeyR", "KeyS", "KeyT", "KeyU", "KeyV", "KeyW", "KeyX", "KeyY", "KeyZ", "BracketLeft", "BracketRight", "Backslash", "CapsLock", "Semicolon", "Quote", "Enter", "ShiftLeft", "IntlBackslash", "Comma", "Period", "Slash", "ShiftRight", "ControlLeft", "MetaLeft", "AltLeft", "Space", "AltRight", "MetaRight", "ContextMenu", "ControlRight", "PrintScreen", "ScrollLock", "Pause", "Insert", "Home", "PageUp", "Delete", "End", "PageDown", "ArrowUp", "ArrowLeft", "ArrowDown", "ArrowRight", "NumLock", "NumpadDivide", "NumpadMultiply", "NumpadSubtract", "NumpadAdd", "NumpadEnter", "NumpadDecimal", "Numpad0", "Numpad1", "Numpad2", "Numpad3", "Numpad4", "Numpad5", "Numpad6", "Numpad7", "Numpad8", "Numpad9", "NumpadEqual", "NumpadComma", "IntlRo", "IntlYen", "F13", "F14", "F15", "F16", "F17", "F18", "F19", "F20", "F21", "F22", "F23", "F24",
+    ];
+}

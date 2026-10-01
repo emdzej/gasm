@@ -16,6 +16,7 @@ struct State {
     storage: Vec<(String, Vec<u8>)>,
     pads: [u32; 4],
     text: String,
+    input_mode: u32,
     channels: u32,
     hashing: bool,
     video_hash: u32,
@@ -34,6 +35,7 @@ static STATE: Mutex<State> = Mutex::new(State {
     storage: Vec::new(),
     pads: [0; 4],
     text: String::new(),
+    input_mode: 0,
     channels: 2,
     hashing: true,
     video_hash: FNV_INIT,
@@ -157,6 +159,48 @@ pub mod abi {
     pub unsafe fn input_pad(player: u32) -> u32 {
         with(|s| s.pads.get(player as usize).copied().unwrap_or(0))
     }
+    // raw input: like a headless run with an empty script (keyboard and pointer
+    // present, nothing pressed, pointer at 0,0 in a 1280x720 drawable, no gamepads)
+    pub unsafe fn input_mode(flags: u32) {
+        with(|s| s.input_mode = flags & 7);
+    }
+    pub unsafe fn key_state(dst: *mut u8, len: u32) -> i32 {
+        let n = (len as usize).min(32);
+        unsafe { std::ptr::write_bytes(dst, 0, n) };
+        32
+    }
+    pub unsafe fn key_events(_: *mut u8, _: u32) -> i32 {
+        0
+    }
+    pub unsafe fn pointer(dst: *mut u8, cap: u32) -> i32 {
+        if cap >= 48 {
+            let (fw, fh, mode) = with(|s| (s.size.0 as f64, s.size.1 as f64, s.input_mode));
+            let (fx, fy) = if fw > 0.0 && fh > 0.0 {
+                let scale = (1280.0 / fw).min(720.0 / fh);
+                ((-(1280.0 - fw * scale) / 2.0 / scale) as f32, (-(720.0 - fh * scale) / 2.0 / scale) as f32)
+            } else {
+                (0.0, 0.0)
+            };
+            let mut b = [0u8; 48];
+            b[8..12].copy_from_slice(&fx.to_le_bytes());
+            b[12..16].copy_from_slice(&fy.to_le_bytes());
+            b[44..48].copy_from_slice(&(1 | (mode & 6)).to_le_bytes());
+            unsafe { std::ptr::copy_nonoverlapping(b.as_ptr(), dst, 48) };
+        }
+        48
+    }
+    pub unsafe fn gamepad(slot: u32, dst: *mut u8, cap: u32) -> i32 {
+        if slot > 3 {
+            return -1;
+        }
+        if cap >= 204 {
+            unsafe { std::ptr::write_bytes(dst, 0, 204) };
+        }
+        204
+    }
+    pub unsafe fn gamepad_name(_: u32, _: *mut u8, _: u32) -> i32 {
+        -1
+    }
     pub unsafe fn text_input(dst: *mut u8, cap: u32) -> i32 {
         with(|s| unsafe { copy_out(s.text.as_bytes(), dst, cap) })
     }
@@ -216,6 +260,19 @@ pub mod abi {
             s.storage.retain(|e| e.0 != k);
             s.storage.push((k, v));
             0
+        })
+    }
+    pub unsafe fn storage_count() -> u32 {
+        with(|s| s.storage.len() as u32)
+    }
+    pub unsafe fn storage_key(index: u32, dst: *mut u8, cap: u32) -> i32 {
+        with(|s| {
+            let mut keys: Vec<&str> = s.storage.iter().map(|e| e.0.as_str()).collect();
+            keys.sort();
+            match keys.get(index as usize) {
+                Some(k) => unsafe { copy_out(k.as_bytes(), dst, cap) },
+                None => -1,
+            }
         })
     }
     pub unsafe fn storage_delete(key: *const u8, len: u32) -> i32 {

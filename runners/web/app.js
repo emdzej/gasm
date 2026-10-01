@@ -3,6 +3,7 @@
 import {
   GasmHost, IdbStorage, MemoryStorage, ProcExit, Resampler, AssetTable, bytesSource,
   directoryHandleEntries, fileListEntries, preloadAssets, DEFAULT_KEYMAP, parseKeymap, keyboardPads,
+  BrowserInput, INPUT_KEYS_RAW,
 } from './gasm-host.js';
 import { GasmWorker } from './gasm-worker.js';
 import { WebGpuGfx } from './webgpu-gfx.js';
@@ -12,7 +13,7 @@ import { WebGpuGfx } from './webgpu-gfx.js';
 const ROOT = new URL(document.querySelector('meta[name=gasm-root]')?.content ?? '../../', import.meta.url);
 const GAMES = {
   'sumo.wasm': '3D sumo (2 players)', 'nes.wasm': 'NES (tetanes-core)', 'doom.wasm': 'DOOM (doomgeneric)',
-  'triangle.wasm': 'GPU triangle', 'textured.wasm': 'GPU textures (test)', 'test-pattern.wasm': 'test pattern (C)',
+  'triangle.wasm': 'GPU triangle', 'textured.wasm': 'GPU textures (test)', 'inputtest.wasm': 'input tester', 'test-pattern.wasm': 'test pattern (C)',
   'assetcheck.wasm': 'asset check (test)',
 };
 // Games that take a content file from roms/ (or an opened/dropped file) as an asset.
@@ -32,6 +33,7 @@ function freshCanvas() {
   canvas.replaceWith(c);
   canvas = c;
   ctx = null;
+  rawInput.setElement(c);
   return c;
 }
 const log = (m) => { console.log(m); $('log').textContent = m; };
@@ -51,10 +53,18 @@ function loadKeymap(text) {
 }
 const held = new Set();
 const typing = (e) => e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement;
+// Raw keyboard, pointer and gamepads for the guest (gasm-host.js BrowserInput).
+const rawInput = new BrowserInput(canvas).attach();
+// Escape: a tap goes to the game; holding it stops the game.
+let escDown = 0;
+addEventListener('keydown', (e) => { if (e.code === 'Escape' && !e.repeat) escDown = performance.now(); });
+addEventListener('keyup', (e) => { if (e.code === 'Escape') escDown = 0; });
 // Text for text_input: characters typed since the last frame (also for keys bound to pads).
 let typed = '';
 addEventListener('keydown', (e) => {
   if (typing(e)) return;
+  // a game reading the raw keyboard gets every key (Space doesn't scroll, F5 doesn't reload)
+  if (running && inputMode() & INPUT_KEYS_RAW && e.code !== 'Escape') e.preventDefault();
   if (e.key === 'Enter') typed += '\n';
   else if (e.key === 'Backspace') typed += '\b';
   else if (e.key.length === 1 && !e.ctrlKey && !e.metaKey) typed += e.key;
@@ -66,6 +76,7 @@ const takeTyped = () => { const t = typed; typed = ''; return t; };
 addEventListener('keyup', (e) => { held.delete(e.code); });
 addEventListener('blur', () => held.clear());
 
+const inputMode = () => (worker ?? host)?.inputMode ?? 0;
 function readPads() {
   const pads = [0, 0, 0, 0];
   let i = 0;
@@ -78,6 +89,7 @@ function readPads() {
     if (y < -0.5) m |= 1 << 8;  if (y > 0.5) m |= 1 << 9;
     pads[i++] |= m;
   }
+  if (inputMode() & INPUT_KEYS_RAW) return pads;   // the guest reads the keyboard itself
   const kb = keyboardPads(keymap, held, i);
   return pads.map((p, k) => p | kb[k]);
 }
@@ -175,6 +187,11 @@ let acc = 0, last = 0, fpsN = 0, fpsT = 0;
 function tick(now) {
   rafId = requestAnimationFrame(tick);
   if (!running) return;
+  if (escDown && now - escDown >= 1000) {   // Escape held: stop (a tap went to the game)
+    escDown = 0; running = false;
+    host?.exit(); worker?.exit();
+    return log('stopped (Escape held)');
+  }
   const rate = (worker ?? host).frameRate;
   const period = 1000 / rate;
   acc += Math.min(now - last, 100);   // clamp after tab switches
@@ -187,10 +204,12 @@ function tick(now) {
       inflight = true;
       acc -= due * period;
       const texts = Array.from({ length: due }, (_, k) => (k === 0 ? takeTyped() : ''));
-      worker.frames(Array.from({ length: due }, () => pads), true, { texts, size: canvasSize() }).then((r) => {
+      const inputs = Array.from({ length: due }, (_, k) => rawInput.frame(k === 0));
+      worker.frames(Array.from({ length: due }, () => pads), true, { texts, inputs, size: canvasSize() }).then((r) => {
         inflight = false;
         fpsN += due;
         if (r.frame) present(r.frame.rgba, r.frame.width, r.frame.height);
+        rawInput.setMode(worker?.inputMode ?? 0);
       }, stopped);
     }
   } else {
@@ -199,6 +218,7 @@ function tick(now) {
       const pads = readPads();
       host.getPad = (p) => pads[p] ?? 0;
       host.text = steps === 0 ? takeTyped() : '';
+      host.input = rawInput.frame(steps === 0);
       host.showFrame = steps === due - 1;
       if (gpu) gpu.used = false;
       try { host.frame(); } catch (e) { return stopped(e); }
@@ -206,6 +226,7 @@ function tick(now) {
     }
     // A gfx canvas can't take 2D frames: blit video_present output with WebGPU instead.
     if (gpu && !gpu.used && host.width && host.framesPresented !== presented) gpu.presentVideo(host.rgba, host.width, host.height);
+    rawInput.setMode(host.inputMode);
   }
   if (acc > period * 4) acc = 0; // fell far behind: resync
   if (now - fpsT >= 1000) { $('fps').textContent = `${fpsN} fps${worker ? ' (worker)' : ''}`; fpsN = 0; fpsT = now; }

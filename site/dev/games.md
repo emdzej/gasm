@@ -130,11 +130,42 @@ if pad.held(Buttons::A | Buttons::B) { … }   // any of
 
 Buttons are positional: `A` is the east face button, `B` south, `X` north, `Y` west.
 
+**Raw devices,** when pads aren't enough (keyboard games, mouse, analog sticks):
+
+```rust
+use gasm::{input, keys};
+input::set_mode(input::KEYS_RAW | input::POINTER_HIDDEN);   // no keymap pads, game draws the cursor
+let k = input::keys().unwrap_or_default();
+if k.held(keys::SHIFT_LEFT) && k.held(keys::ARROW_LEFT) { … }    // combinations just work
+for e in input::key_events().unwrap_or_default() { … }         // presses/releases in order
+if let Some(p) = input::pointer() {
+    if p.pressed & input::MOUSE_LEFT != 0 { click(p.frame_x, p.frame_y) }   // frame pixels (2D)
+    look(p.dx, p.dy);                                          // with POINTER_LOCKED: mouselook
+}
+if let Some(g) = input::gamepad(0) && g.connected && g.standard {
+    steer(g.axes[0]); throttle(g.buttons[7]);                  // W3C order, analog values
+}
+```
+
+- `KEYS_RAW` stops the runner's keymap from turning keys into pads, so a key
+  doesn't arrive twice. Gamepads keep feeding the pads.
+- Keys are physical (`KeyA` is the same key on QWERTY and AZERTY); use
+  `text_input` for characters.
+- `POINTER_LOCKED` captures the mouse for relative motion. Browsers only lock
+  on a click, so check `p.locked()`. A tap of Escape reaches the game; holding
+  it quits.
+- Joysticks, wheels and other non-standard devices come in their own button
+  and axis order (`standard == false`); `input::gamepad_name(slot)` names them.
+- [`guests/inputtest`](https://github.com/emdzej/gasm/blob/main/guests/inputtest/src/lib.rs)
+  shows everything a runner reports.
+
 For names and chat, `gasm::text_input()` returns the text typed since the last
 frame (`'\u{8}'` = backspace, `'\n'` = enter), or `None` if the runner has no
 keyboard. Keys bound to pads produce text too, so read it only while a text
 field is focused. Headless runs type it from the input script:
-`--input '120:"ANNA\n"'`.
+`--input '120:"ANNA\n"'`, and the raw devices too:
+`KEY(ControlLeft+KeyS)`, `PTR(400,300,L)`, `MOVE(5,0)`, `WHEEL(0,1)`,
+`GP0(B0+A1=0.5)` (see the [ABI spec](/docs/abi#scripted-input-headless)).
 
 ### 2D video and audio
 
