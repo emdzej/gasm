@@ -119,7 +119,15 @@ let rom = gasm::asset("level1");     // Option<Vec<u8>>: --asset level1=path
 let all = gasm::asset_names();       // Vec<String>, sorted: discover a folder's contents
 gasm::exit(0);                       // end the game (WASI proc_exit)
 if gasm::has("gasm:gfx.destroy") { … }   // does this runner provide an import?
+gasm::title!("My Game");             // built-in name (custom section), at the top level
+gasm::set_title("Level 2");          // the window / tab title (runners add "— gasm")
+gasm::video_set_aspect(4, 3);        // show 320x200 frames at 4:3; false on older runners
 ```
+
+`set_title` and `video_set_aspect` probe for themselves and do nothing on runners
+without them; `video_set_aspect` returns `false` there, so a game that cares
+can correct the aspect itself (DOOM and ScummVM scale to 640×480 / 320×240 on
+older runners).
 
 `gasm::has` takes a module (`"gasm:net"`) or a function (`"gasm.asset_size64"`).
 Calling an import the runner lacks traps, so probe imports that are newer than
@@ -443,7 +451,9 @@ With C++, add `-fno-exceptions`. Zig (`wasm32-freestanding`) should work the
 same way but hasn't been tried here.
 
 The header has the same features as the Rust crate: `gasm_has_str("gasm:gfx.destroy")`
-probes for an import, `gasm_gfx_destroy(handle)` frees a GPU object,
+probes for an import, `GASM_TITLE("My Game");` (file scope) gives the module
+its built-in name, `gasm_set_title_str("Level 2")` names the window and
+`gasm_video_aspect(4, 3)` shows frames at 4:3 (returns 0 on runners without it), `gasm_gfx_destroy(handle)` frees a GPU object,
 `gasm_storage_set` returns `0` or a `GASM_STORAGE_ERR_*` code (`_KEY`, `_SIZE`,
 `_QUOTA`, `_IO`), and the `GASM_POINTER_OFF_*` and `GASM_GAMEPAD_OFF_*`
 constants give the field offsets in the bytes `gasm_pointer` and

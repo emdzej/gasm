@@ -1,12 +1,13 @@
 // Browser runner: canvas (2D or WebGPU) + AudioWorklet + keyboard/Gamepad API
 // + WebSocket networking around GasmHost.
 import {
-  GasmHost, IdbStorage, MemoryStorage, ProcExit, Resampler, AssetTable, bytesSource,
+  GasmHost, staticTitle, IdbStorage, MemoryStorage, ProcExit, Resampler, AssetTable, bytesSource,
   directoryHandleEntries, fileListEntries, preloadAssets, DEFAULT_KEYMAP, parseKeymap, keyboardPads,
   BrowserInput, INPUT_KEYS_RAW, gamepadPads, normalizeCode,
 } from './gasm-host.js';
 import { GasmWorker } from './gasm-worker.js';
 import { WebGpuGfx } from './webgpu-gfx.js';
+import { FILTERS, GlPresenter } from './gasm-present.js';
 
 // Where build/*.wasm and roms/ live, relative to this page: the repo root in
 // development (`make web`), the page's own directory on the website.
@@ -33,18 +34,22 @@ const FOLDER_GAMES = {
 const contentGame = (name) => Object.keys(CONTENT).find((g) => name.toLowerCase().endsWith(CONTENT[g].ext));
 
 const $ = (id) => document.getElementById(id);
-// A canvas can only ever have one context type, so each game gets a fresh one.
-let canvas = $('screen'), ctx = null;
+// A canvas can only ever have one context type, so each game gets a fresh one
+// (and a 2D game gets a new one when it switches between canvas 2D and WebGL).
+let canvas = $('screen'), ctx = null, presenter = null;
 function freshCanvas() {
   const c = document.createElement('canvas');
   c.id = 'screen';
   canvas.replaceWith(c);
   canvas = c;
-  ctx = null;
+  ctx = presenter = null;
   rawInput.setElement(c);
   return c;
 }
 const log = (m) => { console.log(m); $('log').textContent = m; };
+// The tab title: the game's (gasm.set_title, else its file name), then ours.
+let gameName = '';
+const showTitle = (t) => { document.title = `${t ?? gameName} — gasm`; };
 
 // ---- input -----------------------------------------------------------------
 // Keyboard layout: the shared keymap format (gasm-host.js DEFAULT_KEYMAP), editable
@@ -171,18 +176,49 @@ const canvasSize = () => [Math.round(canvas.clientWidth * (devicePixelRatio || 1
                           Math.round(canvas.clientHeight * (devicePixelRatio || 1)) || canvas.height];
 let folder = null; // { name, entries: [[relative name, File]] } from "open folder..."
 
+// How 2D frames are shown (gasm-present.js): ?filter= and ?integer, else the
+// header controls, kept in localStorage. nearest without integer scaling is a
+// canvas 2D scaled up by CSS; everything else draws with WebGL 2 at display size.
+const view = {
+  filter: FILTERS.includes(new URLSearchParams(location.search).get('filter'))
+    ? new URLSearchParams(location.search).get('filter') : localStorage.getItem('gasm.filter') ?? 'sharp',
+  integerScale: new URLSearchParams(location.search).has('integer') || localStorage.getItem('gasm.integer') === '1',
+};
+const useGl = () => view.filter !== 'nearest' || view.integerScale;
+
 // 2D frames: remember the latest (catch-up frames would be drawn and overwritten at once)
-function present(rgba, w, h) { if (!gpu) frame2d = [rgba, w, h]; }
+let shown = null;   // the frame on screen, redrawn when the view settings change
+function present(rgba, w, h, aspect = null) { if (!gpu) frame2d = [rgba, w, h, aspect]; }
 function draw2d() {
   if (!frame2d) return;
-  const [rgba, w, h] = frame2d;
+  const [rgba, w, h, aspect] = shown = frame2d;
   frame2d = null;
-  ctx ??= canvas.getContext('2d');
-  if (canvas.width !== w || canvas.height !== h) {
-    canvas.width = w; canvas.height = h;
-    canvas.style.aspectRatio = `${w} / ${h}`;
+  // the canvas box has the frame's display aspect (video_set_aspect), so the CSS
+  // scaling of the canvas 2D path stretches non-square pixels too
+  canvas.style.setProperty('--ar', aspect ? aspect[0] / aspect[1] : w / h);
+  if (useGl() && !ctx) {
+    presenter ??= GlPresenter.create(canvas);
+    if (presenter) {
+      canvas.classList.add('gl');
+      rawInput.integerScale = view.integerScale;
+      return presenter.draw(rgba, w, h, canvasSize(), { ...view, aspect });
+    }
+    log('WebGL 2 unavailable: showing square pixels');
+    view.filter = $('filter').value = 'nearest'; view.integerScale = $('integer').checked = false;
   }
+  if (presenter) { freshCanvas(); }   // was WebGL: canvas 2D needs a new canvas
+  rawInput.integerScale = false;
+  ctx ??= canvas.getContext('2d');
+  if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
   ctx.putImageData(new ImageData(rgba, w, h), 0, 0);
+}
+/** The view settings changed: switch canvases if needed and redraw the frame on screen. */
+function viewChanged() {
+  localStorage.setItem('gasm.filter', view.filter);
+  localStorage.setItem('gasm.integer', view.integerScale ? '1' : '0');
+  if (gpu) return;                       // gfx games: no filters
+  if (useGl() ? ctx : presenter) freshCanvas();
+  if (shown && !frame2d) { frame2d = shown; draw2d(); }
 }
 
 function onAudio(samples, rate, channels) {
@@ -205,7 +241,7 @@ async function stopGame() {
   cancelAnimationFrame(rafId);
   running = false;
   const h = host, w = worker, g = gpu;
-  host = worker = gpu = null; inflight = false; frame2d = null;
+  host = worker = gpu = null; inflight = false; frame2d = shown = null;
   await h?.shutdown();
   await w?.exit();
   g?.device.destroy();
@@ -236,7 +272,7 @@ function tick(now) {
         if (w !== worker) return;      // a newer game started meanwhile
         inflight = false;
         fpsN += due;
-        if (r.frame) { present(r.frame.rgba, r.frame.width, r.frame.height); draw2d(); }
+        if (r.frame) { present(r.frame.rgba, r.frame.width, r.frame.height, r.frame.aspect); draw2d(); }
         rawInput.setMode(w.inputMode);
       }, stopped);
     }
@@ -310,7 +346,7 @@ async function start({ romBytes } = {}) {
     } catch (e) { return log(`${e.message}: open a folder with a game instead`); }
   }
   // Launch parameters: URL query plus the relay/room fields.
-  const skip = ['game', 'autostart', 'wasm', 'worker', 'opfs', 'prefix', 'hashframes', 'rom'];
+  const skip = ['game', 'autostart', 'wasm', 'worker', 'opfs', 'prefix', 'hashframes', 'rom', 'filter', 'integer'];
   const params = Object.fromEntries([...url].filter(([k]) => !skip.includes(k)));
   if (fg && params.args === undefined) params.args = folder || url.has('opfs') ? fg.folderArgs : fg.args;
   if ($('relay').value.trim()) { params.relay = $('relay').value.trim(); params.room = $('room').value.trim() || 'sumo'; }
@@ -320,6 +356,8 @@ async function start({ romBytes } = {}) {
     const module = await WebAssembly.compile(bytes);
     if (stale()) return;
     const usesGfx = WebAssembly.Module.imports(module).some((i) => i.module === 'gasm:gfx');
+    gameName = staticTitle(module) ?? game.split('/').pop().replace(/\.wasm$/, '');
+    showTitle(null);
     // gfx guests go to the worker only if the canvas can be transferred (OffscreenCanvas);
     // the worker then needs WebGPU too, otherwise we fall back to the main thread below.
     const offscreenOk = typeof HTMLCanvasElement !== 'undefined' && 'transferControlToOffscreen' in HTMLCanvasElement.prototype;
@@ -336,7 +374,7 @@ async function start({ romBytes } = {}) {
       if (folder) specs.push({ kind: 'files', entries: folder.entries, prefix });
       const start = (canvasOpt) => GasmWorker.start({
         wasm: module, assets: specs, params, storage: namespace, allowNet: true, keyboard: true,
-        hashing: hashFrames > 0, virtualTime: hashFrames > 0, onLog: log, onAudio, ...canvasOpt,
+        hashing: hashFrames > 0, virtualTime: hashFrames > 0, onLog: log, onAudio, onTitle: showTitle, ...canvasOpt,
       });
       if (usesGfx) {
         const size = canvasSize();
@@ -368,7 +406,7 @@ async function start({ romBytes } = {}) {
         log(`storage unavailable (${e.message}); saves won't persist`);
         return new MemoryStorage();
       });
-      const h = new GasmHost({ assets, params, gfx, storage, allowNet: true, onPresent: present, onAudio, onLog: log,
+      const h = new GasmHost({ assets, params, gfx, storage, allowNet: true, onPresent: present, onAudio, onLog: log, onTitle: showTitle,
                                virtualTime: hashFrames > 0 });
       h.text = '';     // the page has a keyboard
       if (stale()) { h.shutdown(); gfx?.device.destroy(); return; }
@@ -455,6 +493,11 @@ $('folderinput').onchange = (e) => {
   folderChosen();
 };
 $('worker').checked = new URLSearchParams(location.search).has('worker');
+for (const f of FILTERS) $('filter').add(new Option(f, f));
+$('filter').value = view.filter;
+$('integer').checked = view.integerScale;
+$('filter').onchange = () => { view.filter = $('filter').value; viewChanged(); };
+$('integer').onchange = () => { view.integerScale = $('integer').checked; viewChanged(); };
 
 // An opened or dropped content file picks its game by extension (.nes, .wad).
 async function openContent(f) {

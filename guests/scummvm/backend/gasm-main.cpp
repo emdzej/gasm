@@ -44,6 +44,8 @@ extern "C" int gasm_loop_init(void) {
 	return 0;
 }
 
+GASM_TITLE("ScummVM");   // until a game starts (setWindowCaption)
+
 extern "C" int gasm_main(void) {
 	return scummvm_main(argc, argv);
 }

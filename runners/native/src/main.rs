@@ -3,6 +3,7 @@
 
 use gasm_host::host::{self, LoadOptions};
 use gasm_host::session::Session;
+use gasm_host::present::{Filter, Present};
 use gasm_host::{assets, headless, script, storage};
 
 use std::collections::HashMap;
@@ -27,6 +28,10 @@ options:
                            headless runs use memory unless this is given)
   --storage-id <id>        storage namespace (default: the game file's name)
   --window <W>x<H>         initial window size in logical pixels (default 960x720)
+  --filter <name>          how 2D frames are scaled up: sharp (default; even pixels at any size),
+                           nearest (plain pixel doubling), xbr (smooth edges for pixel art),
+                           fsr (AMD FSR 1, for rendered or dithered content), crt (scanlines)
+  --integer-scale          scale 2D frames by whole multiples only (black border around)
   --keymap <file>          keyboard layout (default: <data dir>/gasm/keymap.txt if it exists,
                            else the built-in two-player layout below)
   --print-keymap           print the active keyboard layout (a starting point for --keymap) and exit
@@ -37,6 +42,9 @@ options:
   --call-timeout <secs>    trap a guest call (init, a frame) that runs longer (default 30, 0 = never)
   --headless <frames>      run N frames without window/audio, print hashes
   --screenshot <out.png>   (headless) write the last frame as PNG (renders gfx on the GPU)
+  --screenshot-filtered <out.png>
+                           (headless) write the last frame as the window shows it: --filter and
+                           --integer-scale at --window size, in pixels
   --input <script>         (headless) scripted input, FRAMES:ACTION,... with FRAMES = N or FROM-TO:
                            A+B+START (pad 1: A B X Y L R SELECT START UP DOWN LEFT RIGHT),
                            \"text\" (text_input; escapes \\n \\b), KEY(ShiftLeft+ArrowLeft) (raw keys),
@@ -63,10 +71,12 @@ struct Args {
     storage_dir: Option<String>,
     storage_id: Option<String>,
     window: (u32, u32),
+    present: Present,
     keymap: Option<String>,
     print_keymap: bool,
     headless: Option<u64>,
     screenshot: Option<String>,
+    screenshot_filtered: Option<String>,
     compile: Option<String>,
     /// headless scripted input
     script: script::Script,
@@ -88,10 +98,12 @@ fn parse_args() -> Result<Args, String> {
         storage_dir: None,
         storage_id: None,
         window: (960, 720),
+        present: Present::default(),
         keymap: None,
         print_keymap: false,
         headless: None,
         screenshot: None,
+        screenshot_filtered: None,
         compile: None,
         script: script::Script::default(),
         realtime: false,
@@ -133,12 +145,15 @@ fn parse_args() -> Result<Args, String> {
                 let (w, h) = v.split_once('x').ok_or("--window expects WxH")?;
                 args.window = (w.parse().map_err(|_| "bad width")?, h.parse().map_err(|_| "bad height")?);
             }
+            "--filter" => args.present.filter = Filter::parse(&val("--filter")?)?,
+            "--integer-scale" => args.present.integer_scale = true,
             "--keymap" => args.keymap = Some(val("--keymap")?),
             "--print-keymap" => args.print_keymap = true,
             "--headless" => {
                 args.headless = Some(val("--headless")?.parse().map_err(|_| "--headless expects a number")?)
             }
             "--screenshot" => args.screenshot = Some(val("--screenshot")?),
+            "--screenshot-filtered" => args.screenshot_filtered = Some(val("--screenshot-filtered")?),
             "--compile" => args.compile = Some(val("--compile")?),
             "--input" => args.script = script::Script::parse(&val("--input")?)?,
             "--realtime" => args.realtime = true,
@@ -267,6 +282,9 @@ fn run(args: Args) -> Result<i32, String> {
             let opts = headless::Options {
                 frames,
                 screenshot: args.screenshot.clone(),
+                screenshot_filtered: args.screenshot_filtered.clone(),
+                present: args.present,
+                window: args.window,
                 script: args.script.clone(),
                 realtime: args.realtime,
                 hash: !args.no_hash,
@@ -292,7 +310,7 @@ fn run(args: Args) -> Result<i32, String> {
         None => {
             let (keymap, _, source) = load_keymap(&args)?;
             eprintln!("[gasm] keyboard layout: {source}");
-            gasm_host::window::run(session, gasm_host::window::Options { size: args.window, keymap, mute: args.mute })
+            gasm_host::window::run(session, gasm_host::window::Options { size: args.window, keymap, mute: args.mute, present: args.present })
         }
         #[cfg(not(feature = "window"))]
         None => Err("this gasm-run was built without the window feature: use --headless".into()),

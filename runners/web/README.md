@@ -35,6 +35,19 @@ requestAnimationFrame(function tick(now) {
 addEventListener('pagehide', () => host.exit());
 ```
 
+2D frames can also be scaled up with a filter (WebGL 2), the same ones as
+`gasm-run --filter`:
+
+```js
+import { GlPresenter } from '@emdzej/gasm-host/present';
+const presenter = GlPresenter.create(canvas);   // null without WebGL 2
+// size: the canvas' display size in device pixels; filter: 'sharp' (default) | 'nearest' | 'xbr' | 'fsr' | 'crt'
+onPresent: (rgba, w, h) => presenter.draw(rgba, w, h, size, { filter: 'xbr', integerScale: false }),
+```
+
+With `integerScale`, set `BrowserInput.integerScale` too, so the pointer's frame
+position follows the smaller letterbox.
+
 A complete player (canvas, AudioWorklet audio, keyboard and Gamepad API,
 catch-up handling) is `app.js` in the [repository](https://github.com/emdzej/gasm/tree/main/runners/web).
 

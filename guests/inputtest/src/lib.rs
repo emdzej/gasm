@@ -49,6 +49,12 @@ impl gasm::Game for InputTest {
     fn init() -> Result<Self, String> {
         gasm::set_frame_rate(60.0);
         input::set_mode(input::KEYS_RAW | input::POINTER_HIDDEN);
+        // ?aspect=16:9: show the frame at that display aspect (the pointer's frame position follows)
+        if let Some(a) = gasm::param("aspect") {
+            let (n, d) = a.split_once(':').ok_or("aspect: expected num:den")?;
+            let ratio = (n.parse().map_err(|_| "aspect: bad num")?, d.parse().map_err(|_| "aspect: bad den")?);
+            gasm::log!("aspect {}:{} shown by the runner: {}", ratio.0, ratio.1, gasm::video_set_aspect(ratio.0, ratio.1));
+        }
         Ok(InputTest { fb: vec![0; W * H * 4], wheel: (0.0, 0.0), motion: (0.0, 0.0), clicks: 0, flash: vec![0; keys::NAMES.len()] })
     }
 

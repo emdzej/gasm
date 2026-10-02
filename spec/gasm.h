@@ -306,6 +306,11 @@ GASM_IMPORT("set_frame_rate") void gasm_set_frame_rate(double hz);
 /* Present RGBA8 pixels (bytes R,G,B,A), stride bytes per row, w,h <= 4096.
  * Copied before returning; letterboxed by the runner. */
 GASM_IMPORT("video_present") void gasm_video_present(const void *rgba, uint32_t width, uint32_t height, uint32_t stride);
+/* Show video_present frames at display aspect num:den (4:3 for 320x200 DOS
+ * games) instead of square pixels; 0:0 resets. Both 1..65535 with 1/8 <=
+ * num/den <= 8, else traps. Display and the pointer frame position only (not
+ * hashed). Newer than has: probe has("gasm.video_set_aspect") first. */
+GASM_IMPORT("video_set_aspect") void gasm_video_set_aspect(uint32_t num, uint32_t den);
 /* Format for audio_push: 8-192 kHz, 1 or 2 channels. Default 44100/2. */
 GASM_IMPORT("audio_config") void gasm_audio_config(uint32_t sample_rate, uint32_t channels);
 /* Queue frames x channels interleaved f32 samples in [-1, 1]; the runner
@@ -368,6 +373,11 @@ GASM_IMPORT("asset_name") int32_t gasm_asset_name(uint32_t index, char *dst, uin
 /* Launch parameter value length, or -1 if unset. Copied only if length <= cap
  * (cap = 0 queries the length). */
 GASM_IMPORT("param") int32_t gasm_param(const char *name, uint32_t name_len, char *dst, uint32_t cap);
+/* Name the game's window or tab (the runner adds its own suffix). Control
+ * characters and bidi overrides are removed and the rest is cut to 256 bytes;
+ * empty resets to the default. Newer than has: probe has("gasm.set_title")
+ * first. */
+GASM_IMPORT("set_title") void gasm_set_title(const char *title, uint32_t title_len);
 
 /* ---- gasm:gfx (optional) ---------------------------------------------------------- */
 /* GPU rendering: a WebGPU subset. Handles are u32 (0 is never valid); creation
@@ -490,6 +500,25 @@ static inline uint32_t gasm__strlen(const char *s) {
 }
 static inline void gasm_log_str(const char *s) { gasm_log(s, gasm__strlen(s)); }
 static inline int32_t gasm_has_str(const char *name) { return gasm_has(name, gasm__strlen(name)); }
+/* Show frames at display aspect num:den (0, 0: square pixels). Returns 1 if the
+ * runner does; 0 on runners without gasm.video_set_aspect (correct it yourself). */
+static inline int gasm_video_aspect(uint32_t num, uint32_t den) {
+    static int supported = -1;
+    if (supported < 0) supported = gasm_has_str("gasm.video_set_aspect");
+    if (supported) gasm_video_set_aspect(num, den);
+    return supported;
+}
+/* The game's built-in title (custom section gasm.title), shown before the game
+ * runs and while it hasn't called set_title. Use once, at file scope, with a
+ * plain string literal (no quotes or backslashes): GASM_TITLE("My Game"); */
+#define GASM_TITLE(text) __asm__(".section .custom_section.gasm.title,\"\",@\n.ascii \"" text "\"\n")
+
+/* Name the window or tab; does nothing on runners without gasm.set_title. */
+static inline void gasm_set_title_str(const char *title) {
+    static int supported = -1;
+    if (supported < 0) supported = gasm_has_str("gasm.set_title");
+    if (supported) gasm_set_title(title, gasm__strlen(title));
+}
 static inline int32_t gasm_asset_size_str(const char *n) { return gasm_asset_size(n, gasm__strlen(n)); }
 static inline int64_t gasm_asset_size64_str(const char *n) { return gasm_asset_size64(n, gasm__strlen(n)); }
 static inline int32_t gasm_asset_read_str(const char *n, void *dst, uint32_t cap) {

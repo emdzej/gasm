@@ -16,13 +16,33 @@ export const GAMEPAD_BUTTONS = 32, GAMEPAD_AXES = 16;
 export const INPUT_KEYS_RAW = 1, INPUT_POINTER_HIDDEN = 2, INPUT_POINTER_LOCKED = 4;
 
 /**
+ * Where a `fw×fh` frame lands in a `dw×dh` output: [left, top, scaleX, scaleY],
+ * centred. `integerScale`: whole multiples only (of the height), when the frame
+ * fits; `aspect`: [num, den] display aspect of the frame (video_set_aspect), null
+ * for square pixels. Same arithmetic as runners/native/src/present.rs letterbox.
+ */
+export function letterbox([dw, dh], [fw, fh], integerScale = false, aspect = null) {
+  if (!aspect) {
+    let scale = Math.min(dw / fw, dh / fh);
+    if (integerScale && scale >= 1) scale = Math.floor(scale);
+    return [(dw - fw * scale) / 2, (dh - fh * scale) / 2, scale, scale];
+  }
+  // shown fh*n/d wide per fh high; whole numbers are multiplied before dividing
+  const [n, d] = aspect;
+  let scale = Math.min(dw * d / (fh * n), dh / fh);
+  if (integerScale && scale >= 1) scale = Math.floor(scale);
+  const sx = scale * fh * n / (d * fw);
+  return [(dw - fw * sx) / 2, (dh - fh * scale) / 2, sx, scale];
+}
+
+/**
  * A drawable position mapped into the last video_present frame (letterboxed as the
  * runners display it). Same arithmetic as runners/native/src/host.rs frame_position.
  */
-export function framePosition(x, y, [dw, dh] = [0, 0], [fw, fh] = [0, 0]) {
+export function framePosition(x, y, [dw, dh] = [0, 0], [fw, fh] = [0, 0], integerScale = false, aspect = null) {
   if (!fw || !fh || !(dw > 0) || !(dh > 0)) return [x, y];
-  const scale = Math.min(dw / fw, dh / fh);
-  return [(x - (dw - fw * scale) / 2) / scale, (y - (dh - fh * scale) / 2) / scale];
+  const [ox, oy, sx, sy] = letterbox([dw, dh], [fw, fh], integerScale, aspect);
+  return [(x - ox) / sx, (y - oy) / sy];
 }
 
 const MOUSE_BITS = [1, 4, 2, 8, 16];   // DOM MouseEvent.button 0..4 -> GASM_MOUSE_* (left, middle, right, back, forward)
@@ -41,6 +61,8 @@ export class BrowserInput {
     this.keys = new Uint8Array(KEY_STATE_BYTES); this.events = [];
     this.p = { x: 0, y: 0, dx: 0, dy: 0, wheelX: 0, wheelY: 0, buttons: 0, pressed: 0, released: 0, inside: false };
     this.mode = 0;
+    /** The page shows 2D frames at whole multiples (the pointer's frame position follows). */
+    this.integerScale = false;
     this.handlers = []; this.elHandlers = [];
   }
   on(target, type, fn, opts) { target.addEventListener(type, fn, opts); this.handlers.push([target, type, fn, opts]); }
@@ -110,6 +132,7 @@ export class BrowserInput {
       x: p.x, y: p.y, dx: first ? p.dx : 0, dy: first ? p.dy : 0, wheelX: first ? p.wheelX : 0, wheelY: first ? p.wheelY : 0,
       buttons: p.buttons, pressed: first ? p.pressed : 0, released: first ? p.released : 0,
       flags: (p.inside || locked ? 1 : 0) | (this.mode ? 2 : 0) | (locked ? 4 : 0), drawable,
+      integerScale: this.integerScale,
     };
     if (first) { p.dx = p.dy = p.wheelX = p.wheelY = 0; p.pressed = p.released = 0; }
     const events = first ? this.events : [];

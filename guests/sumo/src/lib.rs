@@ -354,3 +354,4 @@ impl gasm::Game for Sumo {
 }
 
 gasm::game!(Sumo);
+gasm::title!("Sumo");

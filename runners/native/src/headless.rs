@@ -6,6 +6,7 @@ use std::time::{Duration, Instant};
 
 use crate::gfx::{Gfx, HEADLESS_SIZE};
 use crate::host::{Stop, VirtualClock};
+use crate::present::Present;
 use crate::script::{Script, ScriptState};
 use crate::session::Session;
 
@@ -13,6 +14,10 @@ pub struct Options {
     pub frames: u64,
     /// render on the GPU (offscreen) and write the last frame as PNG
     pub screenshot: Option<String>,
+    /// also write the last 2D frame as the window would show it: `present` at `window` size
+    pub screenshot_filtered: Option<String>,
+    pub present: Present,
+    pub window: (u32, u32),
     pub script: Script,
     /// pace frames at the guest's rate
     pub realtime: bool,
@@ -43,13 +48,17 @@ impl Report {
 
 pub fn run(session: Session, opts: &Options) -> Result<Report, String> {
     // Render on the GPU only when a screenshot is wanted; otherwise a null backend.
-    let gfx = match &opts.screenshot {
-        Some(_) => Gfx::offscreen(HEADLESS_SIZE.0, HEADLESS_SIZE.1).unwrap_or_else(|e| {
+    let gpu = opts.screenshot.is_some() || opts.screenshot_filtered.is_some();
+    let gfx = match gpu {
+        true => Gfx::offscreen(HEADLESS_SIZE.0, HEADLESS_SIZE.1).unwrap_or_else(|e| {
             eprintln!("[gasm] no GPU for screenshots ({e}); gfx output will be blank");
             Gfx::null()
         }),
-        None => Gfx::null(),
+        false => Gfx::null(),
     };
+    if let Some(t) = crate::host::static_title(&session.wasm) {
+        eprintln!("[gasm] title: {t} (gasm.title)");
+    }
     let mut game = match session.start(None, gfx, true, opts.hash) {
         Ok(g) => g,
         Err(Stop::Exit(code)) => {
@@ -71,9 +80,14 @@ pub fn run(session: Session, opts: &Options) -> Result<Report, String> {
         let (w, h) = host.gfx.size();
         let mode = host.input_mode;
         host.input = opts.script.raw(i, &mut script_state, (w as f32, h as f32), mode);
-        host.show_frame = opts.screenshot.is_some() && i + 1 == opts.frames;
+        host.show_frame = gpu && i + 1 == opts.frames;
         ran = i + 1;
-        match game.frame() {
+        let result = game.frame();
+        let host = game.host_mut();
+        if std::mem::take(&mut host.title_changed) {
+            eprintln!("[gasm] title: {}", host.title.as_deref().unwrap_or("(default)"));
+        }
+        match result {
             Ok(()) => {}
             Err(Stop::Exit(code)) => {
                 exit = Some(code);
@@ -90,6 +104,24 @@ pub fn run(session: Session, opts: &Options) -> Result<Report, String> {
     }
     if exit.is_none() {
         game.exit();
+    }
+    if let Some(path) = &opts.screenshot_filtered {
+        let h = game.host_mut();
+        let img = match h.gfx.used {
+            true => h.gfx.read_offscreen(), // gfx guests render at drawable size: no filter
+            false if h.width > 0 => {
+                let rgba = std::mem::take(&mut h.rgba);
+                h.gfx.present = opts.present;
+                let img = h.gfx.render_video(&rgba, h.width as u32, h.height as u32, h.aspect, opts.window);
+                h.rgba = rgba;
+                img
+            }
+            false => None,
+        };
+        if let Some((w, hgt, rgba)) = img {
+            write_png(path, w, hgt, &rgba)?;
+            eprintln!("[gasm] wrote {path}");
+        }
     }
     let h = game.host();
     if let Some(path) = &opts.screenshot {

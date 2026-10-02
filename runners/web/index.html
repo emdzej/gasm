@@ -20,8 +20,10 @@
   button.primary { border-color: var(--accent); color: var(--accent); }
   label.file input { display: none; }
   main { display: grid; place-items: center; padding: 1rem; min-height: 0; }
-  canvas { image-rendering: pixelated; background: #000; max-width: 100%; max-height: calc(100vh - 12rem);
-           aspect-ratio: 256 / 240; height: calc(100vh - 12rem); }
+  /* --ar: the frame's display aspect (set by app.js): the box always has the frame's shape */
+  canvas { image-rendering: pixelated; background: #000; --ar: 1.0667; aspect-ratio: var(--ar); height: auto;
+           width: min(100%, calc((100vh - 12rem) * var(--ar))); }
+  canvas.gl { image-rendering: auto; }
   canvas.gpu { image-rendering: auto; aspect-ratio: 16 / 9; width: min(100%, calc((100vh - 12rem) * 16 / 9)); height: auto; }
   main.drag canvas { outline: 2px dashed var(--accent); }
   footer { display: flex; justify-content: space-between; gap: 1rem; padding: .5rem 1rem; color: var(--dim);
@@ -49,6 +51,8 @@
   <input id="folderinput" type="file" webkitdirectory hidden>
   <label title="Run the game in a Worker: assets are read on demand (OPFS, picked folders). Not for GPU games."><input id="worker" type="checkbox"> worker</label>
   <button id="keys" title="Keyboard layout for up to four players">keys…</button>
+  <select id="filter" title="How 2D games are scaled up: nearest = square pixels, sharp = even pixels at any size, xbr = smooth edges for pixel art, fsr = AMD FSR 1 for rendered or dithered games, crt = scanlines"></select>
+  <label title="Scale 2D games by whole multiples only (black border around)"><input id="integer" type="checkbox"> integer</label>
   <button id="start" class="primary">▶ start</button>
   <button id="pause">❚❚ pause</button>
 </header>

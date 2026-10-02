@@ -30,7 +30,8 @@ if the guest calls something it lacks, and an older guest never calls the
 new imports. A guest that can do without a newer import asks first with
 `has("module.function")`. Textures, samplers, explicit layouts, viewport/scissor,
 text input, raw keyboard/pointer/gamepads, asset and storage enumeration, `has`,
-64-bit assets and `gfx.destroy` were added this way; the version is still 0.
+64-bit assets, `gfx.destroy`, `set_title` and `video_set_aspect` were added
+this way; the version is still 0.
 [CHANGELOG.md](https://github.com/emdzej/gasm/blob/main/CHANGELOG.md) lists what
 each release added.
 
@@ -46,6 +47,7 @@ each release added.
 | export | `gasm_exit()`                       | no       | the player is quitting: flush saves (best effort) |
 | import | `gasm.*`, `gasm:gfx.*`, `gasm:net.*`, `gasm:storage.*` | — | see below |
 | import | `wasi_snapshot_preview1.*`          | —        | libc support subset, see below |
+| custom section | `gasm.title`                 | no       | the game's name (UTF-8), the default title before `set_title`; see [Window title](#window-title) |
 
 **Unknown imports.** Runners link imports they don't implement as functions
 that trap when called. A module therefore always loads, and fails only if it
@@ -124,6 +126,7 @@ All pointers are `i32` offsets into guest memory. Strings are UTF-8 `(ptr, len)`
 | `time_ms` | `() -> f64` | Monotonic ms. Headless runs use virtual time: the start of the frame on a clock that advances `1000 / frame_rate` per frame, at the rate in effect at that frame's start (so changing the rate never moves time backwards). The value is fixed for the whole frame. |
 | `set_frame_rate` | `(hz: f64)` | 1–1000 Hz, otherwise ignored. |
 | `video_present` | `(ptr, w, h, stride)` | RGBA8 pixels (byte order R,G,B,A), `stride` bytes per row, `w,h ≤ 4096`. The data is copied before the call returns. The runner letterboxes it into its output. Ignored for display when the guest renders with `gasm:gfx` in the same frame. |
+| `video_set_aspect` | `(num, den)` | Show later `video_present` frames at display aspect `num:den` (4:3 for a 320×200 game made for a CRT) instead of square pixels; `0, 0` resets. Otherwise both must be 1–65535 with 1/8 ≤ num/den ≤ 8, or it traps. Display and the pointer's frame position only: not hashed. Probe `has("gasm.video_set_aspect")` first (the SDK wrappers do). |
 | `audio_config` | `(rate, channels)` | Format for `audio_push`: 8–192 kHz, 1 or 2 channels. Default 44100/2. |
 | `audio_push` | `(ptr, frames)` | `frames × channels` interleaved `f32` in [-1, 1]. The runner resamples and buffers (~60 ms target latency). It drops the oldest audio if the guest runs ahead and plays silence on underrun. |
 | `input_pad` | `(player) -> u32` | Bitmask of buttons for virtual pad 0–3, stable within one `gasm_frame`. |
@@ -142,6 +145,7 @@ All pointers are `i32` offsets into guest memory. Strings are UTF-8 `(ptr, len)`
 | `asset_count` | `() -> u32` | Number of assets. |
 | `asset_name` | `(index, dst, cap) -> i32` | Name of asset `index` (0 … `asset_count`−1), sorted by UTF-8 bytes; folder entries as named on disk. Returns its length (copied only if length ≤ `cap`; `cap = 0` queries), or `-1` if `index` is out of range. |
 | `param` | `(name_ptr, name_len, dst, cap) -> i32` | Launch parameter value: returns its byte length, or `-1` if unset. Copied only if length ≤ `cap`; call with `cap = 0` to query the length. |
+| `set_title` | `(ptr, len)` | Name the game's window or browser tab, see [Window title](#window-title). Probe `has("gasm.set_title")` first: the SDK wrappers (`gasm::set_title`, `gasm_set_title_str`) do, and do nothing without it. |
 
 Button bits: `A=0 B=1 X=2 Y=3 L=4 R=5 SELECT=6 START=7 UP=8 DOWN=9 LEFT=10 RIGHT=11`.
 Physical mapping (face buttons by position, as on a SNES pad): East=A,
@@ -367,8 +371,14 @@ to pads still show up as raw keys.
 | 36, 40 | `u32 pressed, released` | buttons that went down / up since the previous frame (a click inside one frame shows in both) |
 | 44 | `u32 flags` | `GASM_POINTER_INSIDE` 1, `IS_HIDDEN` 2, `IS_LOCKED` 4 |
 
-The frame position uses the same arithmetic as the display: scale =
-min(drawable / frame) per axis, centred.
+The frame position uses the same arithmetic as the display, centred: with
+square pixels the scale is s = min(dw / fw, dh / fh) on both axes. With a
+display aspect `n:d` (`video_set_aspect`) the vertical scale is
+s = min(dw·d / (fh·n), dh / fh) and the horizontal one s·fh·n / (d·fw)
+(whole numbers multiplied before dividing, so common ratios come out exact).
+When the player chose integer scaling (and the frame fits), s is rounded down
+to a whole number before the horizontal scale is derived. Headless runs never
+use integer scaling.
 
 **Gamepads and joysticks** (204 bytes per slot, little-endian): `u32 flags`
 (`GASM_GAMEPAD_CONNECTED` 1, `GASM_GAMEPAD_STANDARD` 2), `u32` button count,
@@ -478,6 +488,26 @@ one binding per line, `<pad 1-4> <button> <key code>...`. Buttons are
   `<data dir>/gasm/keymap.txt` if present) and `--print-keymap`. The web
   player has a "keys…" editor, stored in `localStorage`. Escape can't be
   bound to a pad.
+
+### Window title
+
+`set_title` names the game; the runner shows it in a frame of its own that the
+guest can't remove, so a game can't pass itself off as the runner's or the
+browser's UI:
+
+- Text: control characters (Unicode Cc) and bidi controls (U+202A–U+202E,
+  U+2066–U+2069) are removed, then the rest is cut to 256 bytes at a character
+  boundary. Invalid UTF-8 traps, as for every string. An empty result restores
+  the default: the module's `gasm.title` custom section (cleaned the same way;
+  ignored if it isn't UTF-8), else its file name without `.wasm`. Launchers can
+  read the section without running the game (SDKs: `gasm::title!("Sumo")`,
+  `GASM_TITLE("Sumo")`).
+- Native window: `<title> — gasm — <n> fps`. Browser player: the tab is
+  `<title> — gasm` (the host reports it with `onTitle`; embedding pages decide
+  what to do with it). Headless runs log `[gasm] title: …` when it changes;
+  titles aren't hashed.
+- Runners apply it after the frame that set it, and only when it changed, so
+  a guest may call it every frame.
 
 ### Escape
 

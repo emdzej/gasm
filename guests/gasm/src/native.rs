@@ -185,6 +185,13 @@ pub mod abi {
     pub unsafe fn time_ms() -> f64 {
         with(|s| s.now_ms)
     }
+    pub unsafe fn video_set_aspect(num: u32, den: u32) {
+        let ok = (num, den) == (0, 0) || ((1..=65535).contains(&num) && (1..=65535).contains(&den) && num as u64 * 8 >= den as u64 && den as u64 * 8 >= num as u64);
+        assert!(ok, "video_set_aspect: invalid ratio {num}:{den}");
+    }
+    pub unsafe fn set_title(ptr: *const u8, len: u32) {
+        eprintln!("[gasm] title: {}", unsafe { text(ptr, len) });
+    }
     pub unsafe fn set_frame_rate(hz: f64) {
         if hz.is_finite() && (1.0..=1000.0).contains(&hz) {
             with(|s| s.frame_rate = hz);

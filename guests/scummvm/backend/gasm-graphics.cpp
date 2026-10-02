@@ -17,9 +17,18 @@
 static const Graphics::PixelFormat kRGBA(4, 8, 8, 8, 8, 0, 8, 16, 24);
 static const uint kOverlayW = 640, kOverlayH = 480;
 
-/** 320x200 and 640x400 were shown on 4:3 monitors: rows are stretched by 6/5. */
+/** 320x200 and 640x400 were shown on 4:3 monitors. */
+static bool crtSize(uint w, uint h) {
+	return (h == 200 && w == 320) || (h == 400 && w == 640);
+}
+/** Runners with gasm.video_set_aspect show such frames at 4:3 themselves. */
+static bool runnerAspect() {
+	static const bool supported = gasm_video_aspect(0, 0);
+	return supported;
+}
+/** The height presented: on older runners rows are stretched by 6/5 here. */
 static uint aspectHeight(uint w, uint h) {
-	return (h == 200 && w == 320) || (h == 400 && w == 640) ? h * 6 / 5 : h;
+	return !runnerAspect() && crtSize(w, h) ? h * 6 / 5 : h;
 }
 
 GasmGraphicsManager::GasmGraphicsManager()
@@ -231,5 +240,9 @@ void GasmGraphicsManager::updateScreen() {
 		blitScreen(_frame.data(), outH);
 	}
 	drawCursor(_frame.data(), w, srcH, outH, srcH);
+	if (runnerAspect()) {
+		bool crt = !_overlayVisible && crtSize(w, srcH);
+		gasm_video_set_aspect(crt ? 4 : 0, crt ? 3 : 0);
+	}
 	gasm_video_present(_frame.data(), w, outH, w * 4);
 }

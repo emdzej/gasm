@@ -56,6 +56,8 @@ Compile `src/gasm_vfile.c` with the game (it needs `_GNU_SOURCE` for
 `fopencookie`); with CMake: `target_sources(mygame PRIVATE ${GASM_VFILE_SOURCE})`.
 
 Newer imports can be probed before use: `gasm_has_str("gasm:gfx.destroy")`.
+`gasm_set_title_str(title)` and `gasm_video_aspect(num, den)` probe for
+themselves (the latter returns 0 if the runner doesn't show the aspect).
 `gasm_storage_set` returns a `GASM_STORAGE_ERR_*` code on failure, and
 `GASM_POINTER_OFF_*` / `GASM_GAMEPAD_OFF_*` are the field offsets of the
 pointer and gamepad bytes.

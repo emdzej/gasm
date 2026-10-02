@@ -20,6 +20,8 @@ mod imports {
         pub fn set_frame_rate(hz: f64);
         /// Present RGBA8 pixels (bytes R,G,B,A), stride bytes per row, w,h <= 4096. Copied before returning; letterboxed by the runner.
         pub fn video_present(rgba: *const u8, width: u32, height: u32, stride: u32);
+        /// Show video_present frames at display aspect num:den (4:3 for 320x200 DOS games) instead of square pixels; 0:0 resets. Both 1..65535 with 1/8 <= num/den <= 8, else traps. Display and the pointer frame position only (not hashed). Newer than has: probe has("gasm.video_set_aspect") first.
+        pub fn video_set_aspect(num: u32, den: u32);
         /// Format for audio_push: 8-192 kHz, 1 or 2 channels. Default 44100/2.
         pub fn audio_config(sample_rate: u32, channels: u32);
         /// Queue frames x channels interleaved f32 samples in [-1, 1]; the runner resamples.
@@ -56,6 +58,8 @@ mod imports {
         pub fn asset_name(index: u32, dst: *mut u8, cap: u32) -> i32;
         /// Launch parameter value length, or -1 if unset. Copied only if length <= cap (cap = 0 queries the length).
         pub fn param(name: *const u8, name_len: u32, dst: *mut u8, cap: u32) -> i32;
+        /// Name the game's window or tab (the runner adds its own suffix). Control characters and bidi overrides are removed and the rest is cut to 256 bytes; empty resets to the default. Newer than has: probe has("gasm.set_title") first.
+        pub fn set_title(title: *const u8, title_len: u32);
     }
 
     #[link(wasm_import_module = "gasm:gfx")]
@@ -181,23 +185,23 @@ pub use imports::*;
 pub use crate::native::abi::*;
 
 /// Every import module and `module.function` of this ABI version (what `gasm::has` can report).
-pub const IMPORTS: [&str; 62] = [
+pub const IMPORTS: [&str; 64] = [
     "gasm", "gasm.log", "gasm.has", "gasm.time_ms",
-    "gasm.set_frame_rate", "gasm.video_present", "gasm.audio_config", "gasm.audio_push",
-    "gasm.input_pad", "gasm.text_input", "gasm.input_mode", "gasm.key_state",
-    "gasm.key_events", "gasm.pointer", "gasm.gamepad", "gasm.gamepad_name",
-    "gasm.asset_size", "gasm.asset_size64", "gasm.asset_read", "gasm.asset_read_at",
-    "gasm.asset_read_at64", "gasm.asset_count", "gasm.asset_name", "gasm.param",
-    "gasm:gfx", "gasm:gfx.width", "gasm:gfx.height", "gasm:gfx.create_shader",
-    "gasm:gfx.create_buffer", "gasm:gfx.create_pipeline", "gasm:gfx.create_bind_group", "gasm:gfx.create_bind_group_layout",
-    "gasm:gfx.create_texture", "gasm:gfx.write_texture", "gasm:gfx.create_sampler", "gasm:gfx.write_buffer",
-    "gasm:gfx.begin_frame", "gasm:gfx.set_pipeline", "gasm:gfx.set_bind_group", "gasm:gfx.set_bind_group_offsets",
-    "gasm:gfx.set_viewport", "gasm:gfx.set_scissor_rect", "gasm:gfx.set_vertex_buffer", "gasm:gfx.set_index_buffer",
-    "gasm:gfx.draw", "gasm:gfx.draw_indexed", "gasm:gfx.end_frame", "gasm:gfx.destroy",
-    "gasm:net", "gasm:net.open", "gasm:net.state", "gasm:net.send",
-    "gasm:net.recv", "gasm:net.close", "gasm:storage", "gasm:storage.get",
-    "gasm:storage.set", "gasm:storage.delete", "gasm:storage.count", "gasm:storage.key",
-    "wasi_snapshot_preview1", "wasi_snapshot_preview1.proc_exit",
+    "gasm.set_frame_rate", "gasm.video_present", "gasm.video_set_aspect", "gasm.audio_config",
+    "gasm.audio_push", "gasm.input_pad", "gasm.text_input", "gasm.input_mode",
+    "gasm.key_state", "gasm.key_events", "gasm.pointer", "gasm.gamepad",
+    "gasm.gamepad_name", "gasm.asset_size", "gasm.asset_size64", "gasm.asset_read",
+    "gasm.asset_read_at", "gasm.asset_read_at64", "gasm.asset_count", "gasm.asset_name",
+    "gasm.param", "gasm.set_title", "gasm:gfx", "gasm:gfx.width",
+    "gasm:gfx.height", "gasm:gfx.create_shader", "gasm:gfx.create_buffer", "gasm:gfx.create_pipeline",
+    "gasm:gfx.create_bind_group", "gasm:gfx.create_bind_group_layout", "gasm:gfx.create_texture", "gasm:gfx.write_texture",
+    "gasm:gfx.create_sampler", "gasm:gfx.write_buffer", "gasm:gfx.begin_frame", "gasm:gfx.set_pipeline",
+    "gasm:gfx.set_bind_group", "gasm:gfx.set_bind_group_offsets", "gasm:gfx.set_viewport", "gasm:gfx.set_scissor_rect",
+    "gasm:gfx.set_vertex_buffer", "gasm:gfx.set_index_buffer", "gasm:gfx.draw", "gasm:gfx.draw_indexed",
+    "gasm:gfx.end_frame", "gasm:gfx.destroy", "gasm:net", "gasm:net.open",
+    "gasm:net.state", "gasm:net.send", "gasm:net.recv", "gasm:net.close",
+    "gasm:storage", "gasm:storage.get", "gasm:storage.set", "gasm:storage.delete",
+    "gasm:storage.count", "gasm:storage.key", "wasi_snapshot_preview1", "wasi_snapshot_preview1.proc_exit",
 ];
 
 // ---- buttons

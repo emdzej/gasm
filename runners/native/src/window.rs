@@ -17,6 +17,7 @@ use crate::audio::{AudioOut, AudioSink};
 use crate::gfx::Gfx;
 use crate::host::{self, Game, Gamepad, KEY_STATE_BYTES, Pointer, RawInput, Stop};
 use crate::keymap;
+use crate::present::Present;
 use crate::session::Session;
 
 pub struct Options {
@@ -24,15 +25,22 @@ pub struct Options {
     pub size: (u32, u32),
     pub keymap: keymap::Keymap,
     pub mute: bool,
+    /// how 2D frames are shown
+    pub present: Present,
 }
 
 /// Open a window and play until the guest exits, traps or the player quits.
 /// Returns the guest's exit code (0 when the player quit).
 pub fn run(session: Session, opts: Options) -> Result<i32, String> {
     let event_loop = EventLoop::new().map_err(|e| e.to_string())?;
-    let title = session.name.clone();
+    // default title: the module file name without .wasm (set_title replaces it)
+    let default_title = host::static_title(&session.wasm).unwrap_or_else(|| {
+        std::path::Path::new(&session.name).file_stem().map_or(session.name.clone(), |s| s.to_string_lossy().into_owned())
+    });
     let mut app = App {
-        title,
+        title: default_title.clone(),
+        default_title,
+        fps: 0,
         opts,
         session: Some(session),
         window: None,
@@ -146,7 +154,11 @@ fn gamepads_raw(gilrs: &Gilrs) -> [Gamepad; 4] {
 }
 
 struct App {
+    /// what the window shows before " — gasm": set_title, else `default_title`
     title: String,
+    default_title: String,
+    /// guest frames in the last second
+    fps: u32,
     opts: Options,
     /// taken when the window opens
     session: Option<Session>,
@@ -181,6 +193,14 @@ impl App {
     }
 
     /// Hide / lock the cursor as the guest asked (input_mode), when it changes.
+    /// The window title: the game's (set_title or the file name), then the runner's own part,
+    /// which the guest can't change.
+    fn show_title(&self) {
+        if let Some(w) = &self.window {
+            w.set_title(&format!("{} — gasm — {} fps", self.title, self.fps));
+        }
+    }
+
     fn apply_input_mode(&mut self) {
         let (Some(game), Some(w)) = (&self.game, &self.window) else { return };
         let want = game.host().input_mode & 6;
@@ -255,6 +275,7 @@ impl App {
                     released: if first { m.released } else { 0 },
                     flags: m.inside as u32 | self.pointer_flags,
                     drawable: (drawable.0 as f32, drawable.1 as f32),
+                    integer_scale: self.opts.present.integer_scale,
                 };
                 if first {
                     (m.dx, m.dy, m.wheel_x, m.wheel_y, m.pressed, m.released) = (0.0, 0.0, 0.0, 0.0, 0, 0);
@@ -283,15 +304,18 @@ impl App {
             if !host.gfx.used && host.width > 0 {
                 let (w, h) = (host.width as u32, host.height as u32);
                 let rgba = std::mem::take(&mut host.rgba);
-                host.gfx.present_video(&rgba, w, h);
+                host.gfx.present_video(&rgba, w, h, host.aspect);
                 host.rgba = rgba;
+            }
+            if std::mem::take(&mut host.title_changed) {
+                self.title = host.title.clone().unwrap_or_else(|| self.default_title.clone());
+                self.show_title();
             }
         }
         self.apply_input_mode();
         if self.fps_t.elapsed() >= Duration::from_secs(1) {
-            if let Some(w) = &self.window {
-                w.set_title(&format!("gasm — {} — {} fps", self.title, self.fps_n));
-            }
+            self.fps = self.fps_n;
+            self.show_title();
             self.fps_n = 0;
             self.fps_t = Instant::now();
         }
@@ -305,14 +329,17 @@ impl ApplicationHandler for App {
             return;
         }
         let attrs = Window::default_attributes()
-            .with_title("gasm")
+            .with_title(format!("{} — gasm", self.title))
             .with_inner_size(LogicalSize::new(self.opts.size.0, self.opts.size.1));
         let window = match el.create_window(attrs) {
             Ok(w) => Arc::new(w),
             Err(e) => return self.stop(el, Err(format!("cannot create window: {e}"))),
         };
         let gfx = match Gfx::for_window(window.clone()) {
-            Ok(g) => g,
+            Ok(mut g) => {
+                g.present = self.opts.present;
+                g
+            }
             Err(e) => return self.stop(el, Err(format!("cannot initialise GPU: {e}"))),
         };
         let audio: Option<Box<dyn AudioOut>> = if self.opts.mute {

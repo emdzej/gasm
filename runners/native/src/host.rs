@@ -12,6 +12,7 @@ use crate::assets::Assets;
 use crate::audio::AudioOut;
 use crate::gfx::Gfx;
 use crate::net::Net;
+use crate::present::letterbox;
 use crate::storage::Storage;
 use crate::wasi::{self, Splitmix};
 
@@ -103,6 +104,8 @@ pub struct Pointer {
     pub flags: u32,
     /// drawable size the position refers to
     pub drawable: (f32, f32),
+    /// the runner shows 2D frames at whole multiples (`--integer-scale`)
+    pub integer_scale: bool,
 }
 
 #[derive(Default, Clone)]
@@ -115,15 +118,76 @@ pub struct Gamepad {
 }
 
 /// Map a drawable position into the last video_present frame (letterboxed as the
-/// runners display it). Same arithmetic in runners/web/gasm-host.js.
-pub fn frame_position(x: f32, y: f32, drawable: (f32, f32), frame: (usize, usize)) -> (f32, f32) {
+/// runners display it, `present::letterbox`). Same arithmetic in runners/web/lib/input.js.
+pub fn frame_position(x: f32, y: f32, drawable: (f32, f32), frame: (usize, usize), integer_scale: bool, aspect: Option<(u32, u32)>) -> (f32, f32) {
     if frame.0 == 0 || frame.1 == 0 || drawable.0 <= 0.0 || drawable.1 <= 0.0 {
         return (x, y);
     }
-    let (dw, dh, fw, fh) = (drawable.0 as f64, drawable.1 as f64, frame.0 as f64, frame.1 as f64);
-    let scale = (dw / fw).min(dh / fh);
-    let (ox, oy) = ((dw - fw * scale) / 2.0, (dh - fh * scale) / 2.0);
-    (((x as f64 - ox) / scale) as f32, ((y as f64 - oy) / scale) as f32)
+    let (ox, oy, sx, sy) = letterbox((drawable.0 as f64, drawable.1 as f64), (frame.0 as f64, frame.1 as f64), integer_scale, aspect);
+    (((x as f64 - ox) / sx) as f32, ((y as f64 - oy) / sy) as f32)
+}
+
+/// Longest title `set_title` keeps, in UTF-8 bytes.
+pub const TITLE_MAX_BYTES: usize = 256;
+
+/// A guest's `set_title` text as runners show it: control characters (Unicode
+/// Cc) and bidi controls (U+202A–U+202E, U+2066–U+2069) removed, then cut to
+/// 256 bytes at a character boundary. None: empty, the runner's default.
+/// Same rules in runners/web/lib/host.js `cleanTitle`.
+pub fn clean_title(text: &str) -> Option<String> {
+    let mut out = String::new();
+    for c in text.chars().filter(|&c| !c.is_control() && !matches!(c, '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}')) {
+        if out.len() + c.len_utf8() > TITLE_MAX_BYTES {
+            break;
+        }
+        out.push(c);
+    }
+    (!out.is_empty()).then_some(out)
+}
+
+/// The payload of custom section `name` in a wasm binary (None for a .cwasm or
+/// a malformed module: the loader reports those).
+pub fn custom_section<'a>(wasm: &'a [u8], name: &str) -> Option<&'a [u8]> {
+    fn leb(b: &[u8], at: &mut usize) -> Option<usize> {
+        let (mut v, mut shift) = (0usize, 0);
+        loop {
+            let byte = *b.get(*at)?;
+            *at += 1;
+            v |= ((byte & 0x7f) as usize).checked_shl(shift)?;
+            if byte & 0x80 == 0 {
+                return Some(v);
+            }
+            shift += 7;
+            if shift > 28 {
+                return None;
+            }
+        }
+    }
+    if wasm.get(..4)? != b"\0asm" {
+        return None;
+    }
+    let mut at = 8;
+    while at < wasm.len() {
+        let id = wasm[at];
+        at += 1;
+        let size = leb(wasm, &mut at)?;
+        let body = wasm.get(at..at.checked_add(size)?)?;
+        at += size;
+        if id == 0 {
+            let mut p = 0;
+            let n = leb(body, &mut p)?;
+            if body.get(p..p.checked_add(n)?)? == name.as_bytes() {
+                return body.get(p + n..);
+            }
+        }
+    }
+    None
+}
+
+/// The guest's built-in title (custom section `gasm.title`, UTF-8), cleaned like
+/// set_title: the default title before (or without) set_title.
+pub fn static_title(wasm: &[u8]) -> Option<String> {
+    clean_title(std::str::from_utf8(custom_section(wasm, "gasm.title")?).ok()?)
 }
 
 pub struct Host {
@@ -159,6 +223,12 @@ pub struct Host {
     pub width: usize,
     pub height: usize,
     pub frames_presented: u64,
+    /// video_set_aspect (num, den); None: square pixels
+    pub aspect: Option<(u32, u32)>,
+    /// set_title (cleaned); None: the runner's default
+    pub title: Option<String>,
+    /// set_title changed `title` since the runner last looked (it clears this)
+    pub title_changed: bool,
     pub hashing: bool,
     pub video_hash: Fnv,
     pub audio_hash: Fnv,
@@ -194,6 +264,9 @@ impl Host {
             audio_rate: 44100,
             audio_channels: 2,
             provided: HashSet::new(),
+            title: None,
+            title_changed: false,
+            aspect: None,
             rgba: Vec::new(),
             width: 0,
             height: 0,
@@ -257,8 +330,8 @@ fn guest_str(caller: &Caller<'_, Host>, ptr: u32, len: u32) -> wasmtime::Result<
 }
 
 /// The pointer() record (GASM_POINTER_OFF_* layout).
-fn pointer_bytes(p: &Pointer, frame: (usize, usize)) -> [u8; POINTER_BYTES] {
-    let (fx, fy) = frame_position(p.x, p.y, p.drawable, frame);
+fn pointer_bytes(p: &Pointer, frame: (usize, usize), aspect: Option<(u32, u32)>) -> [u8; POINTER_BYTES] {
+    let (fx, fy) = frame_position(p.x, p.y, p.drawable, frame, p.integer_scale, aspect);
     let mut b = [0u8; POINTER_BYTES];
     for (i, v) in [p.x, p.y, fx, fy, p.dx, p.dy, p.wheel_x, p.wheel_y].into_iter().enumerate() {
         b[i * 4..i * 4 + 4].copy_from_slice(&v.to_le_bytes());
@@ -298,6 +371,26 @@ fn add_gasm_imports(linker: &mut Linker<Host>) -> wasmtime::Result<()> {
     linker.func_wrap("gasm", "has", |caller: Caller<'_, Host>, ptr: u32, len: u32| -> wasmtime::Result<i32> {
         let name = guest_str(&caller, ptr, len)?;
         Ok(caller.data().provided.contains(&name) as i32)
+    })?;
+
+    linker.func_wrap("gasm", "video_set_aspect", |mut caller: Caller<'_, Host>, num: u32, den: u32| -> wasmtime::Result<()> {
+        let aspect = match (num, den) {
+            (0, 0) => None,
+            (1..=65535, 1..=65535) if num as u64 * 8 >= den as u64 && den as u64 * 8 >= num as u64 => Some((num, den)),
+            _ => bail!("video_set_aspect: invalid ratio {num}:{den}"),
+        };
+        caller.data_mut().aspect = aspect;
+        Ok(())
+    })?;
+
+    linker.func_wrap("gasm", "set_title", |mut caller: Caller<'_, Host>, ptr: u32, len: u32| -> wasmtime::Result<()> {
+        let title = clean_title(&guest_str(&caller, ptr, len)?);
+        let h = caller.data_mut();
+        if h.title != title {
+            h.title = title;
+            h.title_changed = true;
+        }
+        Ok(())
     })?;
 
     linker.func_wrap("gasm", "time_ms", |caller: Caller<'_, Host>| -> f64 {
@@ -433,7 +526,7 @@ fn add_gasm_imports(linker: &mut Linker<Host>) -> wasmtime::Result<()> {
             let (data, host) = mem.data_and_store_mut(&mut caller);
             let Some(p) = &host.input.pointer else { return Ok(-1) };
             if cap as usize >= POINTER_BYTES {
-                let b = pointer_bytes(p, (host.width, host.height));
+                let b = pointer_bytes(p, (host.width, host.height), host.aspect);
                 guest_slice_mut(data, dst, POINTER_BYTES as u64)?.copy_from_slice(&b);
             }
             Ok(POINTER_BYTES as i32)
@@ -921,5 +1014,31 @@ impl Game {
 
     pub fn host_mut(&mut self) -> &mut Host {
         self.store.data_mut()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn titles_are_cleaned_and_cut() {
+        assert_eq!(clean_title("A\u{7}B\u{202e}C\u{2069}").as_deref(), Some("ABC"));
+        assert_eq!(clean_title("\n\t"), None);
+        // 200 two-byte characters: cut at 256 bytes, on a character boundary
+        assert_eq!(clean_title(&"é".repeat(200)).map(|t| t.len()), Some(256));
+    }
+
+    #[test]
+    fn custom_sections_are_found() {
+        // magic + version, a type section (id 1, empty), then custom "gasm.title" = "Hi\0"
+        let mut wasm = b"\0asm\x01\0\0\0\x01\x01\0".to_vec();
+        wasm.extend_from_slice(&[0, 14, 10]);
+        wasm.extend_from_slice(b"gasm.titleHi\0");
+        assert_eq!(custom_section(&wasm, "gasm.title"), Some(&b"Hi\0"[..]));
+        assert_eq!(static_title(&wasm).as_deref(), Some("Hi"));
+        assert_eq!(custom_section(&wasm, "other"), None);
+        assert_eq!(custom_section(&wasm[..wasm.len() - 2], "gasm.title"), None); // truncated
+        assert_eq!(custom_section(b"not wasm", "gasm.title"), None);
     }
 }

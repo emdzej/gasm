@@ -104,6 +104,25 @@ static inline uint32_t gasm__strlen(const char *s) {
 }
 static inline void gasm_log_str(const char *s) { gasm_log(s, gasm__strlen(s)); }
 static inline int32_t gasm_has_str(const char *name) { return gasm_has(name, gasm__strlen(name)); }
+/* Show frames at display aspect num:den (0, 0: square pixels). Returns 1 if the
+ * runner does; 0 on runners without gasm.video_set_aspect (correct it yourself). */
+static inline int gasm_video_aspect(uint32_t num, uint32_t den) {
+    static int supported = -1;
+    if (supported < 0) supported = gasm_has_str("gasm.video_set_aspect");
+    if (supported) gasm_video_set_aspect(num, den);
+    return supported;
+}
+/* The game's built-in title (custom section gasm.title), shown before the game
+ * runs and while it hasn't called set_title. Use once, at file scope, with a
+ * plain string literal (no quotes or backslashes): GASM_TITLE("My Game"); */
+#define GASM_TITLE(text) __asm__(".section .custom_section.gasm.title,\\"\\",@\\n.ascii \\"" text "\\"\\n")
+
+/* Name the window or tab; does nothing on runners without gasm.set_title. */
+static inline void gasm_set_title_str(const char *title) {
+    static int supported = -1;
+    if (supported < 0) supported = gasm_has_str("gasm.set_title");
+    if (supported) gasm_set_title(title, gasm__strlen(title));
+}
 static inline int32_t gasm_asset_size_str(const char *n) { return gasm_asset_size(n, gasm__strlen(n)); }
 static inline int64_t gasm_asset_size64_str(const char *n) { return gasm_asset_size64(n, gasm__strlen(n)); }
 static inline int32_t gasm_asset_read_str(const char *n, void *dst, uint32_t cap) {

@@ -37,6 +37,7 @@ optional modules on top.
 | gasm-relay | `runners/native/relay/` | WebSocket room relay for online play |
 | gasm-host.js | `runners/web/gasm-host.js`, `runners/web/lib/` | JS runner core, shared by browser and Node |
 | webgpu-gfx.js | `runners/web/webgpu-gfx.js` | `gasm:gfx` on the browser's WebGPU |
+| gasm-present.js | `runners/web/gasm-present.js` | 2D frames on WebGL 2: letterbox and upscaling filters (natively `runners/native/src/present.rs`) |
 | web runner | `runners/web/index.html`, `app.js` | Canvas, AudioWorklet, keyboard/Gamepad API, WebSocket |
 | headless Node | `runners/web/headless.mjs` | CI/hash/network runner using the same JS core |
 

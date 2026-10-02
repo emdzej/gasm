@@ -7,6 +7,8 @@
 // (main thread) or an OffscreenCanvas (Worker mode): offscreen, the page reports the
 // display size with setSize().
 
+import { letterbox } from './lib/input.js';
+
 export const SAMPLE_COUNT = 4;
 
 export class WebGpuGfx {
@@ -230,7 +232,7 @@ export class WebGpuGfx {
    * blit, like the native runner. For frames where the guest didn't use gfx; needed
    * when the canvas has a WebGPU context (gfx guests, Worker mode).
    */
-  presentVideo(rgba, w, h) {
+  presentVideo(rgba, w, h, aspect = null) {
     this.resize();
     const dev = this.device;
     if (!this.blit) {
@@ -262,8 +264,8 @@ struct VO { @builtin(position) pos: vec4<f32>, @location(0) uv: vec2<f32> };
     const pass = enc.beginRenderPass({ colorAttachments: [{
       view: this.context.getCurrentTexture().createView(), clearValue: { r: 0, g: 0, b: 0, a: 1 }, loadOp: 'clear', storeOp: 'store',
     }] });
-    const scale = Math.min(this.w / w, this.h / h), vw = w * scale, vh = h * scale;
-    pass.setViewport((this.w - vw) / 2, (this.h - vh) / 2, vw, vh, 0, 1);
+    const [ox, oy, sx, sy] = letterbox([this.w, this.h], [w, h], false, aspect);
+    pass.setViewport(ox, oy, w * sx, h * sy, 0, 1);
     pass.setPipeline(b.pipeline);
     pass.setBindGroup(0, b.bg);
     pass.draw(3);

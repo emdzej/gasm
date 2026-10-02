@@ -160,7 +160,8 @@ runners/native/              crate gasm-host: library (headless and windowed run
                              wasmtime, wgpu, winit, cpal, gilrs, tungstenite; own WASI subset (src/wasi.rs)
   relay/                       crate gasm-relay: WebSocket room relay
 runners/web/                 @emdzej/gasm-host: gasm-host.js + lib/ (host, WASI, gfx model, assets, input,
-                             net, storage), webgpu-gfx.js, gasm-worker.js, headless.mjs; the player (index.html, app.js)
+                             net, storage), webgpu-gfx.js, gasm-present.js (2D filters), gasm-worker.js, headless.mjs;
+                             the player (index.html, app.js)
 tests/golden/                golden hashes for the determinism suite
 scripts/                     toolchain/ROM fetchers (SHA-256 pinned), test suites, packaging, site build
 site/                        website (VitePress): docs, dev guides, demos → gasm.emdzej.pl

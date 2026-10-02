@@ -56,7 +56,7 @@ exports: memory, gasm_abi_version() -> 0, gasm_init() -> 0, gasm_frame()
 exports (optional): gasm_exit()   player is quitting: flush saves
 
 gasm        log · has · time_ms · set_frame_rate · param · video_present
-            audio_config · audio_push · input_pad · text_input · input_mode
+            video_set_aspect · set_title · audio_config · audio_push · input_pad · text_input · input_mode
             key_state · key_events · pointer · gamepad · gamepad_name
             asset_size · asset_size64 · asset_read · asset_read_at
             asset_read_at64 · asset_count · asset_name

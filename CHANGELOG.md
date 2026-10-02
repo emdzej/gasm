@@ -10,6 +10,19 @@ the package versions (`gasm-sdk`, `gasm-host`, `@emdzej/gasm-host`).
 
 ABI (additive):
 - `gasm.has(name)`: does the runner provide an import module or function.
+- `gasm.set_title(title)`: name the window or browser tab (`<title> — gasm`;
+  control and bidi characters removed, at most 256 bytes; headless runs log
+  it). SDKs: `gasm::set_title`, `gasm_set_title_str`, no-ops on older runners.
+  Used by DOOM, ScummVM and SDL 3 (`SDL_SetWindowTitle`).
+- Custom section `gasm.title`: a game's built-in name, the default window
+  title (and readable by launchers without running the game). SDKs:
+  `gasm::title!("Sumo")`, `GASM_TITLE("Sumo")`. The demo games have one.
+- `gasm.video_set_aspect(num, den)`: show frames at a display aspect instead of
+  square pixels; the pointer's frame position follows. SDKs:
+  `gasm::video_set_aspect`, `gasm_video_aspect` (return false/0 on older
+  runners). DOOM now presents its 320×200 at 4:3 (a quarter of the bytes per
+  frame) and ScummVM 320×200/640×400 games at 4:3, instead of scaling
+  themselves; both still scale on older runners. Their video hashes changed.
 - `gasm.asset_size64`, `gasm.asset_read_at64`: assets of any size (the 2 GiB limit
   is gone); `asset_size` reports assets of 2 GiB and more as `-2`.
 - `gasm:gfx.destroy(handle)`: release GPU objects (handles are never reused).
@@ -41,6 +54,19 @@ Behaviour:
   lazily; storage writes are synced and their temp files can't collide with keys;
   audio uses a lock-free ring and any device sample format; the mouse is released
   when the window loses focus.
+- Upscaling filters for 2D frames: `sharp` (the new default: exactly nearest
+  neighbour at whole factors, even pixels at other factors), `nearest`, `xbr`
+  (edge-directed, for pixel art), `fsr` (AMD FSR 1: EASU upscaling + RCAS
+  sharpening, for rendered or dithered content), `crt` (scanlines and an
+  aperture grille), and integer scaling. Native:
+  `--filter`, `--integer-scale`, `--screenshot-filtered` (saves what the window
+  shows). Browser: `@emdzej/gasm-host/present` (`GlPresenter`, WebGL 2), in the
+  player as `?filter=`/`?integer` and header controls. Both runners render the
+  same pixels (`scripts/present-test.mjs`, with golden images of the test
+  pattern in `tests/golden/present/`). Frames larger than the output are
+  now shrunk with linear filtering. Display only: hashes don't change. With
+  integer scaling the pointer's frame position follows the smaller letterbox
+  (`framePosition`/`frame_position` take the flag; `letterbox` is exported).
 - `gasm-relay` is its own crate (`runners/native/relay`): connection and queue
   limits, handshake timeouts, LEAVE ordered with JOIN.
 - `gasm-host` (crate): runners in the library (`headless::run`, `window::run`),

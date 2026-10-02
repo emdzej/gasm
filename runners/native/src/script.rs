@@ -232,6 +232,7 @@ impl Script {
             released: st.buttons & !buttons,
             flags: (inside as u32) | (mode & 6),
             drawable,
+            integer_scale: false,
         };
         st.buttons = buttons;
 

@@ -27,7 +27,7 @@ property: most tests assert bit-identical hashes.
 | `guests/scummvm/` | ScummVM: gasm backend (MIT, `backend/` -> `backends/platform/gasm`) + `configure.patch` (`wasm32-gasm` host). `scripts/fetch-scummvm.sh` puts ScummVM (GPL-3.0) in `tools/scummvm-src`; `scripts/build-scummvm-libs.sh` builds zlib, libmad, libogg/libvorbis, libFLAC (pinned release tarballs) into `tools/scummvm-libs`; `make scummvm` builds with wasi-sdk and runs `wasm-opt --asyncify` (`scripts/fetch-binaryen.sh`); `scripts/package-scummvm-src.sh` packs exactly the files the build used plus the library sources (verify: a clean `make scummvm` from the tarball is byte-identical) |
 | `guests/doom/` | DOOM: gasm platform layer (MIT) for doomgeneric. `scripts/fetch-doom.sh` puts the GPL-2.0 engine (+ chocolate-doom OPL music) in `tools/doom-src` and applies `engine.patch`; `scripts/package-doom-src.sh` packs the complete source shipped with releases and the site |
 | `runners/native/` | crate `gasm-host` (workspace root; one `target/`): the library has the host (`host.rs`, `wasi.rs` WASI subset, `gfx.rs`, `net.rs`, `storage.rs`, `assets.rs`) and both runners (`headless.rs`, `window.rs` + `keymap.rs` behind the default `window` feature); `src/main.rs` (`gasm-run`) only parses arguments. `relay/`: crate `gasm-relay` (no runtime deps, not on crates.io); `relay.Dockerfile` |
-| `runners/web/` | npm package `@emdzej/gasm-host`: `gasm-host.js` re-exports `lib/` (`host.js`, `wasi.js`, `gfx.js` GfxModel + NullGfx, `net.js`, `storage.js`, `assets.js`, `input.js` keys/keymap/BrowserInput, `audio.js`) + `.d.ts`; `gasm-worker.js`: Worker mode; `webgpu-gfx.js`; `headless.mjs` = `gasm-headless`. Not published: `app.js`/`index.html` (the player), `opfs.html`/`opfs.js` (csfs OPFS import; csfs is a devDependency vendored by `scripts/vendor-web.sh`), `testdata.js` |
+| `runners/web/` | npm package `@emdzej/gasm-host`: `gasm-host.js` re-exports `lib/` (`host.js`, `wasi.js`, `gfx.js` GfxModel + NullGfx, `net.js`, `storage.js`, `assets.js`, `input.js` keys/keymap/BrowserInput, `audio.js`) + `.d.ts`; `gasm-worker.js`: Worker mode; `webgpu-gfx.js`; `gasm-present.js` (2D frames on WebGL 2: letterbox + upscaling filters, GLSL ports of `runners/native/src/present.rs`); `headless.mjs` = `gasm-headless`. Not published: `app.js`/`index.html` (the player), `opfs.html`/`opfs.js` (csfs OPFS import; csfs is a devDependency vendored by `scripts/vendor-web.sh`), `testdata.js` |
 | `runners/native/src/assets.rs`, `keymap.rs` | file-backed assets, `--asset-dir`, case-insensitive lookup; keyboard layouts (`default-keymap.txt` must equal the JS `DEFAULT_KEYMAP`, checked by `gen-abi.mjs --check`) |
 | `tests/golden/determinism.txt` | golden hashes of every determinism case; the same on every platform |
 | `scripts/` | toolchain/ROM fetchers (`lib.sh`: shared checksum helpers), test suites, packaging (`third-party-notices.sh`: license notices shipped with the games), site build, Linux container |
@@ -45,6 +45,8 @@ scripts/net-test.sh           # lockstep sumo via gasm-relay, 3 runner pairs + T
 scripts/asset-test.sh         # folders, case-insensitive names, 200 MB streaming + RSS (must pass)
 node scripts/opfs-test.mjs    # Chrome: OPFS + Worker mode == Node, memory flat
 make parity                   # NES native Rust build == wasm build
+node scripts/present-test.mjs # Chrome: 2D filters, WebGL 2 == native wgpu == tests/golden/present (skips without a GPU)
+                              # UPDATE_GOLDEN=1 re-records the golden images
 scripts/build-site.sh         # website into site/.vitepress/dist (needs build/*.wasm)
 scripts/linux-container.sh    # everything above on Linux arm64 (Apple `container`)
 scripts/linux-container.sh clean   # remove its volumes, image and builder (several GB)
@@ -191,6 +193,15 @@ from the repo root, then
   (`script.rs` and `input-script.mjs`) is parsed and computed identically,
   in f64 rounded to f32 once; the pointer's frame position uses
   `frame_position`/`framePosition` (same formula as the letterbox).
+- **Presentation (2D frames):** display only, applied after hashing. The
+  letterbox (`present::letterbox`, `letterbox` in `lib/input.js`) is shared
+  with the pointer's frame position; with a display aspect
+  (`video_set_aspect`) it multiplies whole numbers before dividing, so 4:3
+  scales come out exact (scripted clicks hit the same pixels on both runners).
+  `set_title` and `video_set_aspect` are not hashed. Filters exist twice (WGSL in `present.rs`,
+  GLSL in `gasm-present.js`): change both, then `node scripts/present-test.mjs`.
+  Both sample from the exact fragment position (plus a 1/1024 bias) and use
+  whole-pixel viewports, so the runners render the same pixels.
 - **Worker mode:** transferables only (no SharedArrayBuffer/COOP/COEP); main
   thread stays the default. `gasm:gfx` guests go to a worker only through a
   transferred `OffscreenCanvas` with WebGPU in the worker; otherwise they run

@@ -41,6 +41,8 @@
 #include "z_zone.h"
 
 #define TICRATE_HZ 35
+/* DOOM's 320x200 was shown on 4:3 screens. Runners with video_set_aspect show
+ * it so; on older ones the game scales to 640x480 itself. */
 #define OUT_W 640
 #define OUT_H 480
 #define RATE 44100
@@ -63,9 +65,16 @@ void DG_SleepMs(uint32_t ms) { slept_ms += ms; }
 /* ---- video ------------------------------------------------------------------ */
 
 static uint8_t fb[OUT_W * OUT_H * 4];
+static int out_w = OUT_W, out_h = OUT_H;   /* the frame presented: 640x480, or 320x200 at 4:3 */
 
-void DG_Init(void) {}
-void DG_SetWindowTitle(const char *title) { (void)title; }
+void DG_Init(void) {
+    if (gasm_video_aspect(4, 3)) {
+        out_w = DOOMGENERIC_RESX;
+        out_h = DOOMGENERIC_RESY;
+    }
+}
+/* the game's name ("DOOM Shareware", "Freedoom: Phase 1") for the window or tab */
+void DG_SetWindowTitle(const char *title) { gasm_set_title_str(title); }
 
 void DG_DrawFrame(void) {
     static uint32_t rgba[256];
@@ -75,6 +84,10 @@ void DG_DrawFrame(void) {
         rgba[i] = r | g << 8 | b << 16 | 0xffu << 24; /* bytes R,G,B,A on little-endian wasm */
     }
     uint32_t *out = (uint32_t *)fb;
+    if (out_w == DOOMGENERIC_RESX) {   /* the runner shows the aspect: the screen as is */
+        for (int i = 0; i < DOOMGENERIC_RESX * DOOMGENERIC_RESY; i++) out[i] = rgba[src[i]];
+        return;
+    }
     int last = -1;
     for (int y = 0; y < OUT_H; y++, out += OUT_W) {
         int sy = y * DOOMGENERIC_RESY / OUT_H;
@@ -528,6 +541,8 @@ GASM_EXPORT("gasm_abi_version") int32_t abi_version(void) { return GASM_ABI_VERS
  * "-playdemo demo1". Assets: "wad" is the IWAD (any name); otherwise the
  * standard names (doom1.wad, doom2.wad, freedoom1.wad, ...) are searched.
  */
+GASM_TITLE("DOOM");   /* until the engine names the game (DG_SetWindowTitle) */
+
 GASM_EXPORT("gasm_init") int32_t init(void) {
     setvbuf(stdout, NULL, _IOLBF, 0); /* engine messages reach the log line by line */
     gasm_set_frame_rate(TICRATE_HZ);
@@ -560,7 +575,7 @@ GASM_EXPORT("gasm_frame") void frame(void) {
     frame_count++;
     poll_input();
     doomgeneric_Tick();
-    gasm_video_present(fb, OUT_W, OUT_H, OUT_W * 4);
+    gasm_video_present(fb, out_w, out_h, out_w * 4);
     mix_audio();
 }
 

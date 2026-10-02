@@ -33,6 +33,7 @@
         { "name": "time_ms", "result": "f64", "doc": "Monotonic time in milliseconds (virtual, frame-derived in headless runs)." },
         { "name": "set_frame_rate", "params": [{ "name": "hz", "type": "f64" }], "doc": "Rate (Hz) at which the runner calls gasm_frame(). Default 60; 1-1000." },
         { "name": "video_present", "params": [{ "name": "rgba", "type": "ptr", "c": "const void *", "rust": "*const u8" }, { "name": "width", "type": "u32" }, { "name": "height", "type": "u32" }, { "name": "stride", "type": "u32" }], "doc": "Present RGBA8 pixels (bytes R,G,B,A), stride bytes per row, w,h <= 4096. Copied before returning; letterboxed by the runner." },
+        { "name": "video_set_aspect", "params": [{ "name": "num", "type": "u32" }, { "name": "den", "type": "u32" }], "doc": "Show video_present frames at display aspect num:den (4:3 for 320x200 DOS games) instead of square pixels; 0:0 resets. Both 1..65535 with 1/8 <= num/den <= 8, else traps. Display and the pointer frame position only (not hashed). Newer than has: probe has(\"gasm.video_set_aspect\") first." },
         { "name": "audio_config", "params": [{ "name": "sample_rate", "type": "u32" }, { "name": "channels", "type": "u32" }], "doc": "Format for audio_push: 8-192 kHz, 1 or 2 channels. Default 44100/2." },
         { "name": "audio_push", "params": [{ "name": "samples", "type": "ptr", "c": "const float *", "rust": "*const f32" }, { "name": "frames", "type": "u32" }], "doc": "Queue frames x channels interleaved f32 samples in [-1, 1]; the runner resamples." },
         { "name": "input_pad", "params": [{ "name": "player", "type": "u32" }], "result": "u32", "doc": "Bitmask of GASM_BTN_* held on virtual pad player (0..3), stable within a frame." },
@@ -50,7 +51,8 @@
         { "name": "asset_read_at64", "params": [{ "name": "name", "type": "str" }, { "name": "offset", "type": "u64" }, { "name": "dst", "type": "ptr", "c": "void *", "rust": "*mut u8" }, { "name": "len", "type": "u32" }], "result": "i32", "doc": "asset_read_at with a 64-bit offset, for assets of 4 GiB and more." },
         { "name": "asset_count", "result": "u32", "doc": "Number of assets." },
         { "name": "asset_name", "params": [{ "name": "index", "type": "u32" }, { "name": "dst", "type": "ptr", "c": "char *", "rust": "*mut u8" }, { "name": "cap", "type": "u32" }], "result": "i32", "doc": "Name of asset index (0 .. asset_count-1, sorted by UTF-8 bytes; folder entries as named on disk). Its length (copied only if length <= cap; cap = 0 queries), or -1 if index is out of range." },
-        { "name": "param", "params": [{ "name": "name", "type": "str" }, { "name": "dst", "type": "ptr", "c": "char *", "rust": "*mut u8" }, { "name": "cap", "type": "u32" }], "result": "i32", "doc": "Launch parameter value length, or -1 if unset. Copied only if length <= cap (cap = 0 queries the length)." }
+        { "name": "param", "params": [{ "name": "name", "type": "str" }, { "name": "dst", "type": "ptr", "c": "char *", "rust": "*mut u8" }, { "name": "cap", "type": "u32" }], "result": "i32", "doc": "Launch parameter value length, or -1 if unset. Copied only if length <= cap (cap = 0 queries the length)." },
+        { "name": "set_title", "params": [{ "name": "title", "type": "str" }], "doc": "Name the game's window or tab (the runner adds its own suffix). Control characters and bidi overrides are removed and the rest is cut to 256 bytes; empty resets to the default. Newer than has: probe has(\"gasm.set_title\") first." }
       ]
     },
     {

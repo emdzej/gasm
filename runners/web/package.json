@@ -12,6 +12,10 @@
       "types": "./webgpu-gfx.d.ts",
       "default": "./webgpu-gfx.js"
     },
+    "./present": {
+      "types": "./gasm-present.d.ts",
+      "default": "./gasm-present.js"
+    },
     "./worker": {
       "types": "./gasm-worker.d.ts",
       "default": "./gasm-worker.js"
@@ -27,6 +31,8 @@
     "lib/",
     "webgpu-gfx.js",
     "webgpu-gfx.d.ts",
+    "gasm-present.js",
+    "gasm-present.d.ts",
     "gasm-worker.js",
     "gasm-worker.d.ts",
     "headless.mjs",

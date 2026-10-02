@@ -11,7 +11,7 @@
 //
 // The implementation is split by concern under lib/; this module re-exports it all.
 
-export { ABI_VERSION, FNV_INIT, GasmHost, ProcExit, VirtualClock, fnv32 } from './lib/host.js';
+export { ABI_VERSION, FNV_INIT, GasmHost, ProcExit, TITLE_MAX_BYTES, VirtualClock, cleanTitle, fnv32, staticTitle } from './lib/host.js';
 export { Splitmix } from './lib/wasi.js';
 export { BUF_COPY_DST, BUF_INDEX, BUF_STORAGE, BUF_UNIFORM, BUF_VERTEX, GfxModel, MAX_BIND_GROUPS, MAX_TEXTURE_SIZE, MAX_VERTEX_BUFFERS, NullGfx, OFFSET_ALIGNMENT, clampRect } from './lib/gfx.js';
 export { MAX_CONNECTIONS, NET_CLOSED, NET_CONNECTING, NET_ERROR, NET_OPEN, NetConnections } from './lib/net.js';
@@ -25,7 +25,7 @@ export {
 } from './lib/assets.js';
 export {
   BUTTONS, BrowserInput, DEFAULT_KEYMAP, GAMEPAD_AXES, GAMEPAD_BUTTONS, GAMEPAD_BYTES, INPUT_KEYS_RAW, INPUT_POINTER_HIDDEN,
-  INPUT_POINTER_LOCKED, KEY_CODES, KEY_STATE_BYTES, POINTER_BYTES, browserGamepads, framePosition, gamepadPads, keyCode,
+  INPUT_POINTER_LOCKED, KEY_CODES, KEY_STATE_BYTES, POINTER_BYTES, browserGamepads, framePosition, letterbox, gamepadPads, keyCode,
   keyboardPads, normalizeCode, parseKeymap,
 } from './lib/input.js';
 export { Resampler } from './lib/audio.js';

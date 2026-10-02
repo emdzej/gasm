@@ -15,7 +15,7 @@
 use std::sync::Arc;
 
 use serde_json::Value;
-use wgpu::util::DeviceExt;
+use crate::present::{Present, Presenter, VideoFrame};
 
 pub const SAMPLE_COUNT: u32 = 4;
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth24Plus;
@@ -162,12 +162,6 @@ struct Frame {
     empty_scissor: bool,
 }
 
-struct Blit {
-    pipeline: wgpu::RenderPipeline,
-    sampler: wgpu::Sampler,
-    texture: Option<(wgpu::Texture, wgpu::BindGroup, u32, u32)>,
-}
-
 struct Object {
     obj: Obj,
     meta: Meta,
@@ -184,7 +178,9 @@ pub struct Gfx {
     /// between begin_frame and end_frame (shown or not)
     pass: Option<Pass>,
     frame: Option<Frame>,
-    blit: Option<Blit>,
+    presenter: Option<Presenter>,
+    /// how video_present frames are shown (filter, integer scaling)
+    pub present: Present,
     /// set by the guest calling any gfx draw API this frame (suppresses the 2D blit)
     pub used: bool,
 }
@@ -197,8 +193,8 @@ fn add_u64(a: u64, b: u64, what: &str) -> R<u64> {
 
 impl Gfx {
     fn new(gpu: Option<Gpu>, target: Option<Target>, width: u32, height: u32) -> Gfx {
-        let blit = gpu.as_ref().map(Blit::new);
-        Gfx { gpu, target, width, height, objects: Vec::new(), msaa: None, depth: None, pass: None, frame: None, blit, used: false }
+        let presenter = gpu.as_ref().map(Presenter::new);
+        Gfx { gpu, target, width, height, objects: Vec::new(), msaa: None, depth: None, pass: None, frame: None, presenter, present: Present::default(), used: false }
     }
 
     /// No GPU: ids and validation only (headless runs without screenshots, CI).
@@ -1228,9 +1224,9 @@ impl Gfx {
 
     // ---- 2D path: show a video_present frame -----------------------------------------------
 
-    /// Letterboxed nearest-neighbour blit of an RGBA frame to the window.
-    pub fn present_video(&mut self, rgba: &[u8], w: u32, h: u32) {
-        let (Some(gpu), Some(Target::Window { surface, config }), Some(blit)) = (&self.gpu, &self.target, &mut self.blit) else { return };
+    /// Show an RGBA frame in the window, letterboxed and filtered (`self.present`).
+    pub fn present_video(&mut self, rgba: &[u8], w: u32, h: u32, aspect: Option<(u32, u32)>) {
+        let (Some(gpu), Some(Target::Window { surface, config }), Some(presenter)) = (&self.gpu, &self.target, &mut self.presenter) else { return };
         let st = match surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(t) | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
             wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
@@ -1239,63 +1235,71 @@ impl Gfx {
             }
             _ => return,
         };
-        blit.upload(gpu, rgba, w, h);
         let view = st.texture.create_view(&Default::default());
         let mut encoder = gpu.device.create_command_encoder(&Default::default());
-        {
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("blit"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view,
-                    depth_slice: None,
-                    resolve_target: None,
-                    ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color::BLACK), store: wgpu::StoreOp::Store },
-                })],
-                ..Default::default()
-            });
-            // letterbox: largest rect with the frame's aspect ratio
-            let (sw, sh) = (self.width as f32, self.height as f32);
-            let scale = (sw / w as f32).min(sh / h as f32);
-            let (vw, vh) = (w as f32 * scale, h as f32 * scale);
-            pass.set_viewport((sw - vw) / 2.0, (sh - vh) / 2.0, vw, vh, 0.0, 1.0);
-            pass.set_pipeline(&blit.pipeline);
-            pass.set_bind_group(0, &blit.texture.as_ref().unwrap().1, &[]);
-            pass.draw(0..3, 0..1);
-        }
+        presenter.draw(gpu, &mut encoder, &view, (self.width, self.height), VideoFrame { rgba, width: w, height: h, aspect }, self.present);
         gpu.queue.submit([encoder.finish()]);
         gpu.queue.present(st);
+    }
+
+    /// Render an RGBA frame as the window would show it at `size` and read it back
+    /// (headless `--screenshot-filtered`). None without a GPU.
+    pub fn render_video(&mut self, rgba: &[u8], w: u32, h: u32, aspect: Option<(u32, u32)>, size: (u32, u32)) -> Option<(u32, u32, Vec<u8>)> {
+        let (Some(gpu), Some(presenter)) = (&self.gpu, &mut self.presenter) else { return None };
+        let texture = gpu.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("filtered"),
+            size: wgpu::Extent3d { width: size.0, height: size.1, depth_or_array_layers: 1 },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: gpu.format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let mut encoder = gpu.device.create_command_encoder(&Default::default());
+        presenter.draw(gpu, &mut encoder, &texture.create_view(&Default::default()), size, VideoFrame { rgba, width: w, height: h, aspect }, self.present);
+        gpu.queue.submit([encoder.finish()]);
+        read_texture(gpu, &texture, size.0, size.1).map(|px| (size.0, size.1, px))
     }
 
     /// Read back the offscreen target as tightly packed RGBA8 (headless screenshots).
     pub fn read_offscreen(&self) -> Option<(u32, u32, Vec<u8>)> {
         let (Some(gpu), Some(Target::Offscreen { texture })) = (&self.gpu, &self.target) else { return None };
-        let (w, h) = (self.width, self.height);
-        let row = (w * 4).div_ceil(256) * 256;
-        let buf = gpu.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("readback"),
-            size: (row * h) as u64,
-            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-            mapped_at_creation: false,
-        });
-        let mut enc = gpu.device.create_command_encoder(&Default::default());
-        enc.copy_texture_to_buffer(
-            texture.as_image_copy(),
-            wgpu::TexelCopyBufferInfo {
-                buffer: &buf,
-                layout: wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(row), rows_per_image: Some(h) },
-            },
-            wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
-        );
-        gpu.queue.submit([enc.finish()]);
-        buf.slice(..).map_async(wgpu::MapMode::Read, |_| {});
-        gpu.device.poll(wgpu::PollType::wait_indefinitely()).ok()?;
-        let data = buf.slice(..).get_mapped_range().ok()?;
-        let mut out = Vec::with_capacity((w * h * 4) as usize);
-        for y in 0..h as usize {
-            out.extend_from_slice(&data[y * row as usize..y * row as usize + (w * 4) as usize]);
-        }
-        Some((w, h, out))
+        read_texture(gpu, texture, self.width, self.height).map(|px| (self.width, self.height, px))
     }
+}
+
+/// Copy a `w×h` 4-byte-per-texel texture back to the CPU, rows tightly packed.
+fn read_texture(gpu: &Gpu, texture: &wgpu::Texture, w: u32, h: u32) -> Option<Vec<u8>> {
+    let row = (w * 4).div_ceil(256) * 256;
+    let buf = gpu.device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("readback"),
+        size: (row * h) as u64,
+        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+        mapped_at_creation: false,
+    });
+    let mut enc = gpu.device.create_command_encoder(&Default::default());
+    enc.copy_texture_to_buffer(
+        texture.as_image_copy(),
+        wgpu::TexelCopyBufferInfo {
+            buffer: &buf,
+            layout: wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(row), rows_per_image: Some(h) },
+        },
+        wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+    );
+    gpu.queue.submit([enc.finish()]);
+    buf.slice(..).map_async(wgpu::MapMode::Read, |_| {});
+    gpu.device.poll(wgpu::PollType::wait_indefinitely()).ok()?;
+    let data = buf.slice(..).get_mapped_range().ok()?;
+    let mut out = Vec::with_capacity((w * h * 4) as usize);
+    for y in 0..h as usize {
+        out.extend_from_slice(&data[y * row as usize..y * row as usize + (w * 4) as usize]);
+    }
+    // a BGRA surface format (window targets) reads back as BGRA
+    if matches!(gpu.format, wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Bgra8UnormSrgb) {
+        out.chunks_exact_mut(4).for_each(|p| p.swap(0, 2));
+    }
+    Some(out)
 }
 
 #[cfg(feature = "window")]
@@ -1457,88 +1461,6 @@ fn compare(s: &str) -> R<wgpu::CompareFunction> {
         "always" => C::Always,
         o => return Err(format!("unsupported compare function {o:?}")),
     })
-}
-
-impl Blit {
-    const SHADER: &str = r#"
-@group(0) @binding(0) var t: texture_2d<f32>;
-@group(0) @binding(1) var s: sampler;
-struct VO { @builtin(position) pos: vec4<f32>, @location(0) uv: vec2<f32> };
-@vertex fn vs(@builtin(vertex_index) i: u32) -> VO {
-  let uv = vec2<f32>(f32((i << 1u) & 2u), f32(i & 2u));
-  var o: VO;
-  o.pos = vec4<f32>(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, 0.0, 1.0);
-  o.uv = uv;
-  return o;
-}
-@fragment fn fs(i: VO) -> @location(0) vec4<f32> { return textureSample(t, s, i.uv); }
-"#;
-
-    fn new(gpu: &Gpu) -> Blit {
-        let module = gpu.device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("blit"),
-            source: wgpu::ShaderSource::Wgsl(Self::SHADER.into()),
-        });
-        let pipeline = gpu.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("blit"),
-            layout: None,
-            vertex: wgpu::VertexState { module: &module, entry_point: Some("vs"), compilation_options: Default::default(), buffers: &[] },
-            primitive: Default::default(),
-            depth_stencil: None,
-            multisample: Default::default(),
-            fragment: Some(wgpu::FragmentState {
-                module: &module,
-                entry_point: Some("fs"),
-                compilation_options: Default::default(),
-                targets: &[Some(gpu.format.into())],
-            }),
-            multiview_mask: None,
-            cache: None,
-        });
-        let sampler = gpu.device.create_sampler(&wgpu::SamplerDescriptor {
-            mag_filter: wgpu::FilterMode::Nearest,
-            min_filter: wgpu::FilterMode::Nearest,
-            ..Default::default()
-        });
-        Blit { pipeline, sampler, texture: None }
-    }
-
-    fn upload(&mut self, gpu: &Gpu, rgba: &[u8], w: u32, h: u32) {
-        if !matches!(&self.texture, Some((_, _, tw, th)) if (*tw, *th) == (w, h)) {
-            let tex = gpu.device.create_texture_with_data(
-                &gpu.queue,
-                &wgpu::TextureDescriptor {
-                    label: Some("video"),
-                    size: wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
-                    mip_level_count: 1,
-                    sample_count: 1,
-                    dimension: wgpu::TextureDimension::D2,
-                    format: wgpu::TextureFormat::Rgba8Unorm,
-                    usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-                    view_formats: &[],
-                },
-                Default::default(),
-                rgba,
-            );
-            let bg = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: None,
-                layout: &self.pipeline.get_bind_group_layout(0),
-                entries: &[
-                    wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&tex.create_view(&Default::default())) },
-                    wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(&self.sampler) },
-                ],
-            });
-            self.texture = Some((tex, bg, w, h));
-            return;
-        }
-        let tex = &self.texture.as_ref().unwrap().0;
-        gpu.queue.write_texture(
-            tex.as_image_copy(),
-            rgba,
-            wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(w * 4), rows_per_image: Some(h) },
-            wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
-        );
-    }
 }
 
 #[cfg(test)]

@@ -120,9 +120,19 @@ make web
    start must be a click.
 
 URL parameters are passed to the game: `?game=sumo.wasm&relay=ws://host:9000&room=abc&autostart`.
-`game`, `autostart`, `wasm`, `worker`, `opfs`, `prefix`, `rom` and
-`hashframes` are used by the page itself; everything else becomes a game
-parameter.
+`game`, `autostart`, `wasm`, `worker`, `opfs`, `prefix`, `rom`, `filter`,
+`integer` and `hashframes` are used by the page itself; everything else becomes
+a game parameter.
+
+**Scaling 2D games:** the filter drop-down (or `?filter=`) picks how frames
+are scaled up, as `gasm-run --filter` does: `sharp` (the default: even pixels
+at any size, exactly like `nearest` at whole multiples), `nearest` (plain
+pixel doubling), `xbr` (smooth edges for pixel art), `fsr` (AMD FSR 1:
+upscaling with sharpening, for rendered or dithered games such as DOOM) or
+`crt` (scanlines and an aperture grille). **integer**
+(or `?integer`) scales by whole multiples only. The choice is remembered.
+Filters other than `nearest` need WebGL 2 (without it the page falls back to
+`nearest`); 3D games aren't affected.
 
 **Folders and big data sets in the browser:**
 
@@ -222,12 +232,17 @@ gasm-run <game.wasm|game.cwasm> [options]
 --storage-dir <dir>      where saves live (default: see "Saves" below)
 --storage-id <id>        save namespace (default: the game file's name)
 --window <W>x<H>         initial window size (default 960x720)
+--filter <name>          how 2D frames are scaled up: sharp (default), nearest, xbr, fsr, crt
+--integer-scale          scale 2D frames by whole multiples only (black border around)
 --mute                   no audio output
 --compile <out.cwasm>    ahead-of-time compile to native code and exit
 --allow-precompiled      accept a .cwasm (native code: only files you compiled yourself)
 --call-timeout <secs>    trap a game call (init, a frame) that runs longer (default 30, 0 = never)
 --headless <N>           run N frames with no window or audio; print hashes
 --screenshot <out.png>   (headless) save the last frame (GPU games render offscreen)
+--screenshot-filtered <out.png>
+                         (headless) save the last frame as the window shows it
+                         (--filter, --integer-scale at --window size)
 --input <script>         (headless) scripted input, see below
 --realtime               (headless) run at the game's frame rate instead of flat out
 --no-hash                (headless) skip hashing (for benchmarks)

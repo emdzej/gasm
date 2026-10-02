@@ -34,6 +34,7 @@ public:
 
 	void quit() override;
 	void logMessage(LogMessageType::Type type, const char *message) override;
+	void setWindowCaption(const Common::U32String &caption) override;
 	void addSysArchivesToSearchSet(Common::SearchSet &s, int priority) override;
 	Common::SeekableReadStream *createConfigReadStream() override;
 	Common::WriteStream *createConfigWriteStream() override;

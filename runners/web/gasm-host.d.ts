@@ -85,6 +85,8 @@ export interface RawPointer {
   flags: number;
   /** drawable size, for the frame position */
   drawable: [width: number, height: number];
+  /** 2D frames are shown at whole multiples (letterbox), for the frame position */
+  integerScale?: boolean;
 }
 export interface RawGamepad { connected: boolean; standard: boolean; buttons: number[]; axes: number[]; name: string; }
 export interface RawInput {
@@ -111,7 +113,9 @@ export declare const INPUT_KEYS_RAW: number;
 export declare const INPUT_POINTER_HIDDEN: number;
 export declare const INPUT_POINTER_LOCKED: number;
 /** A drawable position mapped into a frame (as letterboxed by the runners). */
-export declare function framePosition(x: number, y: number, drawable: [number, number], frame: [number, number]): [number, number];
+export declare function framePosition(x: number, y: number, drawable: [number, number], frame: [number, number], integerScale?: boolean, aspect?: [number, number] | null): [number, number];
+/** Where a frame lands in an output, centred: [left, top, scaleX, scaleY]. `aspect`: the frame's display aspect (video_set_aspect), null = square pixels. */
+export declare function letterbox(output: [number, number], frame: [number, number], integerScale?: boolean, aspect?: [number, number] | null): [number, number, number, number];
 /** navigator.getGamepads() as RawInput.gamepads. */
 export declare function browserGamepads(): RawGamepad[];
 /** Virtual pads (GASM_BTN_* masks) from raw gamepads: standard buttons, left stick as d-pad. */
@@ -130,6 +134,8 @@ export declare class BrowserInput {
   setElement(element: HTMLElement): void;
   setMode(flags: number): void;
   frame(first?: boolean): RawInput;
+  /** The page shows 2D frames at whole multiples (the pointer's frame position follows). */
+  integerScale: boolean;
 }
 
 /** gasm:storage backend. */
@@ -211,10 +217,12 @@ export interface GasmHostOptions {
   /** Allow gasm:net connections (WebSocket). Default false. */
   allowNet?: boolean;
   /** 2D frames from gasm.video_present (RGBA8, tightly packed). */
-  onPresent?: (rgba: Uint8ClampedArray, width: number, height: number) => void;
+  onPresent?: (rgba: Uint8ClampedArray, width: number, height: number, aspect: [num: number, den: number] | null) => void;
   /** Audio from gasm.audio_push: interleaved f32 at the guest's rate. */
   onAudio?: (samples: Float32Array, rate: number, channels: number) => void;
   onLog?: (message: string) => void;
+  /** gasm.set_title, after a frame that changed it (cleaned; null = back to the default). */
+  onTitle?: (title: string | null) => void;
   /** Buttons held on virtual pad `player` (0..3) as a bitmask. */
   getPad?: (player: number) => number;
   /** Reproducible (headless) mode: frame-derived time_ms and WASI clocks, a fixed
@@ -237,8 +245,21 @@ export interface FrameStep {
  *   await host.load(await (await fetch('game.wasm')).arrayBuffer());
  *   setInterval(() => host.frame(), 1000 / host.frameRate);
  */
+/** Longest title gasm.set_title keeps, in UTF-8 bytes (256). */
+export declare const TITLE_MAX_BYTES: number;
+/** set_title text as runners show it: control and bidi characters removed, cut to 256 bytes; null if empty. */
+export declare function cleanTitle(text: string): string | null;
+/** A module's built-in title (custom section gasm.title), cleaned; null if none. */
+export declare function staticTitle(module: WebAssembly.Module): string | null;
+
 export declare class GasmHost {
   constructor(options?: GasmHostOptions);
+  /** The guest's set_title (cleaned); null: the runner's default. */
+  readonly title: string | null;
+  /** The module's gasm.title section (cleaned), after load(); null if none. */
+  readonly staticTitle: string | null;
+  /** The guest's video_set_aspect [num, den]; null: square pixels. */
+  readonly aspect: [number, number] | null;
   assets: GasmAssetProvider;
   params: Record<string, string>;
   gfx: GfxBackend;

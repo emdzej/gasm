@@ -20,6 +20,7 @@ pub mod headless;
 pub mod host;
 pub mod keys;
 pub mod net;
+pub mod present;
 pub mod script;
 pub mod session;
 pub mod storage;

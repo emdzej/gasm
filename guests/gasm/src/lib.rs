@@ -51,6 +51,55 @@ pub fn set_frame_rate(hz: f64) {
     unsafe { sys::set_frame_rate(hz) }
 }
 
+/// Show `video_present` frames at display aspect `num:den` (e.g. 4:3 for a
+/// 320×200 game drawn for a CRT) instead of square pixels; `(0, 0)` resets.
+/// Returns false on runners without it: the game then corrects the aspect itself
+/// (or accepts square pixels). Display only: hashes don't change.
+pub fn video_set_aspect(num: u32, den: u32) -> bool {
+    static SUPPORTED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    let ok = *SUPPORTED.get_or_init(|| has("gasm.video_set_aspect"));
+    if ok {
+        unsafe { sys::video_set_aspect(num, den) }
+    }
+    ok
+}
+
+/// The game's built-in title (custom section `gasm.title`): runners show it
+/// (and launchers list it) before the game runs and while it hasn't called
+/// [`set_title`]. Use once, at the top level: `gasm::title!("Sumo");`
+#[macro_export]
+macro_rules! title {
+    ($t:literal) => {
+        // a wasm custom section; native builds of a game (tests, parity) just keep the bytes
+        #[cfg_attr(target_arch = "wasm32", unsafe(link_section = "gasm.title"))]
+        #[used]
+        static __GASM_TITLE: [u8; $t.len()] = $crate::__title_bytes($t);
+    };
+}
+
+#[doc(hidden)]
+pub const fn __title_bytes<const N: usize>(s: &str) -> [u8; N] {
+    let b = s.as_bytes();
+    let mut out = [0u8; N];
+    let mut i = 0;
+    while i < N {
+        out[i] = b[i];
+        i += 1;
+    }
+    out
+}
+
+/// Name the game's window or browser tab (runners add their own suffix, e.g.
+/// "DOOM — gasm"). Control characters are dropped, at most 256 bytes are kept,
+/// and `""` restores the default (the file name). Does nothing on runners
+/// without it.
+pub fn set_title(title: &str) {
+    static SUPPORTED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    if *SUPPORTED.get_or_init(|| has("gasm.set_title")) {
+        unsafe { sys::set_title(title.as_ptr(), title.len() as u32) }
+    }
+}
+
 /// Launch parameter (`--param k=v` natively, `?k=v` in the browser).
 pub fn param(name: &str) -> Option<String> {
     let len = unsafe { sys::param(name.as_ptr(), name.len() as u32, std::ptr::null_mut(), 0) };

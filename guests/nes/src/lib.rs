@@ -130,3 +130,4 @@ impl gasm::Game for Nes {
 }
 
 gasm::game!(Nes);
+gasm::title!("NES");

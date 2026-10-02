@@ -194,11 +194,23 @@ static bool GASM_SetRelativeMouseMode(bool enabled)
 
 /* ---- windows and the framebuffer --------------------------------------------------------- */
 
+/* The window title names the runner's window or tab (gasm.set_title, if the runner has it). */
+static void GASM_SetWindowTitle(SDL_VideoDevice *_this, SDL_Window *window)
+{
+    (void)_this;
+    if (window == shown) {
+        gasm_set_title_str(window->title ? window->title : "");
+    }
+}
+
 static bool GASM_CreateWindow(SDL_VideoDevice *_this, SDL_Window *window, SDL_PropertiesID props)
 {
     (void)_this; (void)props;
     if (!shown) {
         shown = window;
+        if (window->title) {
+            gasm_set_title_str(window->title);
+        }
     }
     SDL_SetKeyboardFocus(window);
     SDL_SetMouseFocus(window);
@@ -327,6 +339,7 @@ static SDL_VideoDevice *GASM_CreateDevice(void)
     device->CreateSDLWindow = GASM_CreateWindow;
     device->DestroyWindow = GASM_DestroyWindow;
     device->SetWindowSize = GASM_SetWindowSize;
+    device->SetWindowTitle = GASM_SetWindowTitle;
     device->SetWindowPosition = GASM_SetWindowPosition;
     device->SetWindowFullscreen = GASM_SetWindowFullscreen;
     device->CreateWindowFramebuffer = GASM_CreateWindowFramebuffer;

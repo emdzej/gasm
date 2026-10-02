@@ -13,7 +13,7 @@
 import { closeSync, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { deflateSync } from 'node:zlib';
-import { AssetTable, GasmHost, MemoryStorage, ProcExit, bytesSource, validKey } from './gasm-host.js';
+import { AssetTable, GasmHost, MemoryStorage, ProcExit, bytesSource, staticTitle, validKey } from './gasm-host.js';
 import { InputScript } from './input-script.mjs';
 
 const USAGE = 'usage: headless.mjs <game.wasm> --headless N [--rom path] [--asset name=path] [--asset-dir [prefix=]dir] ' +
@@ -118,12 +118,16 @@ console.error(`[gasm-node] storage: ${storageDir ?? 'memory'}`);
 
 const host = new GasmHost({
   assets: table, params, allowNet, storage, virtualTime: true, onLog: (m) => console.error(m),
+  onTitle: (t) => console.error(`[gasm] title: ${t ?? '(default)'}`),
   getPad: (p) => (p !== 0 ? 0 : script.pad(host.frameIndex)),
 });
 host.hashing = !noHash;
 const t0 = performance.now();
 try {
-  await host.load(readFileSync(wasm));
+  const module = await WebAssembly.compile(readFileSync(wasm));
+  const builtIn = staticTitle(module);
+  if (builtIn) console.error(`[gasm] title: ${builtIn} (gasm.title)`);
+  await host.load(module);
 } catch (e) {
   if (e instanceof ProcExit) process.exit(e.code);   // exited during init
   throw e;

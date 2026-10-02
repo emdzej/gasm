@@ -142,6 +142,11 @@ void OSystem_Gasm::quit() {
 	_quitRequested = true;
 }
 
+// "ScummVM", then the game's name: the runner's window or tab title (gasm.set_title)
+void OSystem_Gasm::setWindowCaption(const Common::U32String &caption) {
+	gasm_set_title_str(caption.encode().c_str());
+}
+
 void OSystem_Gasm::logMessage(LogMessageType::Type, const char *message) {
 	size_t n = strlen(message);
 	while (n && message[n - 1] == '\n')

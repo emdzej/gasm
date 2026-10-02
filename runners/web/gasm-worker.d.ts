@@ -13,7 +13,7 @@ export interface WorkerStats {
 
 export interface FramesResult {
   /** The latest 2D frame, if a new one was presented. */
-  frame: { rgba: Uint8ClampedArray; width: number; height: number } | null;
+  frame: { rgba: Uint8ClampedArray; width: number; height: number; aspect: [number, number] | null } | null;
   stats: WorkerStats;
   frameIndex: number;
   frameRate: number;
@@ -43,10 +43,14 @@ export declare class GasmWorker {
     virtualTime?: boolean;
     onLog?: (message: string) => void;
     onAudio?: (samples: Float32Array, rate: number, channels: number) => void;
+    /** gasm.set_title changed (cleaned; null = the default). */
+    onTitle?: (title: string | null) => void;
     url?: URL | string;
   }): Promise<GasmWorker>;
   readonly worker: Worker;
   frameRate: number;
+  /** The guest's set_title as of the last batch (null: default). */
+  readonly title: string | null;
   /** GASM_INPUT_* flags the guest asked for, after the last batch. */
   inputMode: number;
   stats: WorkerStats | null;

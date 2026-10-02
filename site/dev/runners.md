@@ -136,6 +136,8 @@ ignore silently. String arguments must be UTF-8; trap otherwise.
 | `asset_size/read` | Flat map; `-1` if missing; copy `min(len, cap)`. `asset_size` returns `-2` for assets of 2 GiB and more. |
 | `asset_size64` / `asset_read_at64` | Sizes and offsets as 64-bit integers (`i64`; `BigInt` in JS), so assets of any size work. |
 | `param(name, dst, cap)` | String map (CLI `--param`, URL query); return length, copy only if it fits; `-1` if unset. |
+| `video_set_aspect(num, den)` | Trap unless `0, 0` (square pixels) or both 1–65535 with 1/8 ≤ num/den ≤ 8. Letterbox later frames at that aspect (the spec's formula, whole numbers multiplied before dividing) and map the pointer with it. Not hashed. |
+| `set_title(ptr, len)` | Remove control and bidi characters, cut to 256 bytes, empty = default (the file name). Show it with your own suffix (`— gasm`) after the frame; log it headless. Not hashed. |
 
 ### Step 4: the frame loop
 

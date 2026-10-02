@@ -43,6 +43,8 @@ check test-pattern       test-pattern 300 --input "30-200:RIGHT+A,100-150:DOWN,5
 check textured-text       textured 600 --input '100:"hi",150:"\b!\n",200:"x,y",400-450:A,250-260:WHEEL(0,1),300-330:PTR(640,360,L),310-330:MOVE(20,0)'
 # raw input: keys with modifiers, pointer (frame mapping, clicks, wheel, motion), gamepads, storage keys
 check inputtest           inputtest 200 --input '10-40:KEY(ShiftLeft+ArrowLeft),20-25:KEY(KeyA),50:PTR(640,360),51-53:PTR(700,300,L),54:PTR(700,300),60-70:WHEEL(0,1),71-80:MOVE(5,-3),90-120:GP0(B0+B9+A0=-0.75+A1=0.5),100-110:GP2(B3),130:PTR(10,10,R),131:PTR(10,10),140-150:UP+A,160:"hi"'
+# display aspect (video_set_aspect): the pointer's frame position follows the 16:9 letterbox
+check inputtest-aspect    inputtest 120 --param aspect=16:9 --input '20:PTR(100,100),30-32:PTR(1000,500,L),33:PTR(1000,500),40-60:PTR(1270,10)'
 # own main loop (Asyncify in the guest): Rust gasm::main_loop and C gasm_loop.h, both
 # play until START is held for a second and then return from main (exit code 0)
 check loopdemo-rust       loopdemo 400 --input '100-110:START,150-200:RIGHT+A,230-240:DOWN,250-330:START'
@@ -84,6 +86,16 @@ check drascula-mp3        scummvm 900 --asset-dir roms/drascula/game --asset-dir
 check drascula-flac       scummvm 900 --asset-dir roms/drascula/game --asset-dir roms/drascula/flac --param "args=--auto-detect -p /"
 check freedoom2-save-load doom 1100 --asset wad=roms/freedoom2.wad --param "args=-warp 1 -skill 4" \
   --input "20-200:UP+A,210-211:START,220-221:DOWN,230-231:DOWN,240-241:DOWN,250-251:A,260-261:A,270-271:A,300-500:LEFT+UP+A,510-511:START,520-521:UP,530-531:A,540-541:A,600-900:RIGHT+UP+A+Y,905-906:X,910-1100:LEFT+R+A"
+
+# video_set_aspect outside 1/8..8 traps on every runner
+for runner in "$NATIVE" "$NODE"; do
+  out=$($runner build/inputtest.wasm --headless 2 --param aspect=1:9 2>&1)
+  if grep -q 'video_set_aspect: invalid ratio 1:9' <<<"$out"; then
+    pass=$((pass + 1)); printf 'PASS  %-22s %s\n' "aspect-trap" "${runner##*/}"
+  else
+    fail=$((fail + 1)); printf 'FAIL  aspect-trap (%s): no trap for 1:9\n' "$runner"
+  fi
+done
 
 echo "$pass passed, $fail failed"
 if [ -n "$UPDATE" ] && [ "$fail" -eq 0 ]; then

@@ -20,6 +20,8 @@ static double phase;
 
 GASM_EXPORT("gasm_abi_version") int32_t abi_version(void) { return GASM_ABI_VERSION; }
 
+GASM_TITLE("Test pattern");
+
 GASM_EXPORT("gasm_init") int32_t init(void) {
     gasm_set_frame_rate(60.0);
     gasm_audio_config(RATE, 1);

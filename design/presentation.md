@@ -1,8 +1,11 @@
 # Presentation: upscaling filters, display aspect, window title
 
-> **Status: proposed.** Nothing implemented yet. This is the feature description
-> and the plan; the ABI details land in `spec/abi.json` and `spec/ABI.md` when
-> the work starts.
+> **Status: implemented** (all phases; see "Plan" for what each became and what
+> was left out): the filters (`sharp` by default, `nearest`, `xbr`, `fsr`,
+> `crt`) and integer scaling natively and in the browser,
+> `--screenshot-filtered`, `scripts/present-test.mjs` with golden images,
+> `gasm.set_title`, the `gasm.title` section and `gasm.video_set_aspect`. The ABI details land in `spec/abi.json` and `spec/ABI.md` when that
+> work starts.
 
 ## Summary
 
@@ -69,16 +72,13 @@ guests check for them before calling (see "Feature detection").
 
 | Name | Algorithm | Best for | License |
 |---|---|---|---|
-| `nearest` | current behaviour | default for now | — |
-| `sharp` | integer prescale (nearest) + bilinear to the exact size | everything; candidate for the default | own code |
-| `xbr` | Super-xBR / xBR-lv2 (Hyllian) | NES, ScummVM, sprite art | MIT |
-| `scalefx` | ScaleFX (multi-pass xBR refinement) | pixel art, highest quality | check before adopting |
-| `mmpx` | MMPX (McGuire & Gagiu, 2021), 2× per pass | pixel art | MIT |
-| `fsr` | AMD FSR 1: EASU + RCAS | DOOM, dithered or 3D-rendered content | MIT |
-| `crt` | crt-lottes or crt-geom style scanlines + mask | the "authentic" look | MIT / check |
-
-Phase 1 ships `nearest`, `sharp`, `xbr` and `fsr`. The others follow if
-they're wanted.
+| `nearest` | the behaviour before this work | exact pixel doubling | — |
+| `sharp` | integer prescale (nearest) + bilinear to the exact size | everything; **the default** | own code |
+| `xbr` | xBR-lv2 (Hyllian's algorithm, own implementation) | NES, ScummVM, sprite art | MIT |
+| `fsr` | AMD FSR 1: EASU + RCAS (own implementation) | DOOM, dithered or 3D-rendered content | MIT |
+| `crt` | own design: scanline beams + aperture grille | the "authentic" look | own code |
+| `scalefx` | ScaleFX (multi-pass xBR refinement) | pixel art, highest quality | not done (see Plan) |
+| `mmpx` | MMPX (McGuire & Gagiu, 2021), 2× per pass | pixel art | not done (see Plan) |
 
 ### Pass chain
 
@@ -98,7 +98,10 @@ source w×h
 - Factor < 1 (frame bigger than the output): linear or area filtering for every
   filter, because nearest-neighbour aliases when shrinking.
 - `--integer-scale` (works with any filter): the target becomes the largest
-  integer multiple that fits; the rest is black border.
+  integer multiple that fits; the rest is black border. The pointer's frame
+  position follows it (`frame_position` takes the flag; the browser's
+  `framePosition` needs the same when it gets `?integer`). Headless runs
+  never use it, so scripted pointer input keeps its hashes.
 
 The chain and its intermediate textures are rebuilt when the frame size, window
 size or display aspect changes, not just at start-up. They are a handful of
@@ -106,10 +109,15 @@ small textures, so rebuilding costs microseconds.
 
 ### Native
 
-`Gfx::present_video` (`runners/native/src/gfx.rs`) already uploads the frame
-and draws one fullscreen triangle with a nearest sampler. It becomes:
-upload → chain passes into intermediate textures → final pass into the
-letterboxed viewport. Shaders are WGSL, kept in `runners/native/src/filters/`.
+`runners/native/src/present.rs` has the letterbox (`letterbox`, shared with
+the pointer's `frame_position`), the filters and the `Presenter`:
+`Gfx::present_video` and `Gfx::render_video` (filtered screenshots) upload the
+frame and draw one fullscreen triangle into the letterboxed viewport with the
+filter's pipeline. The shaders are WGSL in the same file. `sharp` and `xbr` are
+single passes, so there are no intermediate textures yet; they arrive with
+`fsr` (EASU then RCAS). The source texture is recreated when the frame size
+changes, and the sizes go to a uniform every frame, so window and frame
+resizes need no other handling.
 
 ### Browser
 
@@ -132,14 +140,26 @@ and a WebGL 2 presenter draws into it:
 - The GLSL shaders are ports of the same WGSL shaders. A test compares the two
   (below).
 - Fallback: without WebGL 2, the canvas 2D path with `nearest`.
+- As built: `nearest` without integer scaling keeps the canvas 2D path;
+  anything else uses `GlPresenter` on a canvas sized by `canvasSize()`.
+  Switching between the two at runtime replaces the canvas (one context type
+  per canvas) and redraws the frame on screen. The page sets
+  `BrowserInput.integerScale`, which travels with the pointer to the host (and
+  to the worker), so `framePosition` matches what is shown.
+- Exact parity: both runners compute the source position from the fragment's
+  framebuffer position (an interpolated coordinate rounds differently per GPU,
+  and at factors like 3.125 pixel centres land exactly on texel edges), add a
+  1/1024 texel bias so such ties go the same way, read `nearest`/`xbr` texels
+  with `textureLoad`/`texelFetch`, and use whole-pixel viewports (WebGL has no
+  fractional ones).
 
 ### Configuration
 
 - Native: `--filter <name>`, `--integer-scale`.
 - Browser: `?filter=` and `?integer`, plus a player menu entry stored in
   `localStorage`.
-- Default: `nearest` in phase 1, so existing behaviour and screenshots don't
-  change. Switching the default to `sharp` is its own later decision.
+- Default: `sharp` (phase 6; `nearest` until then). At whole factors it is
+  pixel-identical to `nearest`, so only non-integer scaling looks different.
 
 ### Determinism and headless
 
@@ -199,11 +219,12 @@ gasm.set_title(title: str)
   `setWindowCaption`, the DOOM platform layer (`DOOM`, `Freedoom: Phase 1`, …),
   and a `gasm::set_title` wrapper in the Rust SDK.
 
-### Static title (possible follow-up)
+### Static title
 
-A launcher or the site's game list wants the name before the game runs. That
-would be a `gasm.title` custom section read at load time, in addition to the
-runtime call. It isn't part of this change.
+A launcher or the site's game list wants the name before the game runs: the
+`gasm.title` custom section (UTF-8, cleaned like `set_title`) is read at load
+time and is the default title until the guest calls `set_title`. Done in
+phase 6.
 
 ## Feature detection
 
@@ -220,11 +241,13 @@ release as the oldest runner they support. `gasm::set_title` and
 
 - **Determinism suite:** unchanged hashes for every case, with every filter
   selected (filters must not leak into hashes).
-- **Filter goldens:** headless `--screenshot-filtered` for each filter over a
-  fixed set of frames (NES, DOOM, ScummVM, test pattern) at several output sizes
-  (integer, non-integer, downscale). Native vs browser compared with a small
-  tolerance (wgpu and WebGL 2 differ in the last bit), each against its own
-  golden exactly.
+- **Filter parity** (`scripts/present-test.mjs`, done): `--screenshot-filtered`
+  for each filter (and `nearest` with integer scaling) on the test pattern and
+  NES, at 768×720, 1000×750, 1280×720 and 200×150, against `GlPresenter` in
+  Chrome on the same raw frame. Tolerance ±3 per channel on 0.2% of pixels;
+  measured on an M1 Pro (Metal on both sides): all 32 cases identical. Skips
+  without a GPU, so it isn't in CI yet (needs a software Vulkan such as
+  lavapipe). Golden PNGs per runner are still to do.
 - **Resize:** a test-pattern mode that changes frame size every N frames; no
   validation errors, and the chain is rebuilt (counted in a log line).
 - **Aspect:** scripted pointer input against a 4:3 320×200 frame gives the same
@@ -236,19 +259,49 @@ release as the oldest runner they support. `gasm::set_title` and
 
 ## Plan
 
-1. **Native presenter.** Pass-chain infrastructure in `gfx.rs`, `sharp` and
-   `xbr`, `--filter`, `--integer-scale`, rebuild on resize,
-   `--screenshot-filtered`.
-2. **Browser presenter.** `gasm-present.js` (WebGL 2), the same two filters,
-   player menu, Worker mode via `OffscreenCanvas`.
-3. **`fsr`** on both runners; goldens for all filters.
-4. **ABI: `set_title`.** `abi.json` → regenerate, `ABI.md`, `CHANGELOG.md`, the
-   `gasm` crate, both runners, SDL driver, ScummVM backend, DOOM platform layer,
-   site docs.
-5. **ABI: `video_set_aspect`.** Same list, plus the pointer-mapping formula in
-   all four places; DOOM and ScummVM set 4:3.
-6. Optional: `crt`, `mmpx`, `scalefx`; deciding on `sharp` as the default; the
-   static title section.
+1. **Native presenter** (done). `sharp` and `xbr`, `--filter`,
+   `--integer-scale`, `--screenshot-filtered`. Multi-pass chains wait for `fsr`.
+2. **Browser presenter** (done). `gasm-present.js` (WebGL 2), the same
+   filters, player controls, Worker mode (frames come back to the page), the
+   parity test.
+3. **`fsr`** on both runners; goldens for all filters (done). EASU renders
+   into a viewport-sized intermediate texture, RCAS (sharpness 0.2 stops, FSR's
+   default) from it into the output: the only two-pass filter. EASU runs at any
+   factor above 1 in one pass rather than in 2× steps; it doesn't need them.
+   Goldens are the test pattern at 1000×750 for every filter
+   (`tests/golden/present/`, our own content, so no ROM imagery in the repo).
+4. **ABI: `set_title`** (done). `abi.json` → regenerate, `ABI.md`,
+   `CHANGELOG.md`, the `gasm` crate, both runners, SDL driver, ScummVM backend,
+   DOOM platform layer, site docs. The C helper is `gasm_set_title_str`
+   (cached `has` probe). DOOM shows "DOOM Shareware", ScummVM the game's name.
+5. **ABI: `video_set_aspect`** (done). Same list, plus the pointer-mapping
+   formula; DOOM and ScummVM set 4:3 (and keep scaling themselves on older
+   runners). The formula was first written as display width = fh·n/d, which
+   made 320×200 at 4:3 scale by 3.0000000000000004 and moved scripted clicks by
+   a pixel; it now multiplies whole numbers before dividing. Integer scaling
+   floors the vertical scale. The browser player's canvas box takes the frame's
+   display aspect (`--ar`), which also fixed stretching in tall windows. SDL
+   needs nothing: SDL apps render at window size and letterbox in SDL's own
+   renderer (`SDL_SetRenderLogicalPresentation`). Tests: `inputtest-aspect`
+   and `aspect-trap` in the determinism suite, 16:9 cases in the parity test.
+6. Optional (done, two items declined):
+   - `crt`: an own design (no license questions): the two nearest lines as
+     beams whose height grows with brightness, sharp bilinear horizontally,
+     an RGB aperture grille one output pixel per stripe, in linear light.
+     Needs 2 output rows per line, otherwise `sharp`.
+   - `sharp` is the default. Checked first: at whole factors it now gives
+     exactly `nearest` (the flat region absorbs the 1/1024 tie bias; before
+     that fix pixels differed by up to 2/255), so integer-scaled games look
+     the same, and other factors lose the uneven pixels.
+   - Static title: custom section `gasm.title` (Rust `gasm::title!`, C
+     `GASM_TITLE`, which emits the section with top-level assembly: clang's
+     `section` attribute doesn't make custom sections). The default title in
+     both runners, logged headless. `wasm-opt` keeps it.
+   - Not done: `mmpx` and `scalefx`. Both cover what `xbr` already does
+     (pixel art edges); MMPX's rule tables and ScaleFX's five passes would have
+     to be ported from their reference sources, which this work didn't have
+     at hand, and ScaleFX's license still needs checking. Worth revisiting if
+     `xbr` falls short on some content.
 
 Phases 1–3 need no ABI change and can ship on their own. Phases 4 and 5 are
 independent of each other.

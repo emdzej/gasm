@@ -133,7 +133,7 @@ SCUMMVM_CONFIG  := --host=wasm32-gasm --backend=gasm --disable-all-engines \
   --disable-lua --disable-tinygl --disable-opengl-game --disable-system-dialogs \
   --disable-eventrecorder --disable-translation \
   $(foreach l,zlib mad vorbis ogg flac,--enable-$(l) --with-$(l)-prefix=$(SCUMMVM_LIBS))
-SCUMMVM_SRCS := $(wildcard guests/scummvm/backend/*) sdk/c/src/gasm_loop.c sdk/c/include/gasm_loop.h
+SCUMMVM_SRCS := $(wildcard guests/scummvm/backend/*) sdk/c/src/gasm_loop.c sdk/c/include/gasm_loop.h spec/gasm.h
 SCUMMVM_ENV  := CXX="$(WASI_SDK)/bin/clang++ --target=wasm32-wasip1 --sysroot=$(WASI_SDK)/share/wasi-sysroot" \
   CC="$(WASI_SDK)/bin/clang --target=wasm32-wasip1 --sysroot=$(WASI_SDK)/share/wasi-sysroot" \
   AR="$(WASI_SDK)/bin/llvm-ar" RANLIB="$(WASI_SDK)/bin/llvm-ranlib" STRIP="$(WASI_SDK)/bin/llvm-strip" \

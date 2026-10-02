@@ -39,9 +39,35 @@ const NO_INPUT = Object.freeze({ keys: null, keyEvents: [], pointer: null, gamep
 
 export { ProcExit };
 
+/** Longest title set_title keeps, in UTF-8 bytes. */
+export const TITLE_MAX_BYTES = 256;
+const BIDI_OR_CONTROL = /[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/gu;
+/**
+ * A guest's set_title text as runners show it: control characters (Unicode Cc)
+ * and bidi controls removed, then cut to 256 UTF-8 bytes at a character
+ * boundary; null if empty (the runner's default). Same rules as
+ * runners/native/src/host.rs clean_title.
+ */
+export function cleanTitle(text) {
+  let out = '', bytes = 0;
+  for (const ch of text.replace(BIDI_OR_CONTROL, '')) {
+    const cp = ch.codePointAt(0), n = cp < 0x80 ? 1 : cp < 0x800 ? 2 : cp < 0x10000 ? 3 : 4;
+    if (bytes + n > TITLE_MAX_BYTES) break;
+    out += ch; bytes += n;
+  }
+  return out || null;
+}
+
+/** The module's built-in title (custom section gasm.title), cleaned like set_title; null if none. */
+export function staticTitle(module) {
+  const [s] = WebAssembly.Module.customSections(module, 'gasm.title');
+  if (!s) return null;
+  try { return cleanTitle(new TextDecoder('utf-8', { fatal: true }).decode(s)); } catch { return null; }
+}
+
 export class GasmHost {
   constructor({ assets = {}, params = {}, gfx = new NullGfx(), storage = new MemoryStorage(), allowNet = false,
-                onPresent = () => {}, onAudio = () => {}, onLog = console.log,
+                onPresent = () => {}, onAudio = () => {}, onLog = console.log, onTitle = () => {},
                 getPad = () => 0, virtualTime = false } = {}) {
     // GasmAssetProvider ({ size(name), readAt(name, offset, dst), names() }), or a plain
     // { name: Uint8Array } record (wrapped as an in-memory provider).
@@ -54,6 +80,11 @@ export class GasmHost {
     this.onPresent = onPresent;      // (rgba: Uint8ClampedArray, w, h)
     this.onAudio = onAudio;          // (samples: Float32Array interleaved, rate, channels)
     this.onLog = onLog;
+    this.onTitle = onTitle;          // (title: string | null) after a frame that changed it; null = default
+    this.title = null;               // set_title, cleaned
+    this.staticTitle = null;         // the module's gasm.title section (the default title), after load()
+    this.aspect = null;              // video_set_aspect [num, den]; null = square pixels
+    this.titleChanged = false;
     this.getPad = getPad;            // (player) -> bitmask
     this.text = null;                // text typed since the previous frame (set per frame); null = no keyboard
     // Raw input for the next frame (set per frame by the runner; null = no such device):
@@ -124,6 +155,10 @@ export class GasmHost {
     return {
       log: (ptr, len) => this.onLog(`[guest] ${LOSSY.decode(this.bytes(ptr, len))}`),
       has: (ptr, len) => (this.provided.has(this.str(ptr, len)) ? 1 : 0),
+      set_title: (ptr, len) => {
+        const t = cleanTitle(this.str(ptr, len));
+        if (t !== this.title) { this.title = t; this.titleChanged = true; }
+      },
       time_ms: () => (this.virtualTime ? this.vtime : performance.now() - this.t0),
       set_frame_rate: (hz) => { if (Number.isFinite(hz) && hz >= 1 && hz <= 1000) this.frameRate = hz; },
       video_present: (ptr, w, h, stride) => {
@@ -135,7 +170,15 @@ export class GasmHost {
         else for (let y = 0; y < h; y++) this.rgba.set(src.subarray(y * stride, y * stride + row), y * row);
         if (this.hashing) this.videoHash = fnv32(this.videoHash, this.rgba);
         this.width = w; this.height = h; this.framesPresented++; this.videoFrames++;
-        this.onPresent(this.rgba, w, h);
+        this.onPresent(this.rgba, w, h, this.aspect);
+      },
+      video_set_aspect: (num, den) => {
+        num >>>= 0; den >>>= 0;
+        if (num === 0 && den === 0) { this.aspect = null; return; }
+        if (!(num >= 1 && num <= 65535 && den >= 1 && den <= 65535 && num * 8 >= den && den * 8 >= num)) {
+          throw new Error(`video_set_aspect: invalid ratio ${num}:${den}`);
+        }
+        this.aspect = [num, den];
       },
       audio_config: (rate, channels) => {
         if (rate >= 8000 && rate <= 192000 && (channels === 1 || channels === 2)) {
@@ -172,7 +215,7 @@ export class GasmHost {
         if (!p) return -1;
         if (cap >>> 0 >= POINTER_BYTES) {
           this.bytes(dst, POINTER_BYTES);   // bounds check
-          const [fx, fy] = framePosition(p.x, p.y, p.drawable, [this.width, this.height]);
+          const [fx, fy] = framePosition(p.x, p.y, p.drawable, [this.width, this.height], p.integerScale, this.aspect);
           const dv = this.view(), at = dst >>> 0;
           [p.x, p.y, fx, fy, p.dx, p.dy, p.wheelX, p.wheelY].forEach((v, i) => dv.setFloat32(at + i * 4, v, true));
           [p.buttons, p.pressed, p.released, p.flags].forEach((v, i) => dv.setUint32(at + 32 + i * 4, v >>> 0, true));
@@ -365,6 +408,7 @@ export class GasmHost {
       get: (t, mod) => (mod === 'wasi_snapshot_preview1' ? t[mod] : trapping(mod, t[mod])),
     });
     const module = wasm instanceof WebAssembly.Module ? wasm : await WebAssembly.compile(wasm);
+    this.staticTitle = staticTitle(module);
     const instance = await WebAssembly.instantiate(module, imports);
     const ex = instance.exports;
     if (!(ex.memory instanceof WebAssembly.Memory)) throw new Error('guest does not export `memory`');
@@ -394,6 +438,7 @@ export class GasmHost {
       throw e;
     } finally {
       this.frameIndex++; // a frame that exits or traps still counts (as in the other runners)
+      if (this.titleChanged) { this.titleChanged = false; this.onTitle(this.title); }
     }
   }
 
@@ -416,7 +461,7 @@ export class GasmHost {
       this.frame();
     }
     const video = this.videoFrames !== before && this.width > 0;
-    if (video && show && this.gfx.presentVideo && !this.gfx.used) this.gfx.presentVideo(this.rgba, this.width, this.height);
+    if (video && show && this.gfx.presentVideo && !this.gfx.used) this.gfx.presentVideo(this.rgba, this.width, this.height, this.aspect);
     return { video };
   }
 

@@ -39,7 +39,7 @@ const inWorker = typeof WorkerGlobalScope !== 'undefined' && globalThis instance
 export class GasmWorker {
   static async start({
     wasm, assets = [], params = {}, storage = null, allowNet = false, keyboard = false,
-    hashing = false, virtualTime = false, onLog = console.log, onAudio = () => {},
+    hashing = false, virtualTime = false, onLog = console.log, onAudio = () => {}, onTitle = () => {},
     canvas = null, size = null, url = null,
   }) {
     // written out literally so bundlers (Vite, webpack) find and emit the worker
@@ -47,6 +47,7 @@ export class GasmWorker {
       ? new Worker(url, { type: 'module', name: 'gasm-guest' })
       : new Worker(new URL('./gasm-worker.js', import.meta.url), { type: 'module', name: 'gasm-guest' });
     const w = new GasmWorker(worker, onLog, onAudio);
+    w.onTitle = onTitle;
     // a compiled Module is shared with the worker (no copy, no second compile); bytes are transferred
     const module = wasm instanceof WebAssembly.Module;
     const bytes = module || wasm instanceof ArrayBuffer ? wasm : wasm.buffer.slice(wasm.byteOffset, wasm.byteOffset + wasm.byteLength);
@@ -71,6 +72,8 @@ export class GasmWorker {
     this.inputMode = 0;   // GASM_INPUT_* flags the guest asked for (cursor, keymap)
     this.waiters = [];
     this.stats = null;
+    this.title = null;    // the guest's set_title, as of the last batch
+    this.onTitle = () => {};
     worker.onmessage = (e) => this.message(e.data);
     worker.onerror = (e) => this.fail(new Error(e.message || 'worker error'));
   }
@@ -79,6 +82,10 @@ export class GasmWorker {
     if (m.type === 'log') return this.onLog(m.msg);
     if (m.type === 'error') return this.fail(new Error(m.message));
     if (m.type === 'exit') return this.fail(new ProcExit(m.code));
+    if ((m.type === 'done' || m.type === 'ready') && m.title !== undefined && m.title !== this.title) {
+      this.title = m.title;
+      this.onTitle(m.title);
+    }
     if (m.type === 'done') {
       for (const a of m.audio) this.onAudio(a.samples, a.rate, a.channels);
       this.frameRate = m.frameRate;
@@ -173,7 +180,7 @@ if (inWorker) {
         });
         host.hashing = m.hashing;
         await host.load(m.wasm);
-        post({ type: 'ready', frameRate: host.frameRate });
+        post({ type: 'ready', frameRate: host.frameRate, title: host.title });
       } catch (err) {
         post(err instanceof ProcExit ? { type: 'exit', code: err.code } : { type: 'error', message: err.message });
       }
@@ -187,10 +194,10 @@ if (inWorker) {
       }
       // Send the latest 2D frame only if a new one was presented (transfer, no copy on arrival).
       let frame = null;
-      if (!gfx && video) frame = { rgba: host.rgba.slice(), width: host.width, height: host.height };
+      if (!gfx && video) frame = { rgba: host.rgba.slice(), width: host.width, height: host.height, aspect: host.aspect };
       const out = audio; audio = [];
       const transfer = [...(frame ? [frame.rgba.buffer] : []), ...out.map((a) => a.samples.buffer)];
-      post({ type: 'done', frame, audio: out, stats: stats(), frameIndex: host.frameIndex, frameRate: host.frameRate, inputMode: host.inputMode, exit, error }, transfer);
+      post({ type: 'done', frame, audio: out, stats: stats(), frameIndex: host.frameIndex, frameRate: host.frameRate, inputMode: host.inputMode, title: host.title, exit, error }, transfer);
     } else if (m.type === 'exit') {
       try { await host?.shutdown(); } catch {}
       gfx?.device.destroy();

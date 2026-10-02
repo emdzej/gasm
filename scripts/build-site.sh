@@ -9,7 +9,7 @@ PLAY=site/public/play
 rm -rf "$PLAY"
 mkdir -p "$PLAY/build"
 scripts/vendor-web.sh >/dev/null   # csfs for the OPFS import page
-cp runners/web/index.html runners/web/app.js runners/web/gasm-host.js runners/web/webgpu-gfx.js \
+cp runners/web/index.html runners/web/app.js runners/web/gasm-host.js runners/web/webgpu-gfx.js runners/web/gasm-present.js \
    runners/web/gasm-worker.js runners/web/opfs.html runners/web/opfs.js runners/web/testdata.js "$PLAY/"
 cp -R runners/web/lib runners/web/vendor "$PLAY/"
 for g in sumo triangle textured inputtest nes doom scummvm test-pattern assetcheck sdl3-snake sdl3-woodeneye sdl3-callbacks sdl3-classic; do
