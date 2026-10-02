@@ -236,7 +236,7 @@ jobs:
             (cd "$2" && cargo publish --allow-dirty "${@:3}")
           }
           publish gasm-sdk guests -p gasm-sdk
-          publish gasm-host runners/native
+          publish gasm-host runners/native -p gasm-host   # a workspace root: without -p cargo also tries gasm-relay (publish = false)
 
   publish-npm:
     needs: native
