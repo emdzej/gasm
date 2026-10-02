@@ -4,8 +4,9 @@
 `build/scummvm.wasm`, with a gasm backend. This directory holds gasm's own files:
 the backend (`backend/`, copied into ScummVM as `backends/platform/gasm/`) and a
 small `configure` patch that adds the `wasm32-gasm` host. `make scummvm` fetches
-ScummVM 2026.3.0 into `tools/scummvm-src` (git-ignored), builds it with wasi-sdk
-and post-processes it with Binaryen's Asyncify.
+ScummVM 2026.3.0 into `tools/scummvm-src` (git-ignored), builds its libraries
+(zlib, MP3, Ogg Vorbis, FLAC) and ScummVM with wasi-sdk, and post-processes the
+module with Binaryen's Asyncify.
 
 ```sh
 make scummvm && make roms                  # scummvm.wasm; Beneath a Steel Sky (freeware) into roms/bass/,
@@ -23,22 +24,73 @@ reads big games from OPFS on demand.
 
 ## Engines
 
-The build includes **scumm** (with its **scumm_7_8** and **he** sub-engines) and
-**sky** by default:
+The build includes **scumm** (with its **scumm_7_8** and **he** sub-engines),
+**sky** and **drascula** by default:
 
-| Engine | Games |
-|---|---|
-| `scumm` | LucasArts v0–v6: Maniac Mansion, Zak McKracken, Indiana Jones and the Last Crusade, Loom, Monkey Island 1 and 2, Indiana Jones and the Fate of Atlantis, Day of the Tentacle, Sam & Max Hit the Road |
-| `scumm_7_8` | Full Throttle, The Dig, The Curse of Monkey Island |
-| `he` | Humongous Entertainment (Putt-Putt, Freddi Fish, Pajama Sam, Spy Fox, ...) |
-| `sky` | Beneath a Steel Sky |
+| Engine | Games | State |
+|---|---|---|
+| `scumm` | LucasArts v0–v6: Maniac Mansion, Zak McKracken, Indiana Jones and the Last Crusade, Loom, Monkey Island 1 and 2, Indiana Jones and the Fate of Atlantis, Day of the Tentacle, Sam & Max Hit the Road | played: the Monkey Island 1 (EGA), Day of the Tentacle and Sam & Max demos |
+| `scumm_7_8` | Full Throttle, The Dig, The Curse of Monkey Island | built, not tested yet (no freely available data) |
+| `he` | Humongous Entertainment (Putt-Putt, Freddi Fish, Pajama Sam, Spy Fox, ...) | built, not tested yet |
+| `sky` | Beneath a Steel Sky | played: floppy version, saving and loading (freeware) |
+| `drascula` | Drascula: The Vampire Strikes Back | played: the opening, with its CD music as Ogg Vorbis, MP3 and FLAC (freeware) |
 
-Tested with the LucasArts demos ScummVM hosts (Monkey Island 1 EGA, Day of the
-Tentacle, Sam & Max CD) and Beneath a Steel Sky. More engines:
-`make scummvm SCUMMVM_ENGINES="sky scumm scumm_7_8 he queen lure" SCUMMVM_DATA="sky.cpt queen.tbl lure.dat"`
+The tests in `scripts/determinism-test.sh` cover Beneath a Steel Sky (intro,
+walking, save and restore), the Day of the Tentacle demo and Drascula with
+each audio format. More engines:
+`make scummvm SCUMMVM_ENGINES="sky scumm scumm_7_8 he drascula queen lure" SCUMMVM_DATA="sky.cpt drascula.dat queen.tbl lure.dat"`
 (`SCUMMVM_DATA` lists the files from ScummVM's `dists/engine-data` that get built
-into the module). External libraries (zlib, FLAC, MP3, Vorbis, FreeType, ...) are
-off for now, so engines or game versions that need them don't work yet.
+into the module).
+
+## Libraries
+
+`scripts/build-scummvm-libs.sh` builds the libraries ScummVM links, from their
+release tarballs (checksums pinned), into `tools/scummvm-libs`:
+
+| Library | For | License |
+|---|---|---|
+| zlib 1.3.2 | compressed data, ZIP archives, save games | zlib |
+| libmad 0.15.1b | MP3 (portable 64-bit fixed point) | GPL-2.0-or-later |
+| libogg 1.3.6, libvorbis 1.3.7 | Ogg Vorbis | BSD-3-Clause |
+| libFLAC 1.5.0 (decoder) | FLAC | BSD-3-Clause |
+
+That covers compressed speech and music (`monster.so3` / `.sog` / `.sof`,
+`track1.mp3` / `.ogg` / `.flac` and the like, as made by `scummvm-tools` or rips of
+CD audio). No SIMD and no assembly; all decoding runs inside the module, so it
+gives the same samples on every runner.
+
+## Porting status
+
+Done:
+
+- **Backend**: video (8, 16 and 32 bit game screens, the GUI overlay, the cursor,
+  shaking, 4:3 aspect correction), audio (the mixer, one frame of samples per
+  frame), input (raw keyboard with modifiers, mouse and wheel, the first gamepad
+  as a joystick), files (the asset tree, streamed), saves and settings in
+  `gasm:storage`, virtual time, engine data built into the module, the launcher.
+- **Engines run their own loops**, suspended every frame by the C SDK's loop
+  helper (Asyncify), on every runner: native, browser (main thread and Worker,
+  big games from OPFS) and headless, with identical hashes.
+- **Libraries**: zlib, MP3, Ogg Vorbis, FLAC.
+- **Music**: AdLib (OPL emulation) and PC speaker, built into ScummVM.
+- **Licensing**: reproducible builds and a complete source tarball (ScummVM's
+  files, the libraries, the backend) with every release and on the website;
+  rebuilding from it gives the same module byte for byte.
+
+Not done yet:
+
+| Missing | Effect | What it takes |
+|---|---|---|
+| Other engines | only the five above | add them to `SCUMMVM_ENGINES` (+ engine data); the freeware Flight of the Amazon Queen (`queen`) and Lure of the Temptress (`lure`) are next, then Sierra (`agi`, `sci`), `kyra`, `gob`, `saga`, `sword1`/`sword2`, `tinsel` |
+| MT-32 emulation | Roland MT-32 music (many Sierra and LucasArts games sound best with it) | `--enable-mt32emu` (built into ScummVM) and the user's MT-32 ROMs as assets |
+| General MIDI synth (FluidSynth/fluidlite) | GM music; AdLib is used instead | build fluidlite, ship or load a SoundFont |
+| GUI themes | the built-in classic look ("scummremastered" and `gui-icons.dat` aren't embedded) | embed the theme zip and icons (zlib is in now) |
+| Translations, TTS, FreeType, fribidi | English GUI, no speech synthesis, no TrueType fonts (some engines need them) | build the libraries, embed `translations.dat` |
+| Video codecs (MPEG-2, Theora, VPX, AAC, JPEG, PNG) | cutscenes and images in engines that use them | build the libraries |
+| 3D engines (Grim Fandango, Myst III, The Longest Journey) | not built | TinyGL (software 3D) now, or `gasm:gl` later |
+| Cloud, LAN, networking | off | `gasm:net` could carry some of it |
+| Gamepads 2–4, touch controls, virtual keyboard | one gamepad; mouse and keyboard otherwise | backend work |
+| Size and speed | 16.1 MB module (10.6 MB without Asyncify) | runner-side stack switching (ABI roadmap) |
 
 ## Parameters
 
@@ -56,8 +108,8 @@ off for now, so engines or game versions that need them don't work yet.
   ([`sdk/c/src/gasm_loop.c`](https://github.com/emdzej/gasm/blob/main/sdk/c/src/gasm_loop.c)):
   `gasm_main()` runs ScummVM, `gasm_wait_frame()` suspends it with Binaryen's
   Asyncify, entirely inside the guest, so runners need nothing. The rules it
-  follows are at the top of that file. It costs size: 9.7 MB without
-  Asyncify, 15.0 MB with it.
+  follows are at the top of that file. It costs size: 10.6 MB without
+  Asyncify, 16.1 MB with it.
 - **Video.** A software graphics manager combines the game screen (8, 16 or 32
   bit), the GUI overlay (640x480) and the cursor into one RGBA frame.
   320x200 and 640x400 screens are stretched to 4:3. The GUI shows the game
@@ -81,8 +133,9 @@ off for now, so engines or game versions that need them don't work yet.
 license). The backend in this directory is gasm's own and MIT-licensed; the
 `configure` patch is GPL-3.0 like the file it changes. Releases include the
 complete source as `gasm-<version>-scummvm-src.tar.gz`: exactly the ScummVM
-files the build used, the backend, the patch and the build scripts
-(`scripts/package-scummvm-src.sh`); rebuilding from it gives the same module.
+files the build used, the libraries' release sources, the backend, the patch
+and the build scripts (`scripts/package-scummvm-src.sh`); rebuilding from it
+gives the same module.
 The website serves it next to the game.
 
 Beneath a Steel Sky is freeware from Revolution Software; its readme (with the

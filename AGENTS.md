@@ -23,7 +23,7 @@ property: most tests assert bit-identical hashes.
 | `guests/test-pattern/` | C guest (wasi-sdk) |
 | `sdk/c/src/gasm_loop.c`, `sdk/c/include/gasm_loop.h` | loop helper for games with their own main loop (`gasm_main` + `gasm_wait_frame`, Asyncify inside the guest); Rust: `gasm::main_loop!`. Used by ScummVM and SDL3 classic `main()` |
 | `sdk/sdl3/` | SDL 3 for gasm: SDL as a "private platform" (`SDL_PLATFORM_PRIVATE`), config + drivers (zlib). `scripts/fetch-sdl3.sh` puts SDL in `tools/SDL3-src`; `make sdl3` builds `build/sdl3/` (lib, headers, `find_package` config); `scripts/package-sdl3.sh` bundles it |
-| `guests/scummvm/` | ScummVM: gasm backend (MIT, `backend/` -> `backends/platform/gasm`) + `configure.patch` (`wasm32-gasm` host). `scripts/fetch-scummvm.sh` puts ScummVM (GPL-3.0) in `tools/scummvm-src`; `make scummvm` builds with wasi-sdk and runs `wasm-opt --asyncify` (`scripts/fetch-binaryen.sh`); `scripts/package-scummvm-src.sh` packs exactly the files the build used |
+| `guests/scummvm/` | ScummVM: gasm backend (MIT, `backend/` -> `backends/platform/gasm`) + `configure.patch` (`wasm32-gasm` host). `scripts/fetch-scummvm.sh` puts ScummVM (GPL-3.0) in `tools/scummvm-src`; `scripts/build-scummvm-libs.sh` builds zlib, libmad, libogg/libvorbis, libFLAC (pinned release tarballs) into `tools/scummvm-libs`; `make scummvm` builds with wasi-sdk and runs `wasm-opt --asyncify` (`scripts/fetch-binaryen.sh`); `scripts/package-scummvm-src.sh` packs exactly the files the build used plus the library sources (verify: a clean `make scummvm` from the tarball is byte-identical) |
 | `guests/doom/` | DOOM: gasm platform layer (MIT) for doomgeneric. `scripts/fetch-doom.sh` puts the GPL-2.0 engine (+ chocolate-doom OPL music) in `tools/doom-src` and applies `engine.patch`; `scripts/package-doom-src.sh` packs the complete source shipped with releases and the site |
 | `runners/native/` | crate `gasm-host`: library (`src/lib.rs`) + bins `gasm-run` (`src/main.rs`) and `gasm-relay` (`src/bin/`); `relay.Dockerfile` |
 | `runners/web/` | npm package `@emdzej/gasm-host` (`gasm-host.js` + `.d.ts`: host, asset providers, keymap; `gasm-worker.js`: Worker mode; `webgpu-gfx.js`; `headless.mjs` = `gasm-headless`). Not published: `app.js`/`index.html` (the player), `opfs.html`/`opfs.js` (csfs OPFS import; csfs is a devDependency vendored by `scripts/vendor-web.sh`), `testdata.js` |
@@ -37,7 +37,7 @@ property: most tests assert bit-identical hashes.
 ```sh
 make                          # games -> build/*.wasm, native runner + relay
 make roms                     # test ROMs, Freedoom, shareware doom1.wad into roms/ (needed by the determinism test)
-scripts/determinism-test.sh   # 22 cases: wasmtime JIT == AOT == V8 (must pass)
+scripts/determinism-test.sh   # 25 cases: wasmtime JIT == AOT == V8 (must pass)
 scripts/net-test.sh           # lockstep sumo via gasm-relay, 3 runner pairs + TLS (must pass)
 scripts/asset-test.sh         # folders, case-insensitive names, 200 MB streaming + RSS (must pass)
 node scripts/opfs-test.mjs    # Chrome: OPFS + Worker mode == Node, memory flat

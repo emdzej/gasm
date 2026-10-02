@@ -34,12 +34,15 @@ mkdir -p "$STAGE/tools/scummvm-src"
 for f in $(sed -n 's/^SCUMMVM_DATA *?= *//p' Makefile); do
   mkdir -p "$STAGE/tools/scummvm-src/dists/engine-data" && cp "$SRC/dists/engine-data/$f" "$STAGE/tools/scummvm-src/dists/engine-data/"
 done
+# the libraries linked in (zlib, libmad, libogg, libvorbis, libFLAC), as released
+mkdir -p "$STAGE/tools/scummvm-libs/src"
+cp -R tools/scummvm-libs/src/* "$STAGE/tools/scummvm-libs/src/"
 # 3. gasm's side
 mkdir -p "$STAGE/guests" "$STAGE/scripts" "$STAGE/spec"
 cp -R guests/scummvm "$STAGE/guests/"
 mkdir -p "$STAGE/sdk/c/src" "$STAGE/sdk/c/include"
 cp sdk/c/src/gasm_loop.c "$STAGE/sdk/c/src/" && cp sdk/c/include/gasm_loop.h "$STAGE/sdk/c/include/"
-cp scripts/fetch-scummvm.sh scripts/fetch-binaryen.sh scripts/fetch-wasi-sdk.sh scripts/embed-files.mjs "$STAGE/scripts/"
+cp scripts/fetch-scummvm.sh scripts/build-scummvm-libs.sh scripts/fetch-binaryen.sh scripts/fetch-wasi-sdk.sh scripts/embed-files.mjs "$STAGE/scripts/"
 cp spec/gasm.h "$STAGE/spec/" && cp Makefile "$STAGE/"
 cat > "$STAGE/README.txt" <<TXT
 Complete corresponding source for scummvm.wasm in gasm $VERSION.
@@ -53,6 +56,10 @@ some parts are under compatible licenses, see tools/scummvm-src/LICENSES).
                                      the embedded engine data), configure patched
   guests/scummvm/backend/            gasm's backend (MIT, GPL-compatible)
   guests/scummvm/configure.patch     the configure change (GPL-3.0)
+  tools/scummvm-libs/src/            the libraries linked in, unmodified release
+                                     tarballs: zlib (zlib license), libmad (GPL-2.0+),
+                                     libogg, libvorbis, FLAC (BSD-3-Clause);
+                                     scripts/build-scummvm-libs.sh compiles them
 
 Build: scripts/fetch-wasi-sdk.sh && scripts/fetch-binaryen.sh && make scummvm
 Output: build/scummvm.wasm. Project: https://github.com/emdzej/gasm

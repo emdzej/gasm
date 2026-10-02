@@ -45,7 +45,9 @@ The demo plays **Beneath a Steel Sky**, freeware from Revolution Software: click
 to walk and act, **Esc** skips the intro, **Ctrl+F5** opens ScummVM's menu
 (save, load). **Open folder…** in the player runs your own games: the LucasArts
 SCUMM games (Monkey Island, Day of the Tentacle, Sam & Max, Full Throttle, The Dig,
-...) and Humongous games work.
+...), Humongous games and Drascula work, with compressed speech and music (MP3, Ogg
+Vorbis, FLAC). What is and isn't ported yet:
+[porting status](https://github.com/emdzej/gasm/blob/main/guests/scummvm/README.md#porting-status).
 
 <iframe class="demo-frame" src="/play/?game=scummvm.wasm" title="gasm ScummVM demo" allow="gamepad; autoplay"></iframe>
 

@@ -504,7 +504,7 @@ Examples: [`sdk/c/example-loop`](https://github.com/emdzej/gasm/tree/main/sdk/c/
 [`guests/loopdemo`](https://github.com/emdzej/gasm/tree/main/guests/loopdemo).
 
 The cost is size and speed: Asyncify instruments every function that can reach
-`wait_frame()` (ScummVM: 9.7 MB without it, 15.0 MB with it). Prefer the per-frame callback for
+`wait_frame()` (ScummVM: 10.6 MB without it, 16.1 MB with it). Prefer the per-frame callback for
 new games; use the loop helper for ports. The rules it follows, each learned from
 a bug, are at the top of
 [`gasm_loop.c`](https://github.com/emdzej/gasm/blob/main/sdk/c/src/gasm_loop.c).

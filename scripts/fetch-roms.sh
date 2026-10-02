@@ -72,4 +72,36 @@ scumm_demo() { # <name> <sha256 of the zip>
 }
 scumm_demo monkey1-dos-ega-demo-en 1cb530fc4ab1d1f005e6630de31fe1a4186a7ad5d1a2b73e126e898e5e9039d0
 scumm_demo dott-dos-ni-demo-en b77f03981da3815a352330f39f54d46e187bb05503cf1c832bb0d14539f15964
+# Drascula: The Vampire Strikes Back (freeware), for testing compressed CD audio:
+# the game, and its music as Ogg Vorbis, MP3 and FLAC (only the tracks the opening
+# plays plus track 1, which ScummVM checks for; pulled out of the zips with range
+# requests). Test-only, like the SCUMM demos.
+DRASCULA="https://downloads.scummvm.org/frs/extras/Drascula_%20The%20Vampire%20Strikes%20Back"
+sha_ok() { # <file> <sha256>
+  s=$(shasum -a 256 "$1" 2>/dev/null || sha256sum "$1")
+  [ "${s%% *}" = "$2" ] || { echo "$1: checksum mismatch" >&2; exit 1; }
+}
+if [ ! -f roms/drascula/game/Packet.001 ]; then
+  echo "fetching Drascula"
+  tmp=$(mktemp -d)
+  curl -fsSL "$DRASCULA/drascula-1.0.zip" -o "$tmp/d.zip"
+  sha_ok "$tmp/d.zip" b731f6cb5a22ba8b4c3b3362f570b9a10a67b6cb0b395394b19a94b36e4e42de
+  mkdir -p roms/drascula/game && unzip -q -o "$tmp/d.zip" -d roms/drascula/game && chmod -R u+rwX,go+rX roms/drascula/game
+  rm -rf "$tmp"
+fi
+drascula_audio() { # <zip> <ext> <sha256 track1> <sha256 track25> <sha256 track28>
+  [ -f "roms/drascula/$2/audio/track28.$2" ] && return
+  echo "fetching Drascula music ($2)"
+  node scripts/zip-get.mjs "$DRASCULA/$1" "roms/drascula/$2" "audio/track1.$2" "audio/track25.$2" "audio/track28.$2" >/dev/null
+  sha_ok "roms/drascula/$2/audio/track1.$2" "$3"
+  sha_ok "roms/drascula/$2/audio/track25.$2" "$4"
+  sha_ok "roms/drascula/$2/audio/track28.$2" "$5"
+}
+
+drascula_audio drascula-audio-2.0.zip ogg c15b9423e07b4110aa8af3f950b2000f5bbbaf3662b97562a14342c2372b4445 \
+  c7d1fb605c25e2950fc1b30946d956fe6d73fcbd0ed7900495d7b3e312678d61 3476061a6f9e5d2d3afcc9b5b619481681ad4663ae95f94f6b6fb7dbf73724e6
+drascula_audio drascula-audio-mp3-2.0.zip mp3 6672303a4563c5c4edce6b0d1d5b776e6bc58693051ede5ff66624c0b9e25777 \
+  aac0ba1ee355e4dbd4785bd9b18e937212c43fabfdbe14001ddf089bab398c10 5b873ab3985e45f8f77abfa927009bfb9a04ffcd9e924f80459ea76d2a7b3493
+drascula_audio drascula-audio-flac-2.0.zip flac a2013415a2a9498c419ce5dd4a1d6a656579c2aa3097b58747eb94866472e780 \
+  40e3c7e981f523c3f53ead0e22b298326ba8d7e7ea82c2b654e4df56fae6b96e 4332599f4c6d098248a7f2c7eb4b8db4b661e1a8b0801d93ffa3e63f01ff4e31
 ls -la roms

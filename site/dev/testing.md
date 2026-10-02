@@ -52,7 +52,8 @@ and Freedoom (video, sound effects and OPL music), and a scripted Freedoom
 game that saves to `gasm:storage`, plays on and loads the save, and ScummVM
 playing Beneath a Steel Sky: intro skipped, a click to walk, a save through
 ScummVM's menu with a typed name, then a restore, and the SCUMM engine on the Day
-of the Tentacle demo. Games with their own main loop (the Rust and C loop
+of the Tentacle demo, and Drascula's opening with its CD music as Ogg Vorbis, MP3
+and FLAC. Games with their own main loop (the Rust and C loop
 helpers) and four SDL 3 programs (snake and woodeneye-008 from SDL, a callbacks
 app with audio and gamepad events, a classic `main()` loop with text input and a
 save file) are cases too. It fetches

@@ -153,7 +153,7 @@ jobs:
           | \`gasm-$VERSION-linux-x86_64.tar.gz\`, \`gasm-$VERSION-linux-arm64.tar.gz\` | same for Linux (x86_64, arm64) |
           | \`gasm-$VERSION-windows-x86_64.zip\` | same for Windows |
           | \`gasm-$VERSION-games-wasm.zip\` | just the games: the same .wasm files run on every runner and at https://gasm.emdzej.pl/demos/ |
-          | \`gasm-$VERSION-scummvm-src.tar.gz\` | complete source of \`scummvm.wasm\` (GPL-3.0: the ScummVM files the build uses, gasm's backend and configure patch); \`make scummvm\` rebuilds it byte for byte |
+          | \`gasm-$VERSION-scummvm-src.tar.gz\` | complete source of \`scummvm.wasm\` (GPL-3.0: the ScummVM files the build uses, the zlib/MP3/Vorbis/FLAC library sources, gasm's backend and configure patch); \`make scummvm\` rebuilds it byte for byte |
           | \`gasm-$VERSION-doom-src.tar.gz\` | complete source of \`doom.wasm\` (GPL-2.0: doomgeneric, chocolate-doom's OPL music, gasm's glue); \`make doom\` rebuilds it |
           | \`gasm-c-sdk-$VERSION.zip\` | C/C++ SDK: \`gasm.h\` + CMake toolchain (wasi-sdk) + examples (own main loop: \`gasm_loop.h\`) |
           | \`gasm-sdl3-$VERSION.zip\` | SDL 3 for gasm: \`libSDL3.a\`, headers, \`find_package(SDL3)\` config, examples (zlib license) |

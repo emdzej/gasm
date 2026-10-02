@@ -78,21 +78,23 @@ $(BUILD)/doom.wasm: $(DOOM_GLUE) guests/doom/gasm_doom.h guests/doom/prelude.h s
 # --- ScummVM (guests/scummvm): GPL-3.0 sources fetched at build, gasm backend + Asyncify ---
 SCUMMVM_SRC     := tools/scummvm-src
 WASM_OPT        ?= $(CURDIR)/tools/binaryen/bin/wasm-opt
-SCUMMVM_ENGINES ?= sky scumm scumm_7_8 he
+SCUMMVM_ENGINES ?= sky scumm scumm_7_8 he drascula
 # __DATE__/__TIME__ in ScummVM's version string: the release date, so builds are
 # reproducible (and the in-game menu, which shows it, hashes the same everywhere)
 SCUMMVM_DATE    ?= 1774224000
 # engine data built into scummvm.wasm (from ScummVM's dists/engine-data)
-SCUMMVM_DATA    ?= sky.cpt
+SCUMMVM_DATA    ?= sky.cpt drascula.dat
+# zlib, MP3 (libmad), Ogg Vorbis, FLAC: built for wasm32 by scripts/build-scummvm-libs.sh
+SCUMMVM_LIBS := $(CURDIR)/tools/scummvm-libs
 SCUMMVM_CONFIG  := --host=wasm32-gasm --backend=gasm --disable-all-engines \
   $(addprefix --enable-engine=,$(SCUMMVM_ENGINES)) --enable-release --disable-debug \
   --disable-mt32emu --disable-timidity --disable-seq-midi --disable-fluidsynth --disable-fluidlite \
-  --disable-sonivox --disable-vorbis --disable-ogg --disable-tremor --disable-flac --disable-mad \
-  --disable-faad --disable-zlib --disable-png --disable-jpeg --disable-gif --disable-freetype2 \
+  --disable-sonivox --disable-tremor --disable-faad --disable-png --disable-jpeg --disable-gif --disable-freetype2 \
   --disable-fribidi --disable-theoradec --disable-vpx --disable-libcurl --disable-sdlnet \
   --disable-enet --disable-cloud --disable-tts --disable-taskbar --disable-discord --disable-readline \
   --disable-lua --disable-tinygl --disable-opengl-game --disable-system-dialogs \
-  --disable-eventrecorder --disable-translation
+  --disable-eventrecorder --disable-translation \
+  $(foreach l,zlib mad vorbis ogg flac,--enable-$(l) --with-$(l)-prefix=$(SCUMMVM_LIBS))
 SCUMMVM_SRCS := $(wildcard guests/scummvm/backend/*) guests/scummvm/configure.patch sdk/c/src/gasm_loop.c sdk/c/include/gasm_loop.h
 
 scummvm: $(BUILD)/scummvm.wasm
@@ -104,7 +106,10 @@ $(SCUMMVM_SRC)/.gasm-version: scripts/fetch-scummvm.sh $(SCUMMVM_SRCS)
 	scripts/fetch-scummvm.sh
 
 # configure again only when the patch, the engines or the flags change
-$(SCUMMVM_SRC)/config.mk: $(SCUMMVM_SRC)/.gasm-version Makefile | $(WASI_SDK)/bin/clang
+$(SCUMMVM_LIBS)/.gasm-libs: scripts/build-scummvm-libs.sh | $(WASI_SDK)/bin/clang
+	scripts/build-scummvm-libs.sh
+
+$(SCUMMVM_SRC)/config.mk: $(SCUMMVM_SRC)/.gasm-version $(SCUMMVM_LIBS)/.gasm-libs Makefile | $(WASI_SDK)/bin/clang
 	cd $(SCUMMVM_SRC) && CXX="$(WASI_SDK)/bin/clang++ --target=wasm32-wasip1 --sysroot=$(WASI_SDK)/share/wasi-sysroot" \
 	  CC="$(WASI_SDK)/bin/clang --target=wasm32-wasip1 --sysroot=$(WASI_SDK)/share/wasi-sysroot" \
 	  AR="$(WASI_SDK)/bin/llvm-ar" RANLIB="$(WASI_SDK)/bin/llvm-ranlib" STRIP="$(WASI_SDK)/bin/llvm-strip" \

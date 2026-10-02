@@ -12,7 +12,7 @@ Games in this repo (Rust, C and C++):
 |---|---|---|
 | `sumo.wasm` | 3D (`gasm:gfx`, WebGPU/WGSL) + online 2-player lockstep (`gasm:net`), with cross-play between native and browser | 70 KB |
 | `nes.wasm` | NES emulator on [tetanes-core](https://crates.io/crates/tetanes-core): 2D video, audio, input, assets | 1.5 MB |
-| `scummvm.wasm` | [ScummVM](https://www.scummvm.org/) with a gasm backend (Asyncify inside the guest): the LucasArts SCUMM games (Monkey Island, Day of the Tentacle, Sam & Max, Full Throttle, ...), Humongous games and the freeware Beneath a Steel Sky, saves in `gasm:storage` ([guests/scummvm](guests/scummvm/README.md)) | 15 MB |
+| `scummvm.wasm` | [ScummVM](https://www.scummvm.org/) with a gasm backend (Asyncify inside the guest): the LucasArts SCUMM games (Monkey Island, Day of the Tentacle, Sam & Max, Full Throttle, ...), Humongous games, the freeware Beneath a Steel Sky and Drascula, MP3/Ogg Vorbis/FLAC audio, saves in `gasm:storage` ([guests/scummvm](guests/scummvm/README.md), with its porting status) | 16 MB |
 | `doom.wasm` | DOOM ([doomgeneric](https://github.com/ozkl/doomgeneric), C) with OPL music, saves in `gasm:storage`, any IWAD as an asset ([guests/doom](guests/doom/README.md)) | 750 KB |
 | `sdl3-snake.wasm`, `sdl3-woodeneye.wasm` | SDL 3's own demos, source unchanged, on [SDL 3 for gasm](sdk/sdl3/README.md) (SDL as a private platform: video, input, audio, gamepads, files) | 0.9 MB |
 | `triangle.wasm` | Smallest `gasm:gfx` program (about 50 lines of Rust) | 25 KB |
@@ -102,11 +102,11 @@ ball off the platform. First to 5 wins.
 
 ## Results (Apple M1 Pro, this commit)
 
-**Portability.** `make test` checks 22 single-player cases (test pattern, the
+**Portability.** `make test` checks 25 single-player cases (test pattern, the
 textured GPU test, the input tester, games with their own main loop in Rust and C,
 four SDL 3 programs (snake, woodeneye, callbacks with audio, a classic main loop),
 DOOM on keyboard and mouse, ScummVM
-playing, saving and loading Beneath a Steel Sky, the Day of the Tentacle demo, sumo vs. bot, 5 NES test ROMs/demos, scripted Blade Buster gameplay, the DOOM and
+playing, saving and loading Beneath a Steel Sky, the Day of the Tentacle demo, Drascula with Ogg, MP3 and FLAC music, sumo vs. bot, 5 NES test ROMs/demos, scripted Blade Buster gameplay, the DOOM and
 Freedoom attract-mode demos, and a scripted DOOM game that saves and loads). Each produces
 **bit-identical video, audio and GPU-upload streams** on wasmtime JIT,
 wasmtime AOT and V8. It also plays 3,600-frame online sumo matches through

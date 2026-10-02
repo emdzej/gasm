@@ -6,7 +6,7 @@ set -uo pipefail
 cd "$(dirname "$0")/.."
 NATIVE=runners/native/target/release/gasm-run
 NODE="node runners/web/headless.mjs"
-[ -d roms ] && [ -n "$(ls roms/*.nes 2>/dev/null)" ] && [ -f roms/freedoom2.wad ] && [ -f roms/doom1.wad ] && [ -f roms/bass/sky.dnr ] && [ -d roms/scumm/dott-dos-ni-demo-en ] || scripts/fetch-roms.sh
+[ -d roms ] && [ -n "$(ls roms/*.nes 2>/dev/null)" ] && [ -f roms/freedoom2.wad ] && [ -f roms/doom1.wad ] && [ -f roms/bass/sky.dnr ] && [ -d roms/scumm/dott-dos-ni-demo-en ] && [ -f roms/drascula/flac/audio/track28.flac ] || scripts/fetch-roms.sh
 for g in nes test-pattern sumo textured inputtest loopdemo loopdemo-c doom scummvm sdl3-snake sdl3-woodeneye sdl3-callbacks sdl3-classic; do "$NATIVE" build/$g.wasm --compile build/$g.cwasm 2>/dev/null; done
 
 pass=0; fail=0
@@ -62,6 +62,11 @@ check scummvm-sky         scummvm 2400 --asset-dir roms/bass --param "args=-p / 
 # ScummVM SCUMM engine (v6): the Day of the Tentacle demo, auto-detected, a click and Esc
 check scumm-dott-demo     scummvm 1800 --asset-dir roms/scumm/dott-dos-ni-demo-en --param "args=--auto-detect -p /" \
   --input '900:PTR(640,400),910-912:PTR(640,400,L),1200-1203:KEY(Escape)'
+# ScummVM's compressed audio (zlib, libmad, libvorbis, libFLAC built for wasm32): Drascula's
+# opening with its CD music as Ogg Vorbis, MP3 and FLAC
+check drascula-ogg        scummvm 900 --asset-dir roms/drascula/game --asset-dir roms/drascula/ogg --param "args=--auto-detect -p /"
+check drascula-mp3        scummvm 900 --asset-dir roms/drascula/game --asset-dir roms/drascula/mp3 --param "args=--auto-detect -p /"
+check drascula-flac       scummvm 900 --asset-dir roms/drascula/game --asset-dir roms/drascula/flac --param "args=--auto-detect -p /"
 check freedoom2-save-load doom 1100 --asset wad=roms/freedoom2.wad --param "args=-warp 1 -skill 4" \
   --input "20-200:UP+A,210-211:START,220-221:DOWN,230-231:DOWN,240-241:DOWN,250-251:A,260-261:A,270-271:A,300-500:LEFT+UP+A,510-511:START,520-521:UP,530-531:A,540-541:A,600-900:RIGHT+UP+A+Y,905-906:X,910-1100:LEFT+R+A"
 
