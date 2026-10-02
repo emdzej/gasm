@@ -12,6 +12,8 @@ mod imports {
     unsafe extern "C" {
         /// Write a line to the runner's log.
         pub fn log(msg: *const u8, msg_len: u32);
+        /// 1 if the runner provides an import module ("gasm:gfx") or a function in one ("gasm.asset_size64", "gasm:gfx.destroy"), else 0. Calling an import the runner lacks traps, so probe optional features first.
+        pub fn has(name: *const u8, name_len: u32) -> i32;
         /// Monotonic time in milliseconds (virtual, frame-derived in headless runs).
         pub fn time_ms() -> f64;
         /// Rate (Hz) at which the runner calls gasm_frame(). Default 60; 1-1000.
@@ -28,7 +30,7 @@ mod imports {
         pub fn text_input(dst: *mut u8, cap: u32) -> i32;
         /// GASM_INPUT_* flags: KEYS_RAW (the runner stops mapping the keyboard to pads; gamepads still map), POINTER_HIDDEN (hide the system cursor over the game), POINTER_LOCKED (capture the pointer for relative motion; best effort, the browser needs a click).
         pub fn input_mode(flags: u32);
-        /// Held keys as a bitset indexed by GASM_KEY_* (bit k of byte k/8), stable within a frame. Copies min(len, GASM_KEY_STATE_BYTES) bytes; returns GASM_KEY_STATE_BYTES, or -1 if the runner has no keyboard.
+        /// Held keys as a bitset indexed by GASM_KEY_* (bit k%8 of byte k/8), stable within a frame. Copies min(len, GASM_KEY_STATE_BYTES) bytes; returns GASM_KEY_STATE_BYTES, or -1 if the runner has no keyboard.
         pub fn key_state(dst: *mut u8, len: u32) -> i32;
         /// Key presses and releases since the previous frame, in order: 4 bytes each (u16 GASM_KEY_* code, u8 1 = down / 0 = up, u8 0). Returns the byte length (copied only if <= cap; cap = 0 queries), or -1 if the runner has no keyboard.
         pub fn key_events(dst: *mut u8, cap: u32) -> i32;
@@ -38,12 +40,16 @@ mod imports {
         pub fn gamepad(slot: u32, dst: *mut u8, cap: u32) -> i32;
         /// Device name of the gamepad in slot: its length (copied only if <= cap), or -1 if the slot is empty.
         pub fn gamepad_name(slot: u32, dst: *mut u8, cap: u32) -> i32;
-        /// Size in bytes of asset name, or -1 if it does not exist.
+        /// Size in bytes of asset name, -1 if it does not exist, or -2 if it is 2 GiB or larger (use asset_size64).
         pub fn asset_size(name: *const u8, name_len: u32) -> i32;
+        /// Size in bytes of asset name (any size), or -1 if it does not exist.
+        pub fn asset_size64(name: *const u8, name_len: u32) -> i64;
         /// Copy up to cap bytes of asset name into dst. Bytes copied, or -1 if missing.
         pub fn asset_read(name: *const u8, name_len: u32, dst: *mut u8, cap: u32) -> i32;
         /// Copy up to len bytes of asset name starting at offset (streaming). Bytes copied (0 at the end), or -1 if missing.
         pub fn asset_read_at(name: *const u8, name_len: u32, offset: u32, dst: *mut u8, len: u32) -> i32;
+        /// asset_read_at with a 64-bit offset, for assets of 4 GiB and more.
+        pub fn asset_read_at64(name: *const u8, name_len: u32, offset: u64, dst: *mut u8, len: u32) -> i32;
         /// Number of assets.
         pub fn asset_count() -> u32;
         /// Name of asset index (0 .. asset_count-1, sorted by UTF-8 bytes; folder entries as named on disk). Its length (copied only if length <= cap; cap = 0 queries), or -1 if index is out of range.
@@ -72,7 +78,7 @@ mod imports {
         /// {"layout":L,"entries":[...]} or {"pipeline":P,"group":G,"entries":[...]}; entries {"binding":B,"buffer":H,"offset":O,"size":S}, {"binding":B,"texture":T} or {"binding":B,"sampler":S}.
         #[link_name = "create_bind_group"]
         pub fn gfx_create_bind_group(json: *const u8, json_len: u32) -> u32;
-        /// GPUBindGroupLayoutDescriptor subset: {"entries":[{"binding":B,"visibility":GASM_STAGE_*,"buffer":{"type":"uniform"|"read-only-storage","hasDynamicOffset":bool,"minBindingSize":N} | "texture":{"sampleType":"float"} | "sampler":{"type":"filtering"}}]}.
+        /// GPUBindGroupLayoutDescriptor subset: {"entries":[{"binding":B,"visibility":GASM_STAGE_*,"buffer":{"type":"uniform"|"read-only-storage","hasDynamicOffset":bool,"minBindingSize":N} | "texture":{"sampleType":"float"|"unfilterable-float","viewDimension":"2d"} | "sampler":{"type":"filtering"|"non-filtering"}}]}.
         #[link_name = "create_bind_group_layout"]
         pub fn gfx_create_bind_group_layout(json: *const u8, json_len: u32) -> u32;
         /// 2D texture: {"size":[w,h],"format":"rgba8unorm"|"rgba8unorm-srgb","mipLevelCount":n}, w,h 1-8192. Usage is TEXTURE_BINDING | COPY_DST.
@@ -103,18 +109,24 @@ mod imports {
         /// Scissor rectangle in drawable pixels (clamped to the drawable). Reset to the whole drawable by begin_frame.
         #[link_name = "set_scissor_rect"]
         pub fn gfx_set_scissor_rect(x: u32, y: u32, width: u32, height: u32);
+        /// slot 0-7; buffer with GASM_BUF_VERTEX; offset a multiple of 4, at most the buffer size.
         #[link_name = "set_vertex_buffer"]
         pub fn gfx_set_vertex_buffer(slot: u32, buffer: u32, offset: u32);
-        /// format: GASM_INDEX_U16 or GASM_INDEX_U32.
+        /// buffer with GASM_BUF_INDEX; format GASM_INDEX_U16 or GASM_INDEX_U32 (anything else traps); offset a multiple of the index size, at most the buffer size.
         #[link_name = "set_index_buffer"]
         pub fn gfx_set_index_buffer(buffer: u32, format: u32, offset: u32);
+        /// Needs a pipeline, and a vertex buffer in every slot the pipeline reads, large enough for the vertices and instances drawn (else traps).
         #[link_name = "draw"]
         pub fn gfx_draw(vertex_count: u32, instance_count: u32, first_vertex: u32, first_instance: u32);
+        /// Like draw, plus an index buffer holding first_index + index_count indices.
         #[link_name = "draw_indexed"]
         pub fn gfx_draw_indexed(index_count: u32, instance_count: u32, first_index: u32, base_vertex: i32, first_instance: u32);
         /// Submit and present.
         #[link_name = "end_frame"]
         pub fn gfx_end_frame();
+        /// Release an object of any kind. The handle becomes invalid (later use, including another destroy, traps) and is never reused; objects created from it stay valid. GPU memory is freed once nothing in a submitted frame uses it.
+        #[link_name = "destroy"]
+        pub fn gfx_destroy(handle: u32);
     }
 
     #[link(wasm_import_module = "gasm:net")]
@@ -131,6 +143,7 @@ mod imports {
         /// Next message's length (copied only if <= cap, else it stays queued), 0 if none, -1 if closed and drained.
         #[link_name = "recv"]
         pub fn net_recv(conn: i32, dst: *mut u8, cap: u32) -> i32;
+        /// Close (flushing queued messages); closing again does nothing.
         #[link_name = "close"]
         pub fn net_close(conn: i32);
     }
@@ -140,7 +153,7 @@ mod imports {
         /// Value length, or -1 if missing. Copied only if length <= cap.
         #[link_name = "get"]
         pub fn storage_get(key: *const u8, key_len: u32, dst: *mut u8, cap: u32) -> i32;
-        /// 0, or -1 on invalid key, too large, quota exceeded or I/O error.
+        /// 0, or a GASM_STORAGE_ERR_* code: invalid key, value too large, quota exceeded, I/O error.
         #[link_name = "set"]
         pub fn storage_set(key: *const u8, key_len: u32, data: *const u8, len: u32) -> i32;
         /// 0 if deleted, -1 if it did not exist.
@@ -166,6 +179,119 @@ pub use imports::*;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub use crate::native::abi::*;
+
+/// Every import module and `module.function` of this ABI version (what `gasm::has` can report).
+pub const IMPORTS: [&str; 62] = [
+    "gasm", "gasm.log", "gasm.has", "gasm.time_ms",
+    "gasm.set_frame_rate", "gasm.video_present", "gasm.audio_config", "gasm.audio_push",
+    "gasm.input_pad", "gasm.text_input", "gasm.input_mode", "gasm.key_state",
+    "gasm.key_events", "gasm.pointer", "gasm.gamepad", "gasm.gamepad_name",
+    "gasm.asset_size", "gasm.asset_size64", "gasm.asset_read", "gasm.asset_read_at",
+    "gasm.asset_read_at64", "gasm.asset_count", "gasm.asset_name", "gasm.param",
+    "gasm:gfx", "gasm:gfx.width", "gasm:gfx.height", "gasm:gfx.create_shader",
+    "gasm:gfx.create_buffer", "gasm:gfx.create_pipeline", "gasm:gfx.create_bind_group", "gasm:gfx.create_bind_group_layout",
+    "gasm:gfx.create_texture", "gasm:gfx.write_texture", "gasm:gfx.create_sampler", "gasm:gfx.write_buffer",
+    "gasm:gfx.begin_frame", "gasm:gfx.set_pipeline", "gasm:gfx.set_bind_group", "gasm:gfx.set_bind_group_offsets",
+    "gasm:gfx.set_viewport", "gasm:gfx.set_scissor_rect", "gasm:gfx.set_vertex_buffer", "gasm:gfx.set_index_buffer",
+    "gasm:gfx.draw", "gasm:gfx.draw_indexed", "gasm:gfx.end_frame", "gasm:gfx.destroy",
+    "gasm:net", "gasm:net.open", "gasm:net.state", "gasm:net.send",
+    "gasm:net.recv", "gasm:net.close", "gasm:storage", "gasm:storage.get",
+    "gasm:storage.set", "gasm:storage.delete", "gasm:storage.count", "gasm:storage.key",
+    "wasi_snapshot_preview1", "wasi_snapshot_preview1.proc_exit",
+];
+
+// ---- buttons
+/// Virtual gamepad buttons (bit positions). Face buttons by position: East=A, South=B, North=X, West=Y.
+pub const GASM_BTN_A: u32 = 1 << 0;
+pub const GASM_BTN_B: u32 = 1 << 1;
+pub const GASM_BTN_X: u32 = 1 << 2;
+pub const GASM_BTN_Y: u32 = 1 << 3;
+pub const GASM_BTN_L: u32 = 1 << 4;
+pub const GASM_BTN_R: u32 = 1 << 5;
+pub const GASM_BTN_SELECT: u32 = 1 << 6;
+pub const GASM_BTN_START: u32 = 1 << 7;
+pub const GASM_BTN_UP: u32 = 1 << 8;
+pub const GASM_BTN_DOWN: u32 = 1 << 9;
+pub const GASM_BTN_LEFT: u32 = 1 << 10;
+pub const GASM_BTN_RIGHT: u32 = 1 << 11;
+
+// ---- buffer usage
+pub const GASM_BUF_COPY_DST: u32 = 0x08;
+pub const GASM_BUF_INDEX: u32 = 0x10;
+pub const GASM_BUF_VERTEX: u32 = 0x20;
+pub const GASM_BUF_UNIFORM: u32 = 0x40;
+pub const GASM_BUF_STORAGE: u32 = 0x80;
+
+// ---- shader stages
+/// Bind group layout entry visibility (WebGPU GPUShaderStage bits).
+pub const GASM_STAGE_VERTEX: u32 = 0x1;
+pub const GASM_STAGE_FRAGMENT: u32 = 0x2;
+
+// ---- index formats
+pub const GASM_INDEX_U16: u32 = 0;
+pub const GASM_INDEX_U32: u32 = 1;
+
+// ---- net states
+pub const GASM_NET_CONNECTING: u32 = 0;
+pub const GASM_NET_OPEN: u32 = 1;
+pub const GASM_NET_CLOSED: u32 = 2;
+pub const GASM_NET_ERROR: u32 = 3;
+
+// ---- input modes
+/// input_mode flags.
+pub const GASM_INPUT_KEYS_RAW: u32 = 1 << 0;
+pub const GASM_INPUT_POINTER_HIDDEN: u32 = 1 << 1;
+pub const GASM_INPUT_POINTER_LOCKED: u32 = 1 << 2;
+
+// ---- storage errors
+/// gasm_storage_set results.
+pub const GASM_STORAGE_OK: i32 = 0;
+pub const GASM_STORAGE_ERR_KEY: i32 = -1;
+pub const GASM_STORAGE_ERR_SIZE: i32 = -2;
+pub const GASM_STORAGE_ERR_QUOTA: i32 = -3;
+pub const GASM_STORAGE_ERR_IO: i32 = -4;
+
+// ---- pointer
+/// pointer() layout and bits: little-endian fields at the GASM_POINTER_OFF_* byte offsets: f32 x, y (drawable px), fx, fy (frame px), dx, dy (relative motion), wheel_x, wheel_y (lines; y > 0 = down), u32 buttons, pressed, released, flags.
+pub const GASM_POINTER_BYTES: u32 = 48;
+pub const GASM_POINTER_OFF_X: u32 = 0;
+pub const GASM_POINTER_OFF_Y: u32 = 4;
+pub const GASM_POINTER_OFF_FX: u32 = 8;
+pub const GASM_POINTER_OFF_FY: u32 = 12;
+pub const GASM_POINTER_OFF_DX: u32 = 16;
+pub const GASM_POINTER_OFF_DY: u32 = 20;
+pub const GASM_POINTER_OFF_WHEEL_X: u32 = 24;
+pub const GASM_POINTER_OFF_WHEEL_Y: u32 = 28;
+pub const GASM_POINTER_OFF_BUTTONS: u32 = 32;
+pub const GASM_POINTER_OFF_PRESSED: u32 = 36;
+pub const GASM_POINTER_OFF_RELEASED: u32 = 40;
+pub const GASM_POINTER_OFF_FLAGS: u32 = 44;
+pub const GASM_MOUSE_LEFT: u32 = 1 << 0;
+pub const GASM_MOUSE_RIGHT: u32 = 1 << 1;
+pub const GASM_MOUSE_MIDDLE: u32 = 1 << 2;
+pub const GASM_MOUSE_BACK: u32 = 1 << 3;
+pub const GASM_MOUSE_FORWARD: u32 = 1 << 4;
+pub const GASM_POINTER_INSIDE: u32 = 1 << 0;
+pub const GASM_POINTER_IS_HIDDEN: u32 = 1 << 1;
+pub const GASM_POINTER_IS_LOCKED: u32 = 1 << 2;
+
+// ---- gamepad
+/// gamepad() layout: little-endian fields at the GASM_GAMEPAD_OFF_* byte offsets: u32 flags, u32 button count, u32 axis count, f32 button values (32), f32 axis values (16). Standard mapping (W3C): buttons 0 south, 1 east, 2 west, 3 north, 4/5 shoulders, 6/7 triggers, 8 select, 9 start, 10/11 stick clicks, 12-15 d-pad up/down/left/right, 16 home; axes 0/1 left stick x/y, 2/3 right stick x/y (y > 0 = down).
+pub const GASM_GAMEPAD_BYTES: u32 = 204;
+pub const GASM_GAMEPAD_BUTTONS: u32 = 32;
+pub const GASM_GAMEPAD_AXES: u32 = 16;
+pub const GASM_GAMEPAD_OFF_FLAGS: u32 = 0;
+pub const GASM_GAMEPAD_OFF_BUTTON_COUNT: u32 = 4;
+pub const GASM_GAMEPAD_OFF_AXIS_COUNT: u32 = 8;
+pub const GASM_GAMEPAD_OFF_BUTTONS: u32 = 12;
+pub const GASM_GAMEPAD_OFF_AXES: u32 = 140;
+pub const GASM_GAMEPAD_CONNECTED: u32 = 1 << 0;
+pub const GASM_GAMEPAD_STANDARD: u32 = 1 << 1;
+
+// ---- keyboard
+/// key_state() size, and the size of one key_events() record.
+pub const GASM_KEY_STATE_BYTES: u32 = 32;
+pub const GASM_KEY_EVENT_BYTES: u32 = 4;
 
 /// Physical keys (W3C KeyboardEvent.code names; layout-independent). The third column is the W3C name.
 pub mod keys {

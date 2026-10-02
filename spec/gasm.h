@@ -98,13 +98,35 @@ enum {
     GASM_INPUT_POINTER_LOCKED = 1u << 2,
 };
 
+/* ---- storage errors ---------------------------------------------------------- */
+/* gasm_storage_set results. */
+enum {
+    GASM_STORAGE_OK = 0,
+    GASM_STORAGE_ERR_KEY = -1,
+    GASM_STORAGE_ERR_SIZE = -2,
+    GASM_STORAGE_ERR_QUOTA = -3,
+    GASM_STORAGE_ERR_IO = -4,
+};
+
 /* ---- pointer ----------------------------------------------------------------- */
-/* pointer() layout and bits. Offsets of little-endian fields: f32 x 0, y 4
- * (drawable px), fx 8, fy 12 (frame px), dx 16, dy 20 (relative motion),
- * wheel_x 24, wheel_y 28 (lines; y > 0 = down), u32 buttons 32, pressed 36,
- * released 40, flags 44. */
+/* pointer() layout and bits: little-endian fields at the GASM_POINTER_OFF_*
+ * byte offsets: f32 x, y (drawable px), fx, fy (frame px), dx, dy (relative
+ * motion), wheel_x, wheel_y (lines; y > 0 = down), u32 buttons, pressed,
+ * released, flags. */
 enum {
     GASM_POINTER_BYTES = 48,
+    GASM_POINTER_OFF_X = 0,
+    GASM_POINTER_OFF_Y = 4,
+    GASM_POINTER_OFF_FX = 8,
+    GASM_POINTER_OFF_FY = 12,
+    GASM_POINTER_OFF_DX = 16,
+    GASM_POINTER_OFF_DY = 20,
+    GASM_POINTER_OFF_WHEEL_X = 24,
+    GASM_POINTER_OFF_WHEEL_Y = 28,
+    GASM_POINTER_OFF_BUTTONS = 32,
+    GASM_POINTER_OFF_PRESSED = 36,
+    GASM_POINTER_OFF_RELEASED = 40,
+    GASM_POINTER_OFF_FLAGS = 44,
     GASM_MOUSE_LEFT = 1u << 0,
     GASM_MOUSE_RIGHT = 1u << 1,
     GASM_MOUSE_MIDDLE = 1u << 2,
@@ -116,23 +138,30 @@ enum {
 };
 
 /* ---- gamepad ----------------------------------------------------------------- */
-/* gamepad() layout: u32 flags 0, u32 buttons 4, u32 axes 8, f32 button values
- * 12 (32), f32 axis values 140 (16). Standard mapping (W3C): buttons 0 south,
- * 1 east, 2 west, 3 north, 4/5 shoulders, 6/7 triggers, 8 select, 9 start,
- * 10/11 stick clicks, 12-15 d-pad up/down/left/right, 16 home; axes 0/1 left
- * stick x/y, 2/3 right stick x/y (y > 0 = down). */
+/* gamepad() layout: little-endian fields at the GASM_GAMEPAD_OFF_* byte
+ * offsets: u32 flags, u32 button count, u32 axis count, f32 button values
+ * (32), f32 axis values (16). Standard mapping (W3C): buttons 0 south, 1 east,
+ * 2 west, 3 north, 4/5 shoulders, 6/7 triggers, 8 select, 9 start, 10/11 stick
+ * clicks, 12-15 d-pad up/down/left/right, 16 home; axes 0/1 left stick x/y,
+ * 2/3 right stick x/y (y > 0 = down). */
 enum {
     GASM_GAMEPAD_BYTES = 204,
     GASM_GAMEPAD_BUTTONS = 32,
     GASM_GAMEPAD_AXES = 16,
+    GASM_GAMEPAD_OFF_FLAGS = 0,
+    GASM_GAMEPAD_OFF_BUTTON_COUNT = 4,
+    GASM_GAMEPAD_OFF_AXIS_COUNT = 8,
+    GASM_GAMEPAD_OFF_BUTTONS = 12,
+    GASM_GAMEPAD_OFF_AXES = 140,
     GASM_GAMEPAD_CONNECTED = 1u << 0,
     GASM_GAMEPAD_STANDARD = 1u << 1,
 };
 
 /* ---- keyboard ---------------------------------------------------------------- */
-/* key_state() size. */
+/* key_state() size, and the size of one key_events() record. */
 enum {
     GASM_KEY_STATE_BYTES = 32,
+    GASM_KEY_EVENT_BYTES = 4,
 };
 
 /* ---- keys -------------------------------------------------------------------- */
@@ -266,6 +295,10 @@ enum {
 
 /* Write a line to the runner's log. */
 GASM_IMPORT("log") void gasm_log(const char *msg, uint32_t msg_len);
+/* 1 if the runner provides an import module ("gasm:gfx") or a function in one
+ * ("gasm.asset_size64", "gasm:gfx.destroy"), else 0. Calling an import the
+ * runner lacks traps, so probe optional features first. */
+GASM_IMPORT("has") int32_t gasm_has(const char *name, uint32_t name_len);
 /* Monotonic time in milliseconds (virtual, frame-derived in headless runs). */
 GASM_IMPORT("time_ms") double gasm_time_ms(void);
 /* Rate (Hz) at which the runner calls gasm_frame(). Default 60; 1-1000. */
@@ -290,7 +323,7 @@ GASM_IMPORT("text_input") int32_t gasm_text_input(char *dst, uint32_t cap);
  * POINTER_LOCKED (capture the pointer for relative motion; best effort, the
  * browser needs a click). */
 GASM_IMPORT("input_mode") void gasm_input_mode(uint32_t flags);
-/* Held keys as a bitset indexed by GASM_KEY_* (bit k of byte k/8), stable
+/* Held keys as a bitset indexed by GASM_KEY_* (bit k%8 of byte k/8), stable
  * within a frame. Copies min(len, GASM_KEY_STATE_BYTES) bytes; returns
  * GASM_KEY_STATE_BYTES, or -1 if the runner has no keyboard. */
 GASM_IMPORT("key_state") int32_t gasm_key_state(uint8_t *dst, uint32_t len);
@@ -314,13 +347,18 @@ GASM_IMPORT("gamepad") int32_t gasm_gamepad(uint32_t slot, void *dst, uint32_t c
 /* Device name of the gamepad in slot: its length (copied only if <= cap), or
  * -1 if the slot is empty. */
 GASM_IMPORT("gamepad_name") int32_t gasm_gamepad_name(uint32_t slot, char *dst, uint32_t cap);
-/* Size in bytes of asset name, or -1 if it does not exist. */
+/* Size in bytes of asset name, -1 if it does not exist, or -2 if it is 2 GiB
+ * or larger (use asset_size64). */
 GASM_IMPORT("asset_size") int32_t gasm_asset_size(const char *name, uint32_t name_len);
+/* Size in bytes of asset name (any size), or -1 if it does not exist. */
+GASM_IMPORT("asset_size64") int64_t gasm_asset_size64(const char *name, uint32_t name_len);
 /* Copy up to cap bytes of asset name into dst. Bytes copied, or -1 if missing. */
 GASM_IMPORT("asset_read") int32_t gasm_asset_read(const char *name, uint32_t name_len, void *dst, uint32_t cap);
 /* Copy up to len bytes of asset name starting at offset (streaming). Bytes
  * copied (0 at the end), or -1 if missing. */
 GASM_IMPORT("asset_read_at") int32_t gasm_asset_read_at(const char *name, uint32_t name_len, uint32_t offset, void *dst, uint32_t len);
+/* asset_read_at with a 64-bit offset, for assets of 4 GiB and more. */
+GASM_IMPORT("asset_read_at64") int32_t gasm_asset_read_at64(const char *name, uint32_t name_len, uint64_t offset, void *dst, uint32_t len);
 /* Number of assets. */
 GASM_IMPORT("asset_count") uint32_t gasm_asset_count(void);
 /* Name of asset index (0 .. asset_count-1, sorted by UTF-8 bytes; folder
@@ -354,7 +392,8 @@ GASM_GFX_IMPORT("create_pipeline") uint32_t gasm_gfx_create_pipeline(const char 
 GASM_GFX_IMPORT("create_bind_group") uint32_t gasm_gfx_create_bind_group(const char *json, uint32_t json_len);
 /* GPUBindGroupLayoutDescriptor subset:
  * {"entries":[{"binding":B,"visibility":GASM_STAGE_*,"buffer":{"type":"uniform"|"read-only-storage","hasDynamicOffset":bool,"minBindingSize":N}
- * | "texture":{"sampleType":"float"} | "sampler":{"type":"filtering"}}]}. */
+ * | "texture":{"sampleType":"float"|"unfilterable-float","viewDimension":"2d"}
+ * | "sampler":{"type":"filtering"|"non-filtering"}}]}. */
 GASM_GFX_IMPORT("create_bind_group_layout") uint32_t gasm_gfx_create_bind_group_layout(const char *json, uint32_t json_len);
 /* 2D texture:
  * {"size":[w,h],"format":"rgba8unorm"|"rgba8unorm-srgb","mipLevelCount":n},
@@ -382,17 +421,30 @@ GASM_GFX_IMPORT("set_viewport") void gasm_gfx_set_viewport(float x, float y, flo
 /* Scissor rectangle in drawable pixels (clamped to the drawable). Reset to the
  * whole drawable by begin_frame. */
 GASM_GFX_IMPORT("set_scissor_rect") void gasm_gfx_set_scissor_rect(uint32_t x, uint32_t y, uint32_t width, uint32_t height);
+/* slot 0-7; buffer with GASM_BUF_VERTEX; offset a multiple of 4, at most the
+ * buffer size. */
 GASM_GFX_IMPORT("set_vertex_buffer") void gasm_gfx_set_vertex_buffer(uint32_t slot, uint32_t buffer, uint32_t offset);
-/* format: GASM_INDEX_U16 or GASM_INDEX_U32. */
+/* buffer with GASM_BUF_INDEX; format GASM_INDEX_U16 or GASM_INDEX_U32
+ * (anything else traps); offset a multiple of the index size, at most the
+ * buffer size. */
 GASM_GFX_IMPORT("set_index_buffer") void gasm_gfx_set_index_buffer(uint32_t buffer, uint32_t format, uint32_t offset);
+/* Needs a pipeline, and a vertex buffer in every slot the pipeline reads,
+ * large enough for the vertices and instances drawn (else traps). */
 GASM_GFX_IMPORT("draw") void gasm_gfx_draw(uint32_t vertex_count, uint32_t instance_count, uint32_t first_vertex, uint32_t first_instance);
+/* Like draw, plus an index buffer holding first_index + index_count indices. */
 GASM_GFX_IMPORT("draw_indexed") void gasm_gfx_draw_indexed(uint32_t index_count, uint32_t instance_count, uint32_t first_index, int32_t base_vertex, uint32_t first_instance);
 /* Submit and present. */
 GASM_GFX_IMPORT("end_frame") void gasm_gfx_end_frame(void);
+/* Release an object of any kind. The handle becomes invalid (later use,
+ * including another destroy, traps) and is never reused; objects created from
+ * it stay valid. GPU memory is freed once nothing in a submitted frame uses
+ * it. */
+GASM_GFX_IMPORT("destroy") void gasm_gfx_destroy(uint32_t handle);
 
 /* ---- gasm:net (optional) ---------------------------------------------------------- */
 /* Message connections with WebSocket semantics (reliable, ordered, binary),
- * non-blocking. Runners may deny connections (native: --allow-net). */
+ * non-blocking. Runners may deny connections (native: --allow-net). A handle
+ * that open never returned traps; a closed one reports GASM_NET_CLOSED. */
 
 /* Open a ws:// or wss:// URL. Handle > 0, or -1 if denied/invalid. */
 GASM_NET_IMPORT("open") int32_t gasm_net_open(const char *url, uint32_t url_len);
@@ -403,6 +455,7 @@ GASM_NET_IMPORT("send") int32_t gasm_net_send(int32_t conn, const void *data, ui
 /* Next message's length (copied only if <= cap, else it stays queued), 0 if
  * none, -1 if closed and drained. */
 GASM_NET_IMPORT("recv") int32_t gasm_net_recv(int32_t conn, void *dst, uint32_t cap);
+/* Close (flushing queued messages); closing again does nothing. */
 GASM_NET_IMPORT("close") void gasm_net_close(int32_t conn);
 
 /* ---- gasm:storage (optional) ------------------------------------------------------ */
@@ -412,7 +465,8 @@ GASM_NET_IMPORT("close") void gasm_net_close(int32_t conn);
 
 /* Value length, or -1 if missing. Copied only if length <= cap. */
 GASM_STORAGE_IMPORT("get") int32_t gasm_storage_get(const char *key, uint32_t key_len, void *dst, uint32_t cap);
-/* 0, or -1 on invalid key, too large, quota exceeded or I/O error. */
+/* 0, or a GASM_STORAGE_ERR_* code: invalid key, value too large, quota
+ * exceeded, I/O error. */
 GASM_STORAGE_IMPORT("set") int32_t gasm_storage_set(const char *key, uint32_t key_len, const void *data, uint32_t len);
 /* 0 if deleted, -1 if it did not exist. */
 GASM_STORAGE_IMPORT("delete") int32_t gasm_storage_delete(const char *key, uint32_t key_len);
@@ -435,7 +489,9 @@ static inline uint32_t gasm__strlen(const char *s) {
     return n;
 }
 static inline void gasm_log_str(const char *s) { gasm_log(s, gasm__strlen(s)); }
+static inline int32_t gasm_has_str(const char *name) { return gasm_has(name, gasm__strlen(name)); }
 static inline int32_t gasm_asset_size_str(const char *n) { return gasm_asset_size(n, gasm__strlen(n)); }
+static inline int64_t gasm_asset_size64_str(const char *n) { return gasm_asset_size64(n, gasm__strlen(n)); }
 static inline int32_t gasm_asset_read_str(const char *n, void *dst, uint32_t cap) {
     return gasm_asset_read(n, gasm__strlen(n), dst, cap);
 }

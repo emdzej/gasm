@@ -15,7 +15,7 @@ host with WebGPU for 3D.
   <a class="demo-card" href="/play/?game=sdl3-snake.wasm&autostart" target="_blank"><strong>SDL 3: snake</strong><span>SDL 3's snake demo, source unchanged, on SDL for gasm. Arrows steer, R restarts.</span></a>
   <a class="demo-card" href="/play/?game=sdl3-woodeneye.wasm&autostart" target="_blank"><strong>SDL 3: woodeneye-008</strong><span>SDL 3's tiny shooter, unchanged: click the game for mouselook, WASD moves, Space jumps, click shoots.</span></a>
   <a class="demo-card" href="/play/opfs.html" target="_blank"><strong>Game data in OPFS</strong><span>Import a folder (a mounted CD) into this site's private storage once, using csfs; games then read it on demand in a Worker.</span></a>
-  <a class="demo-card" href="/play/?game=test-pattern.wasm&autostart" target="_blank"><strong>Test pattern (C)</strong><span>A 70-line C game built with wasi-sdk: gradient, movable square, a tone while A is held.</span></a>
+  <a class="demo-card" href="/play/?game=test-pattern.wasm&autostart" target="_blank"><strong>Test pattern (C)</strong><span>An 80-line C game built with wasi-sdk: gradient, movable square, a tone while A is held.</span></a>
 </div>
 
 ## DOOM

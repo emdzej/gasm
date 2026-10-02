@@ -12,14 +12,15 @@
 // Page side:
 //   import { GasmWorker } from '@emdzej/gasm-host/worker';
 //   const w = await GasmWorker.start({
-//     wasm,                                          // ArrayBuffer / Uint8Array
-//     assets: [{ kind: 'opfs', dir: 'openrf-cd' }],  // and/or 'memory' | 'files'
-//     params, storage: 'openrf', allowNet: false,
+//     wasm,                     // WebAssembly.Module (shared, not copied) or bytes (transferred: detached)
+//     assets: [{ kind: 'opfs', dir: 'gasm-assets/mygame' }],  // and/or 'memory' | 'files'
+//     params, storage: 'mygame', allowNet: false,
 //     onLog, onAudio: (samples, rate, channels) => …,
 //   });
-//   const r = await w.frames([pads0, pads1, …], true);  // one entry per frame: [p0,p1,p2,p3]
+//   // one step per frame: { pads: [p0, p1, p2, p3], text, input } (GasmHost.runFrames), or just pads
+//   const r = await w.frames([{ pads, text, input }, …], true);
 //   if (r.frame) draw(r.frame.rgba, r.frame.width, r.frame.height);   // 2D guests only
-//   // optional per batch: { texts: [text per frame] (text_input), size: [w, h] (gfx canvas) }
+//   // optional per batch: { size: [w, h] } (display size of a gfx canvas)
 //
 // Asset specs (in order; the first 'memory' entries are explicit, the rest are folder entries):
 //   { kind: 'memory', record: { name: Uint8Array } }
@@ -39,14 +40,19 @@ export class GasmWorker {
   static async start({
     wasm, assets = [], params = {}, storage = null, allowNet = false, keyboard = false,
     hashing = false, virtualTime = false, onLog = console.log, onAudio = () => {},
-    canvas = null, size = null,
-    url = new URL('./gasm-worker.js', import.meta.url),
+    canvas = null, size = null, url = null,
   }) {
-    const w = new GasmWorker(new Worker(url, { type: 'module', name: 'gasm-guest' }), onLog, onAudio);
-    const bytes = wasm instanceof ArrayBuffer ? wasm : wasm.buffer.slice(wasm.byteOffset, wasm.byteOffset + wasm.byteLength);
+    // written out literally so bundlers (Vite, webpack) find and emit the worker
+    const worker = url
+      ? new Worker(url, { type: 'module', name: 'gasm-guest' })
+      : new Worker(new URL('./gasm-worker.js', import.meta.url), { type: 'module', name: 'gasm-guest' });
+    const w = new GasmWorker(worker, onLog, onAudio);
+    // a compiled Module is shared with the worker (no copy, no second compile); bytes are transferred
+    const module = wasm instanceof WebAssembly.Module;
+    const bytes = module || wasm instanceof ArrayBuffer ? wasm : wasm.buffer.slice(wasm.byteOffset, wasm.byteOffset + wasm.byteLength);
+    const transfer = [...(module ? [] : [bytes]), ...(canvas ? [canvas] : [])];
     const ready = w.next('ready');
-    w.worker.postMessage({ type: 'init', wasm: bytes, assets, params, storage, allowNet, keyboard, hashing, virtualTime, canvas, size },
-      canvas ? [bytes, canvas] : [bytes]);
+    w.worker.postMessage({ type: 'init', wasm: bytes, assets, params, storage, allowNet, keyboard, hashing, virtualTime, canvas, size }, transfer);
     try {
       const r = await ready;
       w.frameRate = r.frameRate;
@@ -95,24 +101,27 @@ export class GasmWorker {
   }
 
   /**
-   * Run one frame per entry of `steps` (each: [pad0, pad1, pad2, pad3]). Only the
-   * last is shown (catch-up rule) if `show`. Resolves with { frame?, stats, frameIndex }.
-   * Rejects with ProcExit when the guest exits.
+   * Run one frame per entry of `steps` ({ pads: [p0, p1, p2, p3], text, input }, or
+   * just the pads array). Only the last is shown (catch-up rule) if `show`. Resolves
+   * with { frame?, stats, frameIndex }. Rejects with ProcExit when the guest exits;
+   * after an exit or a trap every call rejects (the guest isn't called again).
    */
-  frames(steps, show = true, { texts = null, inputs = null, size = null } = {}) {
+  frames(steps, show = true, { size = null } = {}) {
     if (this.failed) return Promise.reject(this.failed);
     const done = this.next('done');
-    this.worker.postMessage({ type: 'frames', steps, show, texts, inputs, size });
+    const norm = steps.map((s) => (Array.isArray(s) ? { pads: s } : s));
+    this.worker.postMessage({ type: 'frames', steps: norm, show, size });
     return done;
   }
 
-  /** The player is quitting: gasm_exit (flush saves), close sockets, stop the worker. */
+  /** The player is quitting: gasm_exit (flush saves), close sockets, stop the worker.
+   *  Also after the guest exited or trapped (sockets and storage still get closed). */
   async exit(timeoutMs = 1000) {
-    if (!this.failed) {
-      const closed = this.next('exited');
-      this.worker.postMessage({ type: 'exit' });
-      await Promise.race([closed, new Promise((r) => setTimeout(r, timeoutMs))]).catch(() => {});
-    }
+    if (this.terminated) return;
+    this.terminated = true;
+    const closed = this.next('exited');
+    this.worker.postMessage({ type: 'exit' });
+    await Promise.race([closed, new Promise((r) => setTimeout(r, timeoutMs))]).catch(() => {});
     this.worker.terminate();
   }
 }
@@ -136,7 +145,7 @@ async function buildAssets(specs, log) {
 }
 
 if (inWorker) {
-  let host = null, gfx = null, keyboard = false, audio = [], presented = 0;
+  let host = null, gfx = null, keyboard = false, audio = [];
   const post = (m, transfer = []) => globalThis.postMessage(m, transfer);
   const log = (msg) => post({ type: 'log', msg });
   const stats = () => ({
@@ -156,6 +165,7 @@ if (inWorker) {
           gfx = await WebGpuGfx.create(m.canvas, log);
           if (m.size) gfx.setSize(...m.size);
         }
+        // the worker reads storage on its own connection; closed by host.shutdown()
         keyboard = m.keyboard;
         host = new GasmHost({
           assets, params: m.params, storage, allowNet: m.allowNet, virtualTime: m.virtualTime, onLog: log,
@@ -168,36 +178,22 @@ if (inWorker) {
         post(err instanceof ProcExit ? { type: 'exit', code: err.code } : { type: 'error', message: err.message });
       }
     } else if (m.type === 'frames') {
-      let exit = null, error = null;
+      let exit = null, error = null, video = false;
       if (gfx && m.size) gfx.setSize(...m.size);
-      for (let i = 0; i < m.steps.length; i++) {
-        const pads = m.steps[i];
-        host.getPad = (p) => pads[p] ?? 0;
-        host.text = keyboard ? (m.texts?.[i] ?? '') : null;
-        host.input = m.inputs?.[i] ?? { keys: null, keyEvents: [], pointer: null, gamepads: null };
-        host.showFrame = m.show && i === m.steps.length - 1;
-        if (gfx) gfx.used = false;
-        try { host.frame(); } catch (err) {
-          if (err instanceof ProcExit) exit = err.code; else error = err.message;
-          break;
-        }
+      const steps = m.steps.map((s) => ({ ...s, text: keyboard ? (s.text ?? '') : null }));
+      // a gfx canvas belongs to WebGPU here: runFrames blits 2D frames into it
+      try { ({ video } = host.runFrames(steps, m.show)); } catch (err) {
+        if (err instanceof ProcExit) exit = err.code; else error = err.message;
       }
       // Send the latest 2D frame only if a new one was presented (transfer, no copy on arrival).
-      // With a gfx canvas (it belongs to WebGPU here), blit it in the worker instead.
       let frame = null;
-      if (gfx) {
-        if (m.show && !gfx.used && host.width && host.framesPresented !== presented) gfx.presentVideo(host.rgba, host.width, host.height);
-        presented = host.framesPresented;
-      } else if (host.framesPresented !== presented && host.width) {
-        presented = host.framesPresented;
-        const rgba = host.rgba.slice();
-        frame = { rgba, width: host.width, height: host.height };
-      }
+      if (!gfx && video) frame = { rgba: host.rgba.slice(), width: host.width, height: host.height };
       const out = audio; audio = [];
       const transfer = [...(frame ? [frame.rgba.buffer] : []), ...out.map((a) => a.samples.buffer)];
       post({ type: 'done', frame, audio: out, stats: stats(), frameIndex: host.frameIndex, frameRate: host.frameRate, inputMode: host.inputMode, exit, error }, transfer);
     } else if (m.type === 'exit') {
-      try { host?.exit(); await host?.net.closeAll(); } catch {}
+      try { await host?.shutdown(); } catch {}
+      gfx?.device.destroy();
       post({ type: 'exited' });
     }
   };

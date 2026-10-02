@@ -4,11 +4,16 @@
 //! non-blocking (queues + an atomic state), matching the browser runner.
 //! `ws://` and `wss://` (rustls, trusting the OS certificate store; set
 //! `SSL_CERT_FILE` to use a specific CA bundle instead).
+//!
+//! Limits keep a misbehaving guest or peer from exhausting the host: at most
+//! [`MAX_CONNECTIONS`] open at once, bounded queues in both directions (a full
+//! send queue makes `send` fail; a full receive queue stops reading the socket,
+//! so TCP pushes back on the peer), and timeouts for connecting and the handshake.
 
 use std::collections::{HashMap, VecDeque};
 use std::io::ErrorKind;
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
+use std::sync::mpsc::{self, Receiver, SyncSender, TryRecvError, TrySendError};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -20,9 +25,14 @@ pub const OPEN: u32 = 1;
 pub const CLOSED: u32 = 2;
 pub const ERROR: u32 = 3;
 
+pub const MAX_CONNECTIONS: usize = 16;
+/// Messages queued per direction per connection.
+const QUEUE: usize = 4096;
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+
 struct Conn {
     state: Arc<AtomicU32>,
-    outgoing: Sender<Vec<u8>>,
+    outgoing: SyncSender<Vec<u8>>,
     thread: Option<std::thread::JoinHandle<()>>,
     incoming: Receiver<Vec<u8>>,
     queue: VecDeque<Vec<u8>>,
@@ -48,10 +58,14 @@ impl Net {
             eprintln!("[gasm] net: only ws:// and wss:// URLs are supported: {url}");
             return -1;
         }
+        if self.conns.len() >= MAX_CONNECTIONS {
+            eprintln!("[gasm] net: too many connections (max {MAX_CONNECTIONS}): {url}");
+            return -1;
+        }
         install_crypto_provider();
         let state = Arc::new(AtomicU32::new(CONNECTING));
-        let (out_tx, out_rx) = mpsc::channel::<Vec<u8>>();
-        let (in_tx, in_rx) = mpsc::channel::<Vec<u8>>();
+        let (out_tx, out_rx) = mpsc::sync_channel::<Vec<u8>>(QUEUE);
+        let (in_tx, in_rx) = mpsc::sync_channel::<Vec<u8>>(QUEUE);
         let (st, url_owned) = (state.clone(), url.to_owned());
         let thread = std::thread::spawn(move || run(&url_owned, &st, out_rx, in_tx));
         let h = self.next;
@@ -60,19 +74,50 @@ impl Net {
         h
     }
 
-    pub fn state(&self, h: i32) -> u32 {
-        self.conns.get(&h).map_or(ERROR, |c| c.state.load(Ordering::Acquire))
-    }
-
-    pub fn send(&mut self, h: i32, msg: Vec<u8>) -> i32 {
-        match self.conns.get(&h) {
-            Some(c) if c.state.load(Ordering::Acquire) == OPEN && c.outgoing.send(msg).is_ok() => 0,
-            _ => -1,
+    /// A handle `open` never returned is an error (the guest traps); a closed
+    /// one is `Ok(false)`.
+    fn check(&self, h: i32) -> Result<bool, String> {
+        if h <= 0 || h >= self.next {
+            return Err(format!("gasm:net: invalid connection handle {h}"));
         }
+        Ok(self.conns.contains_key(&h))
     }
 
-    /// Next message without removing it; Err(0) = none yet, Err(-1) = closed and drained.
-    pub fn peek(&mut self, h: i32) -> Result<&[u8], i32> {
+    pub fn state(&self, h: i32) -> Result<u32, String> {
+        Ok(match self.check(h)? {
+            true => self.conns[&h].state.load(Ordering::Acquire),
+            false => CLOSED,
+        })
+    }
+
+    /// 0, or -1 if not open or the send queue is full.
+    pub fn send(&mut self, h: i32, msg: Vec<u8>) -> Result<i32, String> {
+        if !self.check(h)? {
+            return Ok(-1);
+        }
+        let c = &self.conns[&h];
+        if c.state.load(Ordering::Acquire) != OPEN {
+            return Ok(-1);
+        }
+        Ok(match c.outgoing.try_send(msg) {
+            Ok(()) => 0,
+            Err(TrySendError::Full(_)) => {
+                eprintln!("[gasm] net: send queue full ({QUEUE} messages)");
+                -1
+            }
+            Err(TrySendError::Disconnected(_)) => -1,
+        })
+    }
+
+    /// Next message without removing it; Ok(Err(0)) = none yet, Ok(Err(-1)) = closed and drained.
+    pub fn peek(&mut self, h: i32) -> Result<Result<&[u8], i32>, String> {
+        if !self.check(h)? {
+            return Ok(Err(-1));
+        }
+        Ok(self.peek_open(h))
+    }
+
+    fn peek_open(&mut self, h: i32) -> Result<&[u8], i32> {
         let Some(c) = self.conns.get_mut(&h) else { return Err(-1) };
         while let Ok(m) = c.incoming.try_recv() {
             c.queue.push_back(m);
@@ -89,8 +134,11 @@ impl Net {
         }
     }
 
-    pub fn close(&mut self, h: i32) {
-        self.conns.remove(&h); // dropping the sender ends the thread
+    /// Closing a closed connection does nothing.
+    pub fn close(&mut self, h: i32) -> Result<(), String> {
+        self.check(h)?;
+        self.conns.remove(&h); // dropping the sender ends the thread (after flushing)
+        Ok(())
     }
 }
 
@@ -110,9 +158,9 @@ impl Drop for Net {
 
 /// Connection thread: connect, then alternate between flushing outgoing
 /// messages and reading with a short timeout.
-fn run(url: &str, state: &AtomicU32, outgoing: Receiver<Vec<u8>>, incoming: Sender<Vec<u8>>) {
-    let mut ws = match tungstenite::connect(url) {
-        Ok((ws, _)) => ws,
+fn run(url: &str, state: &AtomicU32, outgoing: Receiver<Vec<u8>>, incoming: SyncSender<Vec<u8>>) {
+    let mut ws = match connect(url) {
+        Ok(ws) => ws,
         Err(e) => {
             eprintln!("[gasm] net: {url}: {e}");
             state.store(ERROR, Ordering::Release);
@@ -142,6 +190,34 @@ fn run(url: &str, state: &AtomicU32, outgoing: Receiver<Vec<u8>>, incoming: Send
     }
     state.store(if end.is_ok() { CLOSED } else { ERROR }, Ordering::Release);
     close_gracefully(&mut ws);
+}
+
+/// TCP connect and TLS/WebSocket handshakes, each bounded by [`CONNECT_TIMEOUT`].
+fn connect(url: &str) -> Result<WebSocket<MaybeTlsStream<std::net::TcpStream>>, String> {
+    use std::net::ToSocketAddrs;
+    let uri: tungstenite::http::Uri = url.parse().map_err(|e| format!("bad URL: {e}"))?;
+    let host = uri.host().ok_or("URL has no host")?.trim_start_matches('[').trim_end_matches(']');
+    let port = uri.port_u16().unwrap_or(if uri.scheme_str() == Some("wss") { 443 } else { 80 });
+    let mut last = String::from("no address");
+    for addr in (host, port).to_socket_addrs().map_err(|e| e.to_string())? {
+        match std::net::TcpStream::connect_timeout(&addr, CONNECT_TIMEOUT) {
+            Ok(tcp) => {
+                tcp.set_read_timeout(Some(CONNECT_TIMEOUT)).map_err(|e| e.to_string())?;
+                tcp.set_write_timeout(Some(CONNECT_TIMEOUT)).map_err(|e| e.to_string())?;
+                let (ws, _) = tungstenite::client_tls(url, tcp).map_err(|e| e.to_string())?;
+                let tcp = match ws.get_ref() {
+                    MaybeTlsStream::Plain(s) => s,
+                    MaybeTlsStream::Rustls(s) => &s.sock,
+                    _ => return Ok(ws),
+                };
+                tcp.set_read_timeout(None).map_err(|e| e.to_string())?;
+                tcp.set_write_timeout(None).map_err(|e| e.to_string())?;
+                return Ok(ws);
+            }
+            Err(e) => last = format!("{addr}: {e}"),
+        }
+    }
+    Err(last)
 }
 
 /// WebSocket close handshake, draining incoming data until the peer confirms.
@@ -179,8 +255,10 @@ fn would_block(e: &tungstenite::Error) -> bool {
 pub(crate) fn pump(
     ws: &mut WebSocket<MaybeTlsStream<std::net::TcpStream>>,
     outgoing: &Receiver<Vec<u8>>,
-    incoming: &Sender<Vec<u8>>,
+    incoming: &SyncSender<Vec<u8>>,
 ) -> Result<(), String> {
+    // a message the guest's full receive queue couldn't take yet: read nothing more until it fits
+    let mut pending: Option<Vec<u8>> = None;
     loop {
         let mut busy = false;
         loop {
@@ -205,16 +283,22 @@ pub(crate) fn pump(
             Err(e) if would_block(&e) => {}
             Err(e) => return Err(e.to_string()),
         }
-        match ws.read() {
+        if let Some(m) = pending.take() {
+            match incoming.try_send(m) {
+                Ok(()) => busy = true,
+                Err(TrySendError::Full(m)) => pending = Some(m),
+                Err(TrySendError::Disconnected(_)) => return Ok(()),
+            }
+        }
+        let read = if pending.is_some() { Err(tungstenite::Error::Io(ErrorKind::WouldBlock.into())) } else { ws.read() };
+        match read {
             Ok(Message::Binary(b)) => {
                 busy = true;
-                if incoming.send(b.to_vec()).is_err() {
-                    return Ok(());
-                }
+                pending = Some(b.to_vec());
             }
             Ok(Message::Text(t)) => {
                 busy = true;
-                let _ = incoming.send(t.as_bytes().to_vec());
+                pending = Some(t.as_bytes().to_vec());
             }
             Ok(Message::Close(_)) => return Ok(()),
             Ok(_) => busy = true,
@@ -246,10 +330,10 @@ mod tests {
     /// Wait (up to 10 s) for a connection to leave CONNECTING; return its state.
     fn settle(net: &Net, h: i32) -> u32 {
         let t0 = std::time::Instant::now();
-        while net.state(h) == CONNECTING && t0.elapsed() < Duration::from_secs(10) {
+        while net.state(h).unwrap() == CONNECTING && t0.elapsed() < Duration::from_secs(10) {
             std::thread::sleep(Duration::from_millis(20));
         }
-        net.state(h)
+        net.state(h).unwrap()
     }
 
     /// Public TLS endpoint, OS trust store. Run with: cargo test --release -- --ignored
@@ -260,11 +344,11 @@ mod tests {
         let h = net.open("wss://echo.websocket.org");
         assert!(h > 0);
         assert_eq!(settle(&net, h), OPEN, "TLS connection did not open");
-        assert_eq!(net.send(h, b"gasm-tls-check".to_vec()), 0);
+        assert_eq!(net.send(h, b"gasm-tls-check".to_vec()), Ok(0));
         let t0 = std::time::Instant::now();
         let mut echoed = false;
         while t0.elapsed() < Duration::from_secs(10) && !echoed {
-            match net.peek(h) {
+            match net.peek(h).unwrap() {
                 Ok(m) => {
                     echoed = m == b"gasm-tls-check";
                     net.pop(h);
@@ -280,5 +364,18 @@ mod tests {
     fn denied_without_permission() {
         assert_eq!(Net::new(false).open("wss://example.com"), -1);
         assert_eq!(Net::new(true).open("http://example.com"), -1);
+    }
+
+    #[test]
+    fn unknown_handles_are_errors_closed_ones_are_not() {
+        let mut net = Net::new(true);
+        assert!(net.state(1).is_err() && net.state(0).is_err() && net.close(7).is_err());
+        let h = net.open("ws://127.0.0.1:1"); // nothing listens on port 1
+        assert!(h > 0);
+        net.close(h).unwrap();
+        assert_eq!(net.state(h), Ok(CLOSED));
+        assert_eq!(net.send(h, vec![1]), Ok(-1));
+        assert_eq!(net.peek(h).unwrap().err(), Some(-1));
+        net.close(h).unwrap(); // again: nothing happens
     }
 }

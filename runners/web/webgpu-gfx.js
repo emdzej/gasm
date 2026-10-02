@@ -1,8 +1,11 @@
 // gasm:gfx on the browser's WebGPU (navigator.gpu). Mirrors runners/native/src/gfx.rs:
-// same handle table, JSON descriptors, runner-owned MSAA (4x) and depth24plus.
-// Descriptors arrive already validated by GfxModel (gasm-host.js). The canvas may be
-// an HTMLCanvasElement (main thread) or an OffscreenCanvas (Worker mode): offscreen,
-// the page reports the display size with setSize().
+// runner-owned MSAA (4x) and depth24plus, JSON descriptors. GfxModel (lib/gfx.js)
+// validates every call and numbers the handles; this backend only executes. What
+// only the GPU can check (WGSL, the shader/pipeline interface) is caught with error
+// scopes: such an error traps the guest at its next gfx call (popErrorScope is
+// async, so one call later than natively). The canvas may be an HTMLCanvasElement
+// (main thread) or an OffscreenCanvas (Worker mode): offscreen, the page reports the
+// display size with setSize().
 
 export const SAMPLE_COUNT = 4;
 
@@ -12,7 +15,6 @@ export class WebGpuGfx {
     const adapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' });
     if (!adapter) throw new Error('no WebGPU adapter');
     const device = await adapter.requestDevice();
-    device.addEventListener('uncapturederror', (e) => log(`[gasm] gpu error: ${e.error.message}`));
     return new WebGpuGfx(canvas, device, log);
   }
 
@@ -23,11 +25,33 @@ export class WebGpuGfx {
     this.format = navigator.gpu.getPreferredCanvasFormat();
     this.context = canvas.getContext('webgpu');
     this.context.configure({ device, format: this.format, alphaMode: 'opaque' });
-    this.objects = [null]; // handle 0 is never valid
+    this.objects = new Map();   // handle -> { kind, value, view?, refs? }
+    this.refs = new Map();      // buffer/texture handle -> live bind groups using it
+    this.doomed = new Set();    // destroyed by the guest, still used by a bind group
+    this.afterSubmit = [];      // GPU objects to destroy once the current frame is submitted
+    this.pending = null;        // a GPU validation error not reported to the guest yet
     this.pass = null;
+    this.used = false;
     this.w = 0; this.h = 0;
     this.sizeHint = null;
+    device.addEventListener('uncapturederror', (e) => { this.pending ??= e.error.message; log(`[gasm] gpu error: ${e.error.message}`); });
     this.resize();
+  }
+
+  /** Throw (trap the guest) if the GPU reported a validation error since the last call. */
+  checkErrors() {
+    if (this.pending !== null) {
+      const e = this.pending;
+      this.pending = null;
+      throw new Error(`gfx: ${e}`);
+    }
+  }
+
+  scoped(what, f) {
+    this.device.pushErrorScope('validation');
+    const out = f();
+    this.device.popErrorScope().then((e) => { if (e) this.pending ??= `${what}: ${e.message}`; });
+    return out;
   }
 
   /** OffscreenCanvas: the display size in device pixels, sent by the page. */
@@ -53,67 +77,54 @@ export class WebGpuGfx {
     this.depth = tex('depth24plus');
   }
 
-  add(obj) { this.objects.push(obj); return this.objects.length - 1; }
-  get(h, kind) {
-    const o = this.objects[h];
-    if (!o || (kind && o.kind !== kind)) throw new Error(`gfx: handle ${h} is not a ${kind ?? 'valid object'}`);
-    return o.value;
-  }
+  get(h) { return this.objects.get(h).value; }
 
   width() { return this.w; }
   height() { return this.h; }
 
-  createShader(code) {
-    return this.add({ kind: 'shader', value: this.device.createShaderModule({ code }) });
+  createShader(h, code) {
+    this.objects.set(h, { kind: 'shader', value: this.scoped('create_shader', () => this.device.createShaderModule({ code })) });
   }
 
-  createBuffer(size, usage) {
-    if (!size || size % 4) throw new Error(`gfx.create_buffer: size ${size} must be a non-zero multiple of 4`);
-    const buf = this.device.createBuffer({ size, usage: usage | GPUBufferUsage.COPY_DST });
-    return this.add({ kind: 'buffer', value: buf });
+  createBuffer(h, size, usage) {
+    this.objects.set(h, { kind: 'buffer', value: this.device.createBuffer({ size, usage: usage | GPUBufferUsage.COPY_DST }) });
   }
 
-  writeBuffer(h, offset, bytes) {
-    this.device.queue.writeBuffer(this.get(h, 'buffer'), offset, bytes.slice());
-  }
+  // queue.write* copy the data before returning: guest memory can be passed directly
+  writeBuffer(h, offset, bytes) { this.device.queue.writeBuffer(this.get(h), offset, bytes); }
 
-  createPipeline(d) {
-    const surface = (targets = []) => targets.map((t) => {
-      if (t.format && t.format !== 'surface') throw new Error(`pipeline: color target format must be "surface", got ${t.format}`);
-      return { ...t, format: this.format };
-    });
-    if (d.depthStencil?.format && d.depthStencil.format !== 'depth24plus') {
-      throw new Error(`pipeline: depthStencil format must be "depth24plus", got ${d.depthStencil.format}`);
-    }
+  createPipeline(h, d) {
+    const surface = (targets = []) => targets.map((t) => ({ ...t, format: this.format }));
     const layout = Array.isArray(d.layout)
-      ? this.device.createPipelineLayout({ bindGroupLayouts: d.layout.map((h) => this.get(h, 'layout')) })
+      ? this.device.createPipelineLayout({ bindGroupLayouts: d.layout.map((l) => this.get(l)) })
       : 'auto';
     const desc = {
       layout,
-      vertex: { ...d.vertex, module: this.get(d.vertex.module, 'shader') },
-      fragment: d.fragment && { ...d.fragment, module: this.get(d.fragment.module, 'shader'), targets: surface(d.fragment.targets) },
+      vertex: { ...d.vertex, module: this.get(d.vertex.module) },
+      fragment: d.fragment && { ...d.fragment, module: this.get(d.fragment.module), targets: surface(d.fragment.targets) },
       primitive: d.primitive,
       // the pass always has a depth attachment: pipelines without depthStencil get a no-op one
       depthStencil: { depthWriteEnabled: false, depthCompare: 'always', ...d.depthStencil, format: 'depth24plus' },
       multisample: { count: SAMPLE_COUNT },
     };
-    return this.add({ kind: 'pipeline', value: this.device.createRenderPipeline(desc) });
+    this.objects.set(h, { kind: 'pipeline', value: this.scoped('create_pipeline', () => this.device.createRenderPipeline(desc)) });
   }
 
-  createBindGroup(d) {
-    const layout = d.layout !== undefined ? this.get(d.layout, 'layout') : this.get(d.pipeline, 'pipeline').getBindGroupLayout(d.group ?? 0);
+  createBindGroup(h, d, meta) {
+    const layout = d.layout !== undefined ? this.get(d.layout) : this.get(d.pipeline).getBindGroupLayout(d.group ?? 0);
     const resource = (e) => {
-      if (e.texture !== undefined) return this.objects[e.texture].view;
-      if (e.sampler !== undefined) return this.get(e.sampler, 'sampler');
-      return { buffer: this.get(e.buffer, 'buffer'), offset: e.offset ?? 0, size: e.size };
+      if (e.texture !== undefined) return this.objects.get(e.texture).view;
+      if (e.sampler !== undefined) return this.get(e.sampler);
+      return { buffer: this.get(e.buffer), offset: e.offset ?? 0, size: e.size };
     };
-    const bg = this.device.createBindGroup({
+    const bg = this.scoped('create_bind_group', () => this.device.createBindGroup({
       layout, entries: (d.entries ?? []).map((e) => ({ binding: e.binding, resource: resource(e) })),
-    });
-    return this.add({ kind: 'bindgroup', value: bg });
+    }));
+    for (const r of meta.resources) this.refs.set(r, (this.refs.get(r) ?? 0) + 1);
+    this.objects.set(h, { kind: 'bindgroup', value: bg, resources: meta.resources });
   }
 
-  createBindGroupLayout(d) {
+  createBindGroupLayout(h, d) {
     const entries = (d.entries ?? []).map((e) => {
       const out = { binding: e.binding, visibility: e.visibility };
       if (e.buffer) out.buffer = { type: e.buffer.type ?? 'uniform', hasDynamicOffset: !!e.buffer.hasDynamicOffset, minBindingSize: e.buffer.minBindingSize ?? 0 };
@@ -121,30 +132,54 @@ export class WebGpuGfx {
       else out.sampler = { type: e.sampler.type ?? 'filtering' };
       return out;
     });
-    return this.add({ kind: 'layout', value: this.device.createBindGroupLayout({ entries }) });
+    this.objects.set(h, { kind: 'layout', value: this.scoped('create_bind_group_layout', () => this.device.createBindGroupLayout({ entries })) });
   }
 
-  createTexture(d, meta) {
+  createTexture(h, d, meta) {
     const texture = this.device.createTexture({
       size: [meta.width, meta.height], format: meta.format, mipLevelCount: meta.mips,
       usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
     });
-    return this.add({ kind: 'texture', value: texture, view: texture.createView() });
+    this.objects.set(h, { kind: 'texture', value: texture, view: texture.createView() });
   }
 
   writeTexture(h, mip, x, y, w, ht, bytes) {
-    this.device.queue.writeTexture({ texture: this.get(h, 'texture'), mipLevel: mip, origin: [x, y] },
-      bytes.slice(), { bytesPerRow: w * 4, rowsPerImage: ht }, [w, ht]);
+    this.device.queue.writeTexture({ texture: this.get(h), mipLevel: mip, origin: [x, y] },
+      bytes, { bytesPerRow: w * 4, rowsPerImage: ht }, [w, ht]);
   }
 
-  createSampler(d) {
+  createSampler(h, d) {
     const keys = ['addressModeU', 'addressModeV', 'magFilter', 'minFilter', 'mipmapFilter', 'lodMinClamp', 'lodMaxClamp', 'maxAnisotropy'];
     const desc = Object.fromEntries(keys.filter((k) => d[k] !== undefined).map((k) => [k, d[k]]));
-    return this.add({ kind: 'sampler', value: this.device.createSampler(desc) });
+    this.objects.set(h, { kind: 'sampler', value: this.device.createSampler(desc) });
+  }
+
+  /** The guest destroyed h. Buffers and textures are freed once no live bind group
+   *  uses them and the frame being recorded (if any) is submitted. */
+  destroy(h) {
+    const o = this.objects.get(h);
+    this.objects.delete(h);
+    if (!o) return;
+    if (o.kind === 'bindgroup') {
+      for (const r of o.resources) {
+        const n = (this.refs.get(r) ?? 1) - 1;
+        if (n > 0) { this.refs.set(r, n); continue; }
+        this.refs.delete(r);
+        const gone = [...this.doomed].find((d) => d.h === r);
+        if (gone) { this.doomed.delete(gone); this.free(gone.value); }
+      }
+    } else if (o.kind === 'buffer' || o.kind === 'texture') {
+      if (this.refs.get(h)) this.doomed.add({ h, value: o.value });
+      else this.free(o.value);
+    }
+  }
+
+  free(gpuObject) {
+    if (this.pass) this.afterSubmit.push(gpuObject);
+    else gpuObject.destroy();
   }
 
   beginFrame(r, g, b, a, show) {
-    if (this.pass) throw new Error('gfx.begin_frame called twice without end_frame');
     this.used = true;
     if (!show) return false;
     this.resize();
@@ -163,9 +198,8 @@ export class WebGpuGfx {
     return true;
   }
 
-  setPipeline(h) { const p = this.get(h, 'pipeline'); this.pass?.setPipeline(p); }
-  setBindGroup(i, h) { const bg = this.get(h, 'bindgroup'); this.pass?.setBindGroup(i, bg); }
-  setBindGroupOffsets(i, h, offsets) { const bg = this.get(h, 'bindgroup'); this.pass?.setBindGroup(i, bg, offsets); }
+  setPipeline(h) { this.pass?.setPipeline(this.get(h)); }
+  setBindGroup(i, h, offsets) { this.pass?.setBindGroup(i, this.get(h), offsets); }
   // Rectangles arrive clamped to the drawable; an empty one skips draws (as natively).
   setViewport(x, y, w, h, min, max) {
     if (!this.pass) return;
@@ -177,8 +211,8 @@ export class WebGpuGfx {
     this.emptyScissor = w <= 0 || h <= 0;
     if (!this.emptyScissor) this.pass.setScissorRect(x, y, w, h);
   }
-  setVertexBuffer(slot, h, off) { const b = this.get(h, 'buffer'); this.pass?.setVertexBuffer(slot, b, off); }
-  setIndexBuffer(h, fmt, off) { const b = this.get(h, 'buffer'); this.pass?.setIndexBuffer(b, fmt === 1 ? 'uint32' : 'uint16', off); }
+  setVertexBuffer(slot, h, off) { this.pass?.setVertexBuffer(slot, this.get(h), off); }
+  setIndexBuffer(h, fmt, off) { this.pass?.setIndexBuffer(this.get(h), fmt === 1 ? 'uint32' : 'uint16', off); }
   get clipped() { return this.emptyViewport || this.emptyScissor; }
   draw(vc, ic, fv, fi) { if (!this.clipped) this.pass?.draw(vc, ic, fv, fi); }
   drawIndexed(ic, n, first, base, fi) { if (!this.clipped) this.pass?.drawIndexed(ic, n, first, base, fi); }
@@ -186,8 +220,9 @@ export class WebGpuGfx {
   endFrame() {
     if (!this.pass) return;
     this.pass.end();
-    this.device.queue.submit([this.encoder.finish()]);
+    this.scoped('end_frame', () => this.device.queue.submit([this.encoder.finish()]));
     this.pass = null;
+    for (const o of this.afterSubmit.splice(0)) o.destroy();
   }
 
   /**

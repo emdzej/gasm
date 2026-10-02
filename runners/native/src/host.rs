@@ -1,18 +1,19 @@
 //! The gasm ABI v0 host: instantiates a guest and implements the "gasm",
-//! "gasm:gfx" and "gasm:net" imports.
+//! "gasm:gfx", "gasm:net" and "gasm:storage" imports, plus the WASI subset in
+//! [`crate::wasi`].
 
-use std::collections::HashMap;
-use std::time::Instant;
+use std::collections::{HashMap, HashSet};
+use std::sync::OnceLock;
+use std::time::{Duration, Instant};
 
-use wasmtime::{Caller, Engine, Instance, Linker, Memory, Module, Store, TypedFunc, bail, format_err};
-use wasmtime_wasi::WasiCtx;
-use wasmtime_wasi::p1::{self, WasiP1Ctx};
+use wasmtime::{Caller, Config, Engine, Instance, Linker, Memory, Module, Store, TypedFunc, bail, format_err};
 
 use crate::assets::Assets;
-use crate::audio::AudioSink;
+use crate::audio::AudioOut;
 use crate::gfx::Gfx;
 use crate::net::Net;
 use crate::storage::Storage;
+use crate::wasi::{self, Splitmix};
 
 pub const ABI_VERSION: i32 = 0;
 
@@ -20,9 +21,15 @@ pub const ABI_VERSION: i32 = 0;
 #[derive(Clone, Copy)]
 pub struct Fnv(pub u32);
 
+impl Default for Fnv {
+    fn default() -> Self {
+        Fnv(0x811c_9dc5)
+    }
+}
+
 impl Fnv {
     pub fn new() -> Self {
-        Fnv(0x811c_9dc5)
+        Self::default()
     }
     pub fn update(&mut self, bytes: &[u8]) {
         let mut h = self.0;
@@ -34,11 +41,39 @@ impl Fnv {
     }
 }
 
+/// Headless virtual time: derived from the frame number, monotonic when the
+/// guest changes its frame rate. Same arithmetic in gasm-host.js
+/// (`VirtualClock`) and the `gasm::native` stub.
+#[derive(Clone, Copy)]
+pub struct VirtualClock {
+    base_ms: f64,
+    base_frame: u64,
+    rate: f64,
+}
+
+impl Default for VirtualClock {
+    fn default() -> Self {
+        VirtualClock { base_ms: 0.0, base_frame: 0, rate: 60.0 }
+    }
+}
+
+impl VirtualClock {
+    /// Time at the start of `frame` (frames are counted from 0) at frame rate `rate`.
+    pub fn at(&mut self, frame: u64, rate: f64) -> f64 {
+        if rate != self.rate {
+            self.base_ms += (frame - self.base_frame) as f64 * 1000.0 / self.rate;
+            self.base_frame = frame;
+            self.rate = rate;
+        }
+        self.base_ms + (frame - self.base_frame) as f64 * 1000.0 / self.rate
+    }
+}
+
 /// Raw input for one frame, set by the runner before each `gasm_frame`.
 /// `None` fields mean the runner has no such device (the import returns -1).
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct RawInput {
-    /// held keys, bit k = GASM_KEY code k
+    /// held keys, bit k%8 of byte k/8 = GASM_KEY code k
     pub keys: Option<[u8; KEY_STATE_BYTES]>,
     /// (code, down) since the previous frame, in order
     pub key_events: Vec<(u16, bool)>,
@@ -92,11 +127,13 @@ pub fn frame_position(x: f32, y: f32, drawable: (f32, f32), frame: (usize, usize
 }
 
 pub struct Host {
-    wasi: WasiP1Ctx,
     memory: Option<Memory>,
     start: Instant,
-    /// Headless runs use frame-derived time so results are reproducible.
+    /// Headless runs use frame-derived time so results are reproducible (also
+    /// the WASI clocks).
     pub virtual_time_ms: Option<f64>,
+    /// Headless runs: a fixed `random_get` sequence; None = OS randomness.
+    pub random: Option<Splitmix>,
     pub frame_rate: f64,
     pub pads: [u32; 4],
     /// UTF-8 typed since the previous frame (set by the runner before each frame);
@@ -106,10 +143,8 @@ pub struct Host {
     /// GASM_INPUT_* flags requested by the guest (input_mode)
     pub input_mode: u32,
     pub assets: Assets,
-    /// sorted asset names, computed on first asset_count/asset_name
-    asset_names: Option<Vec<String>>,
     pub params: HashMap<String, String>,
-    pub audio: Option<AudioSink>,
+    pub audio: Option<Box<dyn AudioOut>>,
     pub gfx: Gfx,
     pub net: Net,
     pub storage: Storage,
@@ -117,6 +152,8 @@ pub struct Host {
     pub show_frame: bool,
     audio_rate: u32,
     audio_channels: u32,
+    /// imports this runner provides ("module" and "module.function"), for `has`
+    provided: HashSet<String>,
     /// Last presented frame as RGBA8, tightly packed.
     pub rgba: Vec<u8>,
     pub width: usize,
@@ -132,24 +169,22 @@ impl Host {
     pub fn new(
         assets: impl Into<Assets>,
         params: HashMap<String, String>,
-        audio: Option<AudioSink>,
+        audio: Option<Box<dyn AudioOut>>,
         gfx: Gfx,
         net: Net,
         storage: Storage,
     ) -> Self {
-        let wasi = WasiCtx::builder().inherit_stdout().inherit_stderr().build_p1();
         Host {
-            wasi,
             memory: None,
             start: Instant::now(),
             virtual_time_ms: None,
+            random: None,
             frame_rate: 60.0,
             pads: [0; 4],
             text: None,
             input: RawInput::default(),
             input_mode: 0,
             assets: assets.into(),
-            asset_names: None,
             params,
             audio,
             gfx,
@@ -158,6 +193,7 @@ impl Host {
             show_frame: true,
             audio_rate: 44100,
             audio_channels: 2,
+            provided: HashSet::new(),
             rgba: Vec::new(),
             width: 0,
             height: 0,
@@ -168,10 +204,21 @@ impl Host {
             audio_frames: 0,
         }
     }
+
+    /// Reproducible mode for headless runs: virtual time (starting at 0) and a
+    /// fixed random sequence.
+    pub fn set_reproducible(&mut self) {
+        self.virtual_time_ms = Some(0.0);
+        self.random = Some(Splitmix(0));
+    }
+
+    pub(crate) fn started(&self) -> Instant {
+        self.start
+    }
 }
 
 /// Borrow `len` bytes at guest offset `ptr`, trapping the guest if out of bounds.
-fn guest_slice<'a>(mem: &'a [u8], ptr: u32, len: u64) -> wasmtime::Result<&'a [u8]> {
+pub(crate) fn guest_slice(mem: &[u8], ptr: u32, len: u64) -> wasmtime::Result<&[u8]> {
     let start = ptr as u64;
     let end = start.checked_add(len).ok_or_else(|| format_err!("guest pointer overflow"))?;
     if end > mem.len() as u64 {
@@ -180,21 +227,77 @@ fn guest_slice<'a>(mem: &'a [u8], ptr: u32, len: u64) -> wasmtime::Result<&'a [u
     Ok(&mem[start as usize..end as usize])
 }
 
-fn memory(caller: &Caller<'_, Host>) -> wasmtime::Result<Memory> {
+/// Mutable [`guest_slice`].
+pub(crate) fn guest_slice_mut(mem: &mut [u8], ptr: u32, len: u64) -> wasmtime::Result<&mut [u8]> {
+    let start = ptr as u64;
+    let end = start.checked_add(len).ok_or_else(|| format_err!("guest pointer overflow"))?;
+    if end > mem.len() as u64 {
+        bail!("guest access out of bounds: {start:#x}..{end:#x} (memory is {:#x})", mem.len());
+    }
+    Ok(&mut mem[start as usize..end as usize])
+}
+
+/// The "copied only if it fits" convention: copy `src` to `dst` if `src.len() <= cap`;
+/// returns the full length either way.
+fn copy_if_fits(mem: &mut [u8], dst: u32, cap: u32, src: &[u8]) -> wasmtime::Result<i32> {
+    if src.len() <= cap as usize {
+        guest_slice_mut(mem, dst, src.len() as u64)?.copy_from_slice(src);
+    }
+    Ok(src.len() as i32)
+}
+
+pub(crate) fn memory(caller: &Caller<'_, Host>) -> wasmtime::Result<Memory> {
     caller.data().memory.ok_or_else(|| format_err!("guest memory not yet available"))
 }
 
 fn guest_str(caller: &Caller<'_, Host>, ptr: u32, len: u32) -> wasmtime::Result<String> {
     let mem = memory(caller)?;
     let bytes = guest_slice(mem.data(caller), ptr, len as u64)?;
-    Ok(String::from_utf8_lossy(bytes).into_owned())
+    std::str::from_utf8(bytes).map(str::to_owned).map_err(|e| format_err!("string argument is not UTF-8: {e}"))
+}
+
+/// The pointer() record (GASM_POINTER_OFF_* layout).
+fn pointer_bytes(p: &Pointer, frame: (usize, usize)) -> [u8; POINTER_BYTES] {
+    let (fx, fy) = frame_position(p.x, p.y, p.drawable, frame);
+    let mut b = [0u8; POINTER_BYTES];
+    for (i, v) in [p.x, p.y, fx, fy, p.dx, p.dy, p.wheel_x, p.wheel_y].into_iter().enumerate() {
+        b[i * 4..i * 4 + 4].copy_from_slice(&v.to_le_bytes());
+    }
+    for (i, v) in [p.buttons, p.pressed, p.released, p.flags].into_iter().enumerate() {
+        b[32 + i * 4..36 + i * 4].copy_from_slice(&v.to_le_bytes());
+    }
+    b
+}
+
+/// The gamepad() record (GASM_GAMEPAD_OFF_* layout).
+fn gamepad_bytes(g: &Gamepad) -> [u8; GAMEPAD_BYTES] {
+    let mut b = [0u8; GAMEPAD_BYTES];
+    let nb = g.buttons.len().min(GAMEPAD_BUTTONS);
+    let na = g.axes.len().min(GAMEPAD_AXES);
+    let flags = if g.connected { 1 | if g.standard { 2 } else { 0 } } else { 0u32 };
+    for (i, v) in [flags, nb as u32, na as u32].into_iter().enumerate() {
+        b[i * 4..i * 4 + 4].copy_from_slice(&v.to_le_bytes());
+    }
+    for (i, v) in g.buttons.iter().take(nb).enumerate() {
+        b[12 + i * 4..16 + i * 4].copy_from_slice(&v.to_le_bytes());
+    }
+    for (i, v) in g.axes.iter().take(na).enumerate() {
+        b[140 + i * 4..144 + i * 4].copy_from_slice(&v.to_le_bytes());
+    }
+    b
 }
 
 fn add_gasm_imports(linker: &mut Linker<Host>) -> wasmtime::Result<()> {
-    linker.func_wrap("gasm", "log", |caller: Caller<'_, Host>, ptr: u32, len: u32| {
-        let msg = guest_str(&caller, ptr, len)?;
-        eprintln!("[guest] {msg}");
+    linker.func_wrap("gasm", "log", |caller: Caller<'_, Host>, ptr: u32, len: u32| -> wasmtime::Result<()> {
+        let mem = memory(&caller)?;
+        let msg = guest_slice(mem.data(&caller), ptr, len as u64)?;
+        eprintln!("[guest] {}", String::from_utf8_lossy(msg));
         Ok(())
+    })?;
+
+    linker.func_wrap("gasm", "has", |caller: Caller<'_, Host>, ptr: u32, len: u32| -> wasmtime::Result<i32> {
+        let name = guest_str(&caller, ptr, len)?;
+        Ok(caller.data().provided.contains(&name) as i32)
     })?;
 
     linker.func_wrap("gasm", "time_ms", |caller: Caller<'_, Host>| -> f64 {
@@ -219,10 +322,14 @@ fn add_gasm_imports(linker: &mut Linker<Host>) -> wasmtime::Result<()> {
             let mem = memory(&caller)?;
             let (data, host) = mem.data_and_store_mut(&mut caller);
             let src = guest_slice(data, ptr, (stride * (h - 1) + w * 4) as u64)?;
-            host.rgba.resize(w * h * 4, 0);
-            for y in 0..h {
-                let row = &src[y * stride..y * stride + w * 4];
-                host.rgba[y * w * 4..(y + 1) * w * 4].copy_from_slice(row);
+            let row = w * 4;
+            host.rgba.resize(row * h, 0);
+            if stride == row {
+                host.rgba.copy_from_slice(src);
+            } else {
+                for (y, dst) in host.rgba.chunks_exact_mut(row).enumerate() {
+                    dst.copy_from_slice(&src[y * stride..y * stride + row]);
+                }
             }
             if host.hashing {
                 host.video_hash.update(&host.rgba);
@@ -275,12 +382,7 @@ fn add_gasm_imports(linker: &mut Linker<Host>) -> wasmtime::Result<()> {
             let mem = memory(&caller)?;
             let (data, host) = mem.data_and_store_mut(&mut caller);
             let Some(t) = &host.text else { return Ok(-1) };
-            let t = t.as_bytes();
-            if t.len() <= cap as usize {
-                guest_slice(data, dst, t.len() as u64)?;
-                data[dst as usize..dst as usize + t.len()].copy_from_slice(t);
-            }
-            Ok(t.len() as i32)
+            copy_if_fits(data, dst, cap, t.as_bytes())
         },
     )?;
 
@@ -296,8 +398,7 @@ fn add_gasm_imports(linker: &mut Linker<Host>) -> wasmtime::Result<()> {
             let (data, host) = mem.data_and_store_mut(&mut caller);
             let Some(keys) = host.input.keys else { return Ok(-1) };
             let n = (len as usize).min(KEY_STATE_BYTES);
-            guest_slice(data, dst, n as u64)?;
-            data[dst as usize..dst as usize + n].copy_from_slice(&keys[..n]);
+            guest_slice_mut(data, dst, n as u64)?.copy_from_slice(&keys[..n]);
             Ok(KEY_STATE_BYTES as i32)
         },
     )?;
@@ -311,12 +412,16 @@ fn add_gasm_imports(linker: &mut Linker<Host>) -> wasmtime::Result<()> {
             if host.input.keys.is_none() {
                 return Ok(-1);
             }
-            let bytes: Vec<u8> = host.input.key_events.iter().flat_map(|&(c, d)| { let c = c.to_le_bytes(); [c[0], c[1], d as u8, 0] }).collect();
-            if bytes.len() <= cap as usize {
-                guest_slice(data, dst, bytes.len() as u64)?;
-                data[dst as usize..dst as usize + bytes.len()].copy_from_slice(&bytes);
+            let events = &host.input.key_events;
+            let len = events.len() * 4;
+            if len <= cap as usize {
+                let out = guest_slice_mut(data, dst, len as u64)?;
+                for (b, &(c, d)) in out.chunks_exact_mut(4).zip(events) {
+                    let c = c.to_le_bytes();
+                    b.copy_from_slice(&[c[0], c[1], d as u8, 0]);
+                }
             }
-            Ok(bytes.len() as i32)
+            Ok(len as i32)
         },
     )?;
 
@@ -326,18 +431,10 @@ fn add_gasm_imports(linker: &mut Linker<Host>) -> wasmtime::Result<()> {
         |mut caller: Caller<'_, Host>, dst: u32, cap: u32| -> wasmtime::Result<i32> {
             let mem = memory(&caller)?;
             let (data, host) = mem.data_and_store_mut(&mut caller);
-            let Some(p) = host.input.pointer else { return Ok(-1) };
+            let Some(p) = &host.input.pointer else { return Ok(-1) };
             if cap as usize >= POINTER_BYTES {
-                let (fx, fy) = frame_position(p.x, p.y, p.drawable, (host.width, host.height));
-                let mut b = Vec::with_capacity(POINTER_BYTES);
-                for v in [p.x, p.y, fx, fy, p.dx, p.dy, p.wheel_x, p.wheel_y] {
-                    b.extend_from_slice(&v.to_le_bytes());
-                }
-                for v in [p.buttons, p.pressed, p.released, p.flags] {
-                    b.extend_from_slice(&v.to_le_bytes());
-                }
-                guest_slice(data, dst, POINTER_BYTES as u64)?;
-                data[dst as usize..dst as usize + POINTER_BYTES].copy_from_slice(&b);
+                let b = pointer_bytes(p, (host.width, host.height));
+                guest_slice_mut(data, dst, POINTER_BYTES as u64)?.copy_from_slice(&b);
             }
             Ok(POINTER_BYTES as i32)
         },
@@ -351,22 +448,8 @@ fn add_gasm_imports(linker: &mut Linker<Host>) -> wasmtime::Result<()> {
             let (data, host) = mem.data_and_store_mut(&mut caller);
             let (Some(pads), true) = (&host.input.gamepads, slot < 4) else { return Ok(-1) };
             if cap as usize >= GAMEPAD_BYTES {
-                let g = &pads[slot as usize];
-                let nb = g.buttons.len().min(GAMEPAD_BUTTONS);
-                let na = g.axes.len().min(GAMEPAD_AXES);
-                let flags = if g.connected { 1 | if g.standard { 2 } else { 0 } } else { 0u32 };
-                let mut b = Vec::with_capacity(GAMEPAD_BYTES);
-                for v in [flags, nb as u32, na as u32] {
-                    b.extend_from_slice(&v.to_le_bytes());
-                }
-                for i in 0..GAMEPAD_BUTTONS {
-                    b.extend_from_slice(&g.buttons.get(i).copied().unwrap_or(0.0).to_le_bytes());
-                }
-                for i in 0..GAMEPAD_AXES {
-                    b.extend_from_slice(&g.axes.get(i).copied().unwrap_or(0.0).to_le_bytes());
-                }
-                guest_slice(data, dst, GAMEPAD_BYTES as u64)?;
-                data[dst as usize..dst as usize + GAMEPAD_BYTES].copy_from_slice(&b);
+                let b = gamepad_bytes(&pads[slot as usize]);
+                guest_slice_mut(data, dst, GAMEPAD_BYTES as u64)?.copy_from_slice(&b);
             }
             Ok(GAMEPAD_BYTES as i32)
         },
@@ -379,12 +462,7 @@ fn add_gasm_imports(linker: &mut Linker<Host>) -> wasmtime::Result<()> {
             let mem = memory(&caller)?;
             let (data, host) = mem.data_and_store_mut(&mut caller);
             let Some(g) = host.input.gamepads.as_ref().and_then(|p| p.get(slot as usize)).filter(|g| g.connected) else { return Ok(-1) };
-            let n = g.name.as_bytes();
-            if n.len() <= cap as usize {
-                guest_slice(data, dst, n.len() as u64)?;
-                data[dst as usize..dst as usize + n.len()].copy_from_slice(n);
-            }
-            Ok(n.len() as i32)
+            copy_if_fits(data, dst, cap, g.name.as_bytes())
         },
     )?;
 
@@ -396,34 +474,47 @@ fn add_gasm_imports(linker: &mut Linker<Host>) -> wasmtime::Result<()> {
             let mem = memory(&caller)?;
             let (data, host) = mem.data_and_store_mut(&mut caller);
             let Some(v) = host.params.get(&name) else { return Ok(-1) };
-            let v = v.as_bytes();
-            if v.len() <= cap as usize {
-                guest_slice(data, dst, v.len() as u64)?;
-                data[dst as usize..dst as usize + v.len()].copy_from_slice(v);
-            }
-            Ok(v.len() as i32)
+            copy_if_fits(data, dst, cap, v.as_bytes())
         },
     )?;
+
+    // Assets: n = bytes available from offset (clamped to the request) is bounds-checked
+    // against guest memory before anything is read.
+    fn read_asset(caller: &mut Caller<'_, Host>, ptr: u32, len: u32, offset: u64, dst: u32, cap: u32) -> wasmtime::Result<i32> {
+        let name = guest_str(caller, ptr, len)?;
+        let mem = memory(caller)?;
+        let (data, host) = mem.data_and_store_mut(caller);
+        let Some(asset) = host.assets.get(&name) else { return Ok(-1) };
+        let n = asset.size().saturating_sub(offset).min(cap as u64);
+        let out = guest_slice_mut(data, dst, n)?;
+        Ok(asset.read_at(offset, out) as i32)
+    }
 
     linker.func_wrap(
         "gasm",
         "asset_read_at",
         |mut caller: Caller<'_, Host>, ptr: u32, len: u32, offset: u32, dst: u32, cap: u32| -> wasmtime::Result<i32> {
-            let name = guest_str(&caller, ptr, len)?;
-            let mem = memory(&caller)?;
-            let (data, host) = mem.data_and_store_mut(&mut caller);
-            let Some(size) = host.assets.size(&name) else { return Ok(-1) };
-            let n = size.saturating_sub(offset as u64).min(cap as u64);
-            guest_slice(data, dst, n)?; // bounds check before touching guest memory
-            let dst = &mut data[dst as usize..dst as usize + n as usize];
-            Ok(host.assets.read_at(&name, offset as u64, dst).map_or(-1, |k| k as i32))
+            read_asset(&mut caller, ptr, len, offset as u64, dst, cap)
         },
     )?;
 
-    linker.func_wrap("gasm", "asset_count", |mut caller: Caller<'_, Host>| -> u32 {
-        let h = caller.data_mut();
-        h.asset_names.get_or_insert_with(|| h.assets.names()).len() as u32
-    })?;
+    linker.func_wrap(
+        "gasm",
+        "asset_read_at64",
+        |mut caller: Caller<'_, Host>, ptr: u32, len: u32, offset: u64, dst: u32, cap: u32| -> wasmtime::Result<i32> {
+            read_asset(&mut caller, ptr, len, offset, dst, cap)
+        },
+    )?;
+
+    linker.func_wrap(
+        "gasm",
+        "asset_read",
+        |mut caller: Caller<'_, Host>, ptr: u32, len: u32, dst: u32, cap: u32| -> wasmtime::Result<i32> {
+            read_asset(&mut caller, ptr, len, 0, dst, cap)
+        },
+    )?;
+
+    linker.func_wrap("gasm", "asset_count", |caller: Caller<'_, Host>| -> u32 { caller.data().assets.names().len() as u32 })?;
 
     linker.func_wrap(
         "gasm",
@@ -431,14 +522,8 @@ fn add_gasm_imports(linker: &mut Linker<Host>) -> wasmtime::Result<()> {
         |mut caller: Caller<'_, Host>, index: u32, dst: u32, cap: u32| -> wasmtime::Result<i32> {
             let mem = memory(&caller)?;
             let (data, host) = mem.data_and_store_mut(&mut caller);
-            let names = host.asset_names.get_or_insert_with(|| host.assets.names());
-            let Some(n) = names.get(index as usize) else { return Ok(-1) };
-            let n = n.as_bytes();
-            if n.len() <= cap as usize {
-                guest_slice(data, dst, n.len() as u64)?;
-                data[dst as usize..dst as usize + n.len()].copy_from_slice(n);
-            }
-            Ok(n.len() as i32)
+            let Some(n) = host.assets.names().get(index as usize) else { return Ok(-1) };
+            copy_if_fits(data, dst, cap, n.as_bytes())
         },
     )?;
 
@@ -447,30 +532,23 @@ fn add_gasm_imports(linker: &mut Linker<Host>) -> wasmtime::Result<()> {
         "asset_size",
         |caller: Caller<'_, Host>, ptr: u32, len: u32| -> wasmtime::Result<i32> {
             let name = guest_str(&caller, ptr, len)?;
-            Ok(caller.data().assets.size(&name).map_or(-1, |n| n as i32))
+            Ok(match caller.data().assets.size(&name) {
+                None => -1,
+                Some(n) if n > i32::MAX as u64 => -2,
+                Some(n) => n as i32,
+            })
         },
     )?;
 
     linker.func_wrap(
         "gasm",
-        "asset_read",
-        |mut caller: Caller<'_, Host>, ptr: u32, len: u32, dst: u32, cap: u32| -> wasmtime::Result<i32> {
+        "asset_size64",
+        |caller: Caller<'_, Host>, ptr: u32, len: u32| -> wasmtime::Result<i64> {
             let name = guest_str(&caller, ptr, len)?;
-            let mem = memory(&caller)?;
-            let (data, host) = mem.data_and_store_mut(&mut caller);
-            let Some(size) = host.assets.size(&name) else { return Ok(-1) };
-            let n = size.min(cap as u64);
-            guest_slice(data, dst, n)?;
-            let dst = &mut data[dst as usize..dst as usize + n as usize];
-            Ok(host.assets.read_at(&name, 0, dst).map_or(-1, |k| k as i32))
+            Ok(caller.data().assets.size(&name).map_or(-1, |n| n as i64))
         },
     )?;
     Ok(())
-}
-
-/// Ahead-of-time compile a guest to native code for this host (no JIT needed at load).
-pub fn precompile(wasm: &[u8]) -> wasmtime::Result<Vec<u8>> {
-    Engine::default().precompile_module(wasm)
 }
 
 fn trap(e: String) -> wasmtime::Error {
@@ -479,8 +557,8 @@ fn trap(e: String) -> wasmtime::Error {
 
 fn add_gfx_imports(linker: &mut Linker<Host>) -> wasmtime::Result<()> {
     const M: &str = "gasm:gfx";
-    linker.func_wrap(M, "width", |c: Caller<'_, Host>| c.data().gfx.size().0)?;
-    linker.func_wrap(M, "height", |c: Caller<'_, Host>| c.data().gfx.size().1)?;
+    linker.func_wrap(M, "width", |c: Caller<'_, Host>| -> u32 { c.data().gfx.size().0 })?;
+    linker.func_wrap(M, "height", |c: Caller<'_, Host>| -> u32 { c.data().gfx.size().1 })?;
     linker.func_wrap(M, "create_shader", |mut c: Caller<'_, Host>, ptr: u32, len: u32| -> wasmtime::Result<u32> {
         let src = guest_str(&c, ptr, len)?;
         c.data_mut().gfx.create_shader(&src).map_err(trap)
@@ -503,10 +581,11 @@ fn add_gfx_imports(linker: &mut Linker<Host>) -> wasmtime::Result<()> {
             let mem = memory(&c)?;
             let (data, host) = mem.data_and_store_mut(&mut c);
             let bytes = guest_slice(data, ptr, len as u64)?;
+            host.gfx.write_buffer(buf, offset, bytes).map_err(trap)?;
             if host.hashing {
                 host.video_hash.update(bytes);
             }
-            host.gfx.write_buffer(buf, offset, bytes).map_err(trap)
+            Ok(())
         },
     )?;
     linker.func_wrap(M, "create_bind_group_layout", |mut c: Caller<'_, Host>, ptr: u32, len: u32| -> wasmtime::Result<u32> {
@@ -557,8 +636,14 @@ fn add_gfx_imports(linker: &mut Linker<Host>) -> wasmtime::Result<()> {
             let mem = memory(&c)?;
             let (data, host) = mem.data_and_store_mut(&mut c);
             let bytes = guest_slice(data, ptr, count as u64 * 4)?;
-            let offsets: Vec<u32> = bytes.chunks_exact(4).map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]])).collect();
-            host.gfx.set_bind_group_offsets(i, bg, &offsets).map_err(trap)
+            let mut offsets = [0u32; 32];
+            if count as usize > offsets.len() {
+                bail!("gfx.set_bind_group_offsets: {count} offsets (a bind group has at most {})", offsets.len());
+            }
+            for (o, b) in offsets.iter_mut().zip(bytes.chunks_exact(4)) {
+                *o = u32::from_le_bytes([b[0], b[1], b[2], b[3]]);
+            }
+            host.gfx.set_bind_group_offsets(i, bg, &offsets[..count as usize]).map_err(trap)
         },
     )?;
     linker.func_wrap(
@@ -577,16 +662,19 @@ fn add_gfx_imports(linker: &mut Linker<Host>) -> wasmtime::Result<()> {
     linker.func_wrap(M, "set_index_buffer", |mut c: Caller<'_, Host>, b: u32, fmt: u32, off: u32| -> wasmtime::Result<()> {
         c.data_mut().gfx.set_index_buffer(b, fmt, off).map_err(trap)
     })?;
-    linker.func_wrap(M, "draw", |mut c: Caller<'_, Host>, vc: u32, ic: u32, fv: u32, fi: u32| {
-        c.data_mut().gfx.draw(vc, ic, fv, fi)
+    linker.func_wrap(M, "draw", |mut c: Caller<'_, Host>, vc: u32, ic: u32, fv: u32, fi: u32| -> wasmtime::Result<()> {
+        c.data_mut().gfx.draw(vc, ic, fv, fi).map_err(trap)
     })?;
-    linker.func_wrap(M, "draw_indexed", |mut c: Caller<'_, Host>, ic: u32, n: u32, first: u32, base: i32, fi: u32| {
-        c.data_mut().gfx.draw_indexed(ic, n, first, base, fi)
+    linker.func_wrap(M, "draw_indexed", |mut c: Caller<'_, Host>, ic: u32, n: u32, first: u32, base: i32, fi: u32| -> wasmtime::Result<()> {
+        c.data_mut().gfx.draw_indexed(ic, n, first, base, fi).map_err(trap)
     })?;
     linker.func_wrap(M, "end_frame", |mut c: Caller<'_, Host>| -> wasmtime::Result<()> {
         let h = c.data_mut();
         h.frames_presented += 1;
         h.gfx.end_frame().map_err(trap)
+    })?;
+    linker.func_wrap(M, "destroy", |mut c: Caller<'_, Host>, handle: u32| -> wasmtime::Result<()> {
+        c.data_mut().gfx.destroy(handle).map_err(trap)
     })?;
     Ok(())
 }
@@ -597,31 +685,30 @@ fn add_net_imports(linker: &mut Linker<Host>) -> wasmtime::Result<()> {
         let url = guest_str(&c, ptr, len)?;
         Ok(c.data_mut().net.open(&url))
     })?;
-    linker.func_wrap(M, "state", |c: Caller<'_, Host>, h: i32| c.data().net.state(h))?;
+    linker.func_wrap(M, "state", |c: Caller<'_, Host>, h: i32| -> wasmtime::Result<u32> { c.data().net.state(h).map_err(trap) })?;
     linker.func_wrap(M, "send", |mut c: Caller<'_, Host>, h: i32, ptr: u32, len: u32| -> wasmtime::Result<i32> {
-        if len == 0 {
-            return Ok(-1);
-        }
         let mem = memory(&c)?;
         let msg = guest_slice(mem.data(&c), ptr, len as u64)?.to_vec();
-        Ok(c.data_mut().net.send(h, msg))
+        if msg.is_empty() {
+            c.data().net.state(h).map_err(trap)?; // still validates the handle
+            return Ok(-1);
+        }
+        c.data_mut().net.send(h, msg).map_err(trap)
     })?;
     linker.func_wrap(M, "recv", |mut c: Caller<'_, Host>, h: i32, dst: u32, cap: u32| -> wasmtime::Result<i32> {
         let mem = memory(&c)?;
         let (data, host) = mem.data_and_store_mut(&mut c);
-        let msg = match host.net.peek(h) {
+        let msg = match host.net.peek(h).map_err(trap)? {
             Ok(m) => m,
             Err(code) => return Ok(code),
         };
-        let n = msg.len();
-        if n <= cap as usize {
-            guest_slice(data, dst, n as u64)?;
-            data[dst as usize..dst as usize + n].copy_from_slice(msg);
+        let n = copy_if_fits(data, dst, cap, msg)?;
+        if n as usize <= cap as usize {
             host.net.pop(h);
         }
-        Ok(n as i32)
+        Ok(n)
     })?;
-    linker.func_wrap(M, "close", |mut c: Caller<'_, Host>, h: i32| c.data_mut().net.close(h))?;
+    linker.func_wrap(M, "close", |mut c: Caller<'_, Host>, h: i32| -> wasmtime::Result<()> { c.data_mut().net.close(h).map_err(trap) })?;
     Ok(())
 }
 
@@ -632,11 +719,7 @@ fn add_storage_imports(linker: &mut Linker<Host>) -> wasmtime::Result<()> {
         let mem = memory(&c)?;
         let (data, host) = mem.data_and_store_mut(&mut c);
         let Some(v) = host.storage.get(&key) else { return Ok(-1) };
-        if v.len() <= cap as usize {
-            guest_slice(data, dst, v.len() as u64)?;
-            data[dst as usize..dst as usize + v.len()].copy_from_slice(v);
-        }
-        Ok(v.len() as i32)
+        copy_if_fits(data, dst, cap, v)
     })?;
     linker.func_wrap(M, "set", |mut c: Caller<'_, Host>, kp: u32, kl: u32, vp: u32, vl: u32| -> wasmtime::Result<i32> {
         let key = guest_str(&c, kp, kl)?;
@@ -646,23 +729,17 @@ fn add_storage_imports(linker: &mut Linker<Host>) -> wasmtime::Result<()> {
         Ok(match host.storage.set(&key, value) {
             Ok(()) => 0,
             Err(e) => {
-                eprintln!("[gasm] storage: {e}");
-                -1
+                eprintln!("[gasm] storage: {key}: {e}");
+                e.code()
             }
         })
     })?;
-    linker.func_wrap(M, "count", |c: Caller<'_, Host>| c.data().storage.keys().len() as u32)?;
+    linker.func_wrap(M, "count", |mut c: Caller<'_, Host>| -> u32 { c.data_mut().storage.keys().len() as u32 })?;
     linker.func_wrap(M, "key", |mut c: Caller<'_, Host>, index: u32, dst: u32, cap: u32| -> wasmtime::Result<i32> {
         let mem = memory(&c)?;
         let (data, host) = mem.data_and_store_mut(&mut c);
-        let keys = host.storage.keys();
-        let Some(k) = keys.get(index as usize) else { return Ok(-1) };
-        let k = k.as_bytes();
-        if k.len() <= cap as usize {
-            guest_slice(data, dst, k.len() as u64)?;
-            data[dst as usize..dst as usize + k.len()].copy_from_slice(k);
-        }
-        Ok(k.len() as i32)
+        let Some(k) = host.storage.keys().get(index as usize) else { return Ok(-1) };
+        copy_if_fits(data, dst, cap, k.as_bytes())
     })?;
     linker.func_wrap(M, "delete", |mut c: Caller<'_, Host>, kp: u32, kl: u32| -> wasmtime::Result<i32> {
         let key = guest_str(&c, kp, kl)?;
@@ -691,9 +768,59 @@ impl std::fmt::Display for Stop {
 impl std::error::Error for Stop {}
 
 fn classify(e: wasmtime::Error) -> Stop {
-    match e.downcast_ref::<wasmtime_wasi::I32Exit>() {
-        Some(exit) => Stop::Exit(exit.0),
-        None => Stop::Trap(format!("{e:?}")),
+    if let Some(exit) = e.downcast_ref::<wasi::Exit>() {
+        return Stop::Exit(exit.0);
+    }
+    if e.downcast_ref::<wasmtime::Trap>() == Some(&wasmtime::Trap::Interrupt) {
+        return Stop::Trap(format!("a guest call ran longer than the time limit (stuck in a loop?); see --call-timeout\n{e:?}"));
+    }
+    Stop::Trap(format!("{e:?}"))
+}
+
+/// Epoch ticks per second (the watchdog thread's rate).
+const TICKS_PER_SEC: u64 = 10;
+
+/// The process-wide engine: the same configuration for compiling, precompiling
+/// and loading (`.cwasm` files must match it). Epoch interruption lets a guest
+/// call that never returns be stopped (`LoadOptions::call_timeout`).
+pub fn engine() -> &'static Engine {
+    static ENGINE: OnceLock<Engine> = OnceLock::new();
+    ENGINE.get_or_init(|| {
+        let mut config = Config::new();
+        config.epoch_interruption(true);
+        let engine = Engine::new(&config).expect("wasmtime engine");
+        let ticker = engine.clone();
+        std::thread::Builder::new()
+            .name("gasm-epoch".into())
+            .spawn(move || {
+                loop {
+                    std::thread::sleep(Duration::from_millis(1000 / TICKS_PER_SEC));
+                    ticker.increment_epoch();
+                }
+            })
+            .expect("epoch thread");
+        engine
+    })
+}
+
+/// Ahead-of-time compile a guest to native code for this host (no JIT needed at load).
+pub fn precompile(wasm: &[u8]) -> wasmtime::Result<Vec<u8>> {
+    engine().precompile_module(wasm)
+}
+
+/// How to load a guest.
+#[derive(Clone, Copy)]
+pub struct LoadOptions {
+    /// Accept a precompiled `.cwasm` (native code: only files you made yourself
+    /// with `gasm-run --compile`). Otherwise only `.wasm` modules load.
+    pub allow_precompiled: bool,
+    /// Trap a single guest call (init, a frame, exit) that runs longer than this.
+    pub call_timeout: Option<Duration>,
+}
+
+impl Default for LoadOptions {
+    fn default() -> Self {
+        LoadOptions { allow_precompiled: false, call_timeout: Some(Duration::from_secs(30)) }
     }
 }
 
@@ -701,33 +828,50 @@ pub struct Game {
     pub store: Store<Host>,
     frame: TypedFunc<(), ()>,
     exit: Option<TypedFunc<(), ()>>,
+    deadline: u64,
 }
 
 impl Game {
-    pub fn load(wasm: &[u8], host: Host) -> Result<Game, Stop> {
-        Self::load_inner(wasm, host).map_err(classify)
+    pub fn load(wasm: &[u8], host: Host, opts: LoadOptions) -> Result<Game, Stop> {
+        Self::load_inner(wasm, host, opts).map_err(classify)
     }
 
-    fn load_inner(wasm: &[u8], host: Host) -> wasmtime::Result<Game> {
-        let engine = Engine::default();
+    fn load_inner(wasm: &[u8], host: Host, opts: LoadOptions) -> wasmtime::Result<Game> {
+        let engine = engine();
         let module = if wasm.starts_with(b"\0asm") {
-            Module::new(&engine, wasm)?
+            Module::new(engine, wasm)?
+        } else if opts.allow_precompiled {
+            // Precompiled artifact from `gasm-run --compile`: native code, trusted
+            // like the runner itself (unlike .wasm, which is sandboxed).
+            unsafe { Module::deserialize(engine, wasm)? }
         } else {
-            // Precompiled artifact from `gasm-run --compile`. Only load files you
-            // produced yourself: native code is trusted, unlike .wasm.
-            unsafe { Module::deserialize(&engine, wasm)? }
+            bail!("not a wasm module (a precompiled .cwasm runs as native code: pass --allow-precompiled if you made it yourself)");
         };
-        let mut linker: Linker<Host> = Linker::new(&engine);
-        p1::add_to_linker_sync(&mut linker, |h: &mut Host| &mut h.wasi)?;
+        let mut linker: Linker<Host> = Linker::new(engine);
         add_gasm_imports(&mut linker)?;
         add_gfx_imports(&mut linker)?;
         add_net_imports(&mut linker)?;
         add_storage_imports(&mut linker)?;
+        let mut store = Store::new(engine, host);
+        // what `has` reports: the gasm modules and functions above (not WASI stubs or traps)
+        let mut provided = HashSet::new();
+        for (m, f, _) in linker.iter(&mut store) {
+            provided.insert(m.to_owned());
+            provided.insert(format!("{m}.{f}"));
+        }
+        for f in wasi::IMPLEMENTED {
+            provided.insert(format!("{}.{f}", wasi::MODULE));
+        }
+        provided.insert(wasi::MODULE.to_owned());
+        store.data_mut().provided = provided;
+        wasi::add_to_linker(&mut linker, &module)?;
         // Imports this runner doesn't know (e.g. JS glue some Rust crates pull in)
         // link as traps: harmless unless the guest actually calls them.
         linker.define_unknown_imports_as_traps(&module)?;
 
-        let mut store = Store::new(&engine, host);
+        let deadline = opts.call_timeout.map_or(u64::MAX / 2, |t| (t.as_millis() as u64 * TICKS_PER_SEC).div_ceil(1000).max(1));
+        store.epoch_deadline_trap();
+        store.set_epoch_deadline(deadline);
         let instance: Instance = linker.instantiate(&mut store, &module)?;
         let memory = instance
             .get_memory(&mut store, "memory")
@@ -735,6 +879,7 @@ impl Game {
         store.data_mut().memory = Some(memory);
 
         if let Ok(init) = instance.get_typed_func::<(), ()>(&mut store, "_initialize") {
+            store.set_epoch_deadline(deadline);
             init.call(&mut store, ())?;
         }
         let version = instance
@@ -743,22 +888,25 @@ impl Game {
         if version != ABI_VERSION {
             bail!("guest targets gasm ABI v{version}, runner implements v{ABI_VERSION}");
         }
+        store.set_epoch_deadline(deadline);
         let rc = instance.get_typed_func::<(), i32>(&mut store, "gasm_init")?.call(&mut store, ())?;
         if rc != 0 {
             bail!("gasm_init failed with code {rc}");
         }
         let frame = instance.get_typed_func::<(), ()>(&mut store, "gasm_frame")?;
         let exit = instance.get_typed_func::<(), ()>(&mut store, "gasm_exit").ok();
-        Ok(Game { store, frame, exit })
+        Ok(Game { store, frame, exit, deadline })
     }
 
     pub fn frame(&mut self) -> Result<(), Stop> {
+        self.store.set_epoch_deadline(self.deadline);
         self.frame.call(&mut self.store, ()).map_err(classify)
     }
 
     /// Best-effort "the player is quitting" notification (optional `gasm_exit` export).
     pub fn exit(&mut self) {
         if let Some(f) = self.exit.take() {
+            self.store.set_epoch_deadline(self.deadline);
             if let Err(e) = f.call(&mut self.store, ()) {
                 if let Stop::Trap(t) = classify(e) {
                     eprintln!("[gasm] gasm_exit trapped: {t}");

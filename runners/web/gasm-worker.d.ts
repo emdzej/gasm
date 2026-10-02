@@ -1,10 +1,10 @@
-import type { ProcExit } from './gasm-host.js';
+import type { FrameStep, ProcExit } from './gasm-host.js';
 
 /** Asset sources for Worker mode. Memory entries are explicit; the rest are folder entries. */
 export type WorkerAssetSpec =
   | { kind: 'memory'; record: Record<string, Uint8Array> }
   | { kind: 'files'; entries: [name: string, file: Blob][]; prefix?: string }   // lazy, FileReaderSync
-  | { kind: 'opfs'; dir: string; prefix?: string };                              // lazy, FileSystemSyncAccessHandle
+  | { kind: 'opfs'; dir: string | FileSystemDirectoryHandle; prefix?: string };  // lazy, FileSystemSyncAccessHandle
 
 export interface WorkerStats {
   frames: number; presented: number; width: number; height: number;
@@ -26,13 +26,15 @@ export interface FramesResult {
  */
 export declare class GasmWorker {
   static start(options: {
-    wasm: ArrayBuffer | Uint8Array;
+    /** A compiled module (shared with the worker, no copy) or bytes (transferred: the
+     *  ArrayBuffer is detached afterwards; pass a copy to keep it). */
+    wasm: WebAssembly.Module | ArrayBuffer | Uint8Array;
     assets?: WorkerAssetSpec[];
     params?: Record<string, string>;
     /** IndexedDB namespace for gasm:storage (null: in-memory). */
     storage?: string | null;
     allowNet?: boolean;
-    /** The page forwards typed text (frames({ texts })); false: text_input returns -1. */
+    /** The page forwards typed text (FrameStep.text); false: text_input returns -1. */
     keyboard?: boolean;
     /** gasm:gfx: an OffscreenCanvas from transferControlToOffscreen(), and its display size in device pixels. */
     canvas?: OffscreenCanvas | null;
@@ -48,16 +50,13 @@ export declare class GasmWorker {
   /** GASM_INPUT_* flags the guest asked for, after the last batch. */
   inputMode: number;
   stats: WorkerStats | null;
-  /** Run one frame per entry (each [pad0..pad3]); only the last is shown. Rejects with ProcExit on exit. */
-  frames(steps: number[][], show?: boolean, options?: {
-    /** Text typed before each frame (text_input), one entry per step. */
-    texts?: string[] | null;
-    /** Raw input per step (BrowserInput.frame(i === 0)). */
-    inputs?: import('./gasm-host.js').RawInput[] | null;
+  /** Run one frame per step (or per pads array); only the last is shown. Rejects with
+   *  ProcExit on exit; after an exit or a trap every call rejects. */
+  frames(steps: (FrameStep | number[])[], show?: boolean, options?: {
     /** gasm:gfx canvas display size in device pixels. */
     size?: [width: number, height: number] | null;
   }): Promise<FramesResult>;
-  /** gasm_exit (flush saves), close sockets, terminate. */
+  /** gasm_exit (flush saves), close sockets and storage, terminate. Safe to call twice. */
   exit(timeoutMs?: number): Promise<void>;
 }
 export type { ProcExit };

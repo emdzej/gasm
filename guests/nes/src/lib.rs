@@ -76,9 +76,11 @@ impl gasm::Game for Nes {
         let loaded = deck.load_rom("rom", &mut rom.as_slice()).map_err(|e| format!("cannot load rom: {e}"))?;
         log!("[nes] tetanes-core: loaded {} byte rom ({:?})", rom.len(), loaded);
 
-        // NTSC NES: 60.0988 Hz (PAL carts would be 50.007 Hz)
-        let region = deck.cart_region();
-        let fps = if matches!(region, Some(r) if format!("{r:?}").contains("Pal")) { 50.007 } else { 60.0988 };
+        // NTSC NES: 60.0988 Hz; PAL and Dendy consoles: 50.007 Hz
+        let fps = match deck.cart_region() {
+            Some(tetanes_core::common::NesRegion::Pal | tetanes_core::common::NesRegion::Dendy) => 50.007,
+            _ => 60.0988,
+        };
         gasm::set_frame_rate(fps);
         gasm::audio::config(SAMPLE_RATE, 1);
         let quit_at = gasm::param("quit_at").and_then(|v| v.parse().ok());

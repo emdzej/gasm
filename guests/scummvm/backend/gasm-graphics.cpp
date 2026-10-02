@@ -138,27 +138,41 @@ void GasmGraphicsManager::blitScreen(uint32 *out, uint outH) {
 	uint w = _screen.w, h = _screen.h;
 	static Common::Array<uint32> row;
 	row.resize(w);
+	// the palette as RGBA, once per frame (not per pixel lookup of 3 bytes)
+	uint32 pal[256];
+	if (_screen.format.bytesPerPixel == 1)
+		for (uint i = 0; i < 256; i++)
+			pal[i] = rgba(_palette[i * 3], _palette[i * 3 + 1], _palette[i * 3 + 2]);
+	int lastSy = -1;
 	for (uint oy = 0; oy < outH; oy++) {
 		int sy = (int)(oy * h / outH) - _shakeY;
 		uint32 *dst = out + oy * w;
 		if (sy < 0 || sy >= (int)h) {
 			memset(dst, 0, w * 4);
+			lastSy = -1;
 			continue;
 		}
-		const byte *src = (const byte *)_screen.getBasePtr(0, sy);
-		if (_screen.format.bytesPerPixel == 1) {
-			for (uint x = 0; x < w; x++) {
-				const byte *c = _palette + src[x] * 3;
-				row[x] = rgba(c[0], c[1], c[2]);
-			}
-		} else {
-			Graphics::crossBlit((byte *)row.data(), src, w * 4, _screen.pitch, w, 1, kRGBA, _screen.format);
-			for (uint x = 0; x < w; x++)
-				row[x] |= 0xffu << 24;
+		if (sy == lastSy) {   // aspect correction repeats source rows: copy the row just made
+			memcpy(dst, dst - w, w * 4);
+			continue;
 		}
-		for (uint x = 0; x < w; x++) {
-			int sx = (int)x - _shakeX;
-			dst[x] = sx >= 0 && sx < (int)w ? row[sx] : rgba(0, 0, 0);
+		lastSy = sy;
+		const byte *src = (const byte *)_screen.getBasePtr(0, sy);
+		// without shake, convert straight into the output row
+		uint32 *conv = _shakeX == 0 ? dst : row.data();
+		if (_screen.format.bytesPerPixel == 1) {
+			for (uint x = 0; x < w; x++)
+				conv[x] = pal[src[x]];
+		} else {
+			Graphics::crossBlit((byte *)conv, src, w * 4, _screen.pitch, w, 1, kRGBA, _screen.format);
+			for (uint x = 0; x < w; x++)
+				conv[x] |= 0xffu << 24;
+		}
+		if (_shakeX != 0) {
+			for (uint x = 0; x < w; x++) {
+				int sx = (int)x - _shakeX;
+				dst[x] = sx >= 0 && sx < (int)w ? row[sx] : rgba(0, 0, 0);
+			}
 		}
 	}
 }

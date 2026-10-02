@@ -103,7 +103,9 @@ static inline uint32_t gasm__strlen(const char *s) {
     return n;
 }
 static inline void gasm_log_str(const char *s) { gasm_log(s, gasm__strlen(s)); }
+static inline int32_t gasm_has_str(const char *name) { return gasm_has(name, gasm__strlen(name)); }
 static inline int32_t gasm_asset_size_str(const char *n) { return gasm_asset_size(n, gasm__strlen(n)); }
+static inline int64_t gasm_asset_size64_str(const char *n) { return gasm_asset_size64(n, gasm__strlen(n)); }
 static inline int32_t gasm_asset_read_str(const char *n, void *dst, uint32_t cap) {
     return gasm_asset_read(n, gasm__strlen(n), dst, cap);
 }
@@ -181,6 +183,20 @@ pub use imports::*;
 #[cfg(not(target_arch = "wasm32"))]
 pub use crate::native::abi::*;
 `);
+  // what `has` can report: every module and "module.function" in abi.json
+  const names = abi.modules.flatMap((m) => [m.name, ...m.functions.map((f) => `${m.name}.${f.name}`)]);
+  out.push('/// Every import module and `module.function` of this ABI version (what `gasm::has` can report).');
+  out.push(`pub const IMPORTS: [&str; ${names.length}] = [`);
+  for (let i = 0; i < names.length; i += 4) out.push(`    ${names.slice(i, i + 4).map((n) => JSON.stringify(n)).join(', ')},`);
+  out.push('];', '');
+  // every constant, named as in C (GASM_*)
+  const rustValue = (v) => v.replace(/(\d+)u\b/g, '$1');
+  for (const c of abi.constants.filter((c) => !c.rust_module)) {
+    out.push(`// ---- ${c.group}`);
+    if (c.doc) out.push(`/// ${c.doc}`);
+    for (const [k, v] of c.values) out.push(`pub const ${k}: ${c.rust_type ?? 'u32'} = ${rustValue(v)};`);
+    out.push('');
+  }
   for (const c of abi.constants.filter((c) => c.rust_module)) {
     const strip = (k) => k.replace(/^GASM_[A-Z]+_/, '');
     out.push(`/// ${c.doc}`, `pub mod ${c.rust_module} {`);
@@ -202,33 +218,114 @@ function section(text, start, end) {
   return text.slice(i, j < 0 ? undefined : j);
 }
 
+// wasm-level signature of an abi.json function: { params: ['i32', ...], result: 'i32' | null }
+function wasmSig(f) {
+  const params = (f.params ?? []).flatMap((p) => T[p.type].wasm.split(' '));
+  return { params, result: f.result ? T[f.result].wasm : null };
+}
+const fmtSig = (s) => `(${s.params.join(', ')})${s.result ? ' -> ' + s.result : ''}`;
+// Rust type (as written in a closure or extern fn) -> wasm type
+const rustWasm = (t) => {
+  t = t.trim();
+  if (/^\*(const|mut) /.test(t)) return 'i32';
+  return { u32: 'i32', i32: 'i32', u64: 'i64', i64: 'i64', f32: 'f32', f64: 'f64' }[t] ?? `?${t}`;
+};
+// split a parameter list at top-level commas (generics like Caller<'_, Host> contain commas)
+function splitParams(text) {
+  const out = []; let depth = 0, cur = '';
+  for (const ch of text) {
+    if (ch === '<' || ch === '(') depth++;
+    if (ch === '>' || ch === ')') depth--;
+    if (ch === ',' && depth === 0) { out.push(cur); cur = ''; } else cur += ch;
+  }
+  if (cur.trim()) out.push(cur);
+  return out.map((p) => p.trim()).filter(Boolean);
+}
+
 function conformance() {
   const errors = [];
   const compare = (where, want, have) => {
     for (const n of want) if (!have.has(n)) errors.push(`${where}: missing ${n}`);
     for (const n of have) if (!want.has(n)) errors.push(`${where}: not in abi.json: ${n}`);
   };
+  // want: Map name -> abi function; have: Map name -> { params: [...], result } (result undefined = not checkable)
+  const compareSigs = (where, want, have) => {
+    compare(where, new Set(want.keys()), new Set(have.keys()));
+    for (const [n, f] of want) {
+      const h = have.get(n);
+      if (!h) continue;
+      const w = wasmSig(f);
+      const paramsOk = h.params.length === w.params.length && (h.types === false || h.params.every((t, i) => t === w.params[i]));
+      const resultOk = h.result === undefined || h.result === w.result;
+      if (!paramsOk || !resultOk) errors.push(`${where}: ${n} is ${h.types === false ? `${h.params.length} params` : fmtSig(h)}, abi.json says ${fmtSig(w)}`);
+    }
+  };
+  // native runner closures: func_wrap(M, "name", |c: Caller<'_, Host>, a: u32, ...| -> R { ... })
+  const rustClosures = (text, modRe) => {
+    const out = new Map();
+    const re = new RegExp(`func_wrap\\(\\s*${modRe},\\s*"([a-z_0-9]+)",\\s*(?:move\\s*)?\\|([^|]*)\\|\\s*(->\\s*([^{]+?)\\s*\\{)?`, 'g');
+    for (const m of text.matchAll(re)) {
+      const ps = splitParams(m[2]).filter((p) => !/Caller</.test(p)).map((p) => rustWasm(p.split(':')[1] ?? '?'));
+      let result = null;
+      if (m[4]) {
+        const r = m[4].trim().replace(/^wasmtime::Result<(.*)>$/, '$1');
+        result = r === '()' ? null : rustWasm(r);
+      }
+      out.set(m[1], { params: ps, result });
+    }
+    return out;
+  };
   const hostRs = read('runners/native/src/host.rs');
-  const hostJs = read('runners/web/gasm-host.js');
+  const hostJs = read('runners/web/lib/host.js');
+  const inputJs = read('runners/web/lib/input.js');
   const nativeRs = read('guests/gasm/src/native.rs');
-  const jsMethod = { gasm: 'gasmImports()', 'gasm:gfx': 'gfxImports()', 'gasm:net': 'netImports()', 'gasm:storage': 'storageImports()' };
+  const jsMethod = { gasm: 'gasmImports() {', 'gasm:gfx': 'gfxImports() {', 'gasm:net': 'netImports() {', 'gasm:storage': 'storageImports() {' };
 
   for (const m of gasmModules) {
-    const want = new Set(m.functions.map((f) => f.name));
-    // native runner (wasmtime): func_wrap("gasm", "name") or func_wrap(M, "name") after const M
+    const want = new Map(m.functions.map((f) => [f.name, f]));
+    // native runner (wasmtime): func_wrap("gasm", "name", ..) or func_wrap(M, "name", ..) after const M
     const rs = m.name === 'gasm'
-      ? [...hostRs.matchAll(/func_wrap\(\s*"gasm",\s*"([a-z_]+)"/g)].map((x) => x[1])
-      : [...section(hostRs, `const M: &str = "${m.name}";`, '\nfn ').matchAll(/func_wrap\(\s*M,\s*"([a-z_]+)"/g)].map((x) => x[1]);
-    compare(`runners/native (${m.name})`, want, new Set(rs));
-    // JS runner: keys of the import object returned by the matching method
-    const js = [...section(hostJs, jsMethod[m.name], '\n  }\n').matchAll(/^ {6}([a-z_]+): /gm)].map((x) => x[1]);
-    compare(`runners/web (${m.name})`, want, new Set(js));
+      ? rustClosures(hostRs, '"gasm"')
+      : rustClosures(section(hostRs, `const M: &str = "${m.name}";`, '\nfn '), 'M');
+    compareSigs(`runners/native (${m.name})`, want, rs);
+    // JS runner: keys of the import object returned by the matching method; arity only
+    const js = new Map([...section(hostJs, jsMethod[m.name], '\n  }\n').matchAll(/^ {6}([a-z_0-9]+): (?:\(([^)]*)\)|([a-z_]\w*)) =>/gm)]
+      .map((x) => [x[1], { params: x[3] ? [x[3]] : splitParams(x[2] ?? ''), types: false, result: undefined }]));
+    compareSigs(`runners/web (${m.name})`, want, js);
   }
-  // native stub host in the Rust SDK implements every function (incl. proc_exit)
-  const stub = new Set([...section(nativeRs, 'pub mod abi', '\n}\n').matchAll(/pub unsafe fn ([a-z_0-9]+)\(/g)].map((x) => x[1]));
-  const wantStub = new Set(abi.modules.flatMap((m) => m.functions.map((f) => rustName(m, f))));
-  compare('guests/gasm native stub', wantStub, stub);
-  if (!/proc_exit:/.test(hostJs)) errors.push('runners/web: WASI proc_exit missing');
+  // native stub host in the Rust SDK implements every function (incl. proc_exit), same signatures
+  const stub = new Map([...section(nativeRs, 'pub mod abi', '\n}\n').matchAll(/pub unsafe fn ([a-z_0-9]+)\(([^)]*)\)(?:\s*->\s*([^{]+?))?\s*\{/g)]
+    .map((x) => [x[1], {
+      params: splitParams(x[2]).map((p) => rustWasm(p.split(':').slice(1).join(':'))),
+      result: x[3] && x[3].trim() !== '!' ? rustWasm(x[3]) : null,
+    }]));
+  const wantStub = new Map(abi.modules.flatMap((m) => m.functions.map((f) => [rustName(m, f), f])));
+  compareSigs('guests/gasm native stub', wantStub, stub);
+  // constants the runners and the SDK hard-code must match abi.json
+  const constant = (name) => {
+    for (const c of abi.constants) for (const [k, v] of c.values) if (k === name) return Number(v.replace(/u\b/g, '').replace(/(\d+) << (\d+)/, (_, a, b) => String(Number(a) << Number(b))));
+    throw new Error(`no constant ${name}`);
+  };
+  const hostRsLib = hostRs;
+  const checks = [
+    ['runners/native/src/host.rs', hostRsLib, /pub const (KEY_STATE_BYTES|POINTER_BYTES|GAMEPAD_BYTES|GAMEPAD_BUTTONS|GAMEPAD_AXES): usize = (\d+);/g],
+    ['runners/web/lib/input.js', inputJs, /export const (KEY_STATE_BYTES|POINTER_BYTES|GAMEPAD_BYTES) = (\d+);/g],
+  ];
+  for (const [where, text, re] of checks) {
+    const found = [...text.matchAll(re)];
+    if (!found.length) errors.push(`${where}: no ABI size constants found`);
+    for (const [, k, v] of found) if (Number(v) !== constant(`GASM_${k}`)) errors.push(`${where}: ${k} = ${v}, abi.json says ${constant(`GASM_${k}`)}`);
+  }
+  for (const [where, text, re] of [
+    ['runners/native/src/host.rs', hostRs, /pub const ABI_VERSION: i32 = (\d+);/],
+    ['runners/web/lib/host.js', hostJs, /export const ABI_VERSION = (\d+);/],
+    ['guests/gasm/src/lib.rs', read('guests/gasm/src/lib.rs'), /pub const ABI_VERSION: i32 = (\d+);/],
+  ]) {
+    const m = text.match(re);
+    if (!m) errors.push(`${where}: ABI_VERSION not found`);
+    else if (Number(m[1]) !== abi.abi_version) errors.push(`${where}: ABI_VERSION ${m[1]}, abi.json says ${abi.abi_version}`);
+  }
+  if (!/proc_exit:/.test(read('runners/web/lib/wasi.js'))) errors.push('runners/web: WASI proc_exit missing');
   // key code tables in both runners: index = GASM_KEY_* value, W3C names
   const keys = ['', ...abi.constants.find((c) => c.group === 'keys').values.map((v) => v[2])].join(',');
   const table = (text, start) => {
@@ -238,8 +335,8 @@ function conformance() {
     const body = text.slice(open, text.indexOf(']', open) + 1);
     return [...body.matchAll(/"([^"]*)"|'([^']*)'/g)].map((m) => m[1] ?? m[2]).join(',');
   };
-  if (table(hostJs, 'export const KEY_CODES') !== keys) errors.push('runners/web: KEY_CODES differs from abi.json keys');
-  if (table(read('runners/native/src/keymap.rs'), 'pub const KEY_CODES') !== keys) errors.push('runners/native: keymap.rs KEY_CODES differs from abi.json keys');
+  if (table(inputJs, 'export const KEY_CODES') !== keys) errors.push('runners/web: lib/input.js KEY_CODES differs from abi.json keys');
+  if (table(read('runners/native/src/keys.rs'), 'pub const KEY_CODES') !== keys) errors.push('runners/native: keys.rs KEY_CODES differs from abi.json keys');
   return errors;
 }
 

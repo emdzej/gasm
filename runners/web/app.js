@@ -3,7 +3,7 @@
 import {
   GasmHost, IdbStorage, MemoryStorage, ProcExit, Resampler, AssetTable, bytesSource,
   directoryHandleEntries, fileListEntries, preloadAssets, DEFAULT_KEYMAP, parseKeymap, keyboardPads,
-  BrowserInput, INPUT_KEYS_RAW,
+  BrowserInput, INPUT_KEYS_RAW, gamepadPads, normalizeCode,
 } from './gasm-host.js';
 import { GasmWorker } from './gasm-worker.js';
 import { WebGpuGfx } from './webgpu-gfx.js';
@@ -50,8 +50,6 @@ const log = (m) => { console.log(m); $('log').textContent = m; };
 // Keyboard layout: the shared keymap format (gasm-host.js DEFAULT_KEYMAP), editable
 // with "keys..." and kept in localStorage. Gamepads take pads in connection order;
 // keyboard bindings for pad N >= 2 apply while fewer than N gamepads are connected.
-// W3C "standard" gamepad mapping -> gasm bit
-const PAD = { 1: 0, 0: 1, 3: 2, 2: 3, 4: 4, 5: 5, 8: 6, 9: 7, 12: 8, 13: 9, 14: 10, 15: 11 };
 const KEYMAP_KEY = 'gasm.keymap';
 let keymap = loadKeymap(localStorage.getItem(KEYMAP_KEY) ?? DEFAULT_KEYMAP);
 function loadKeymap(text) {
@@ -76,30 +74,29 @@ addEventListener('keydown', (e) => {
   if (e.key === 'Enter') typed += '\n';
   else if (e.key === 'Backspace') typed += '\b';
   else if (e.key.length === 1 && !e.ctrlKey && !e.metaKey) typed += e.key;
-  if (!keymap.has(e.code)) return;
-  held.add(e.code);
+  const code = normalizeCode(e.code);
+  if (!keymap.has(code)) return;
+  held.add(code);
   e.preventDefault();
 });
 const takeTyped = () => { const t = typed; typed = ''; return t; };
-addEventListener('keyup', (e) => { held.delete(e.code); });
+addEventListener('keyup', (e) => { held.delete(normalizeCode(e.code)); });
 addEventListener('blur', () => held.clear());
 
 const inputMode = () => (worker ?? host)?.inputMode ?? 0;
-function readPads() {
-  const pads = [0, 0, 0, 0];
-  let i = 0;
-  for (const gp of navigator.getGamepads?.() ?? []) {
-    if (!gp || i > 3) continue;
-    let m = 0;
-    for (const [btn, bit] of Object.entries(PAD)) if (gp.buttons[btn]?.pressed) m |= 1 << bit;
-    const [x = 0, y = 0] = gp.axes;
-    if (x < -0.5) m |= 1 << 10; if (x > 0.5) m |= 1 << 11;
-    if (y < -0.5) m |= 1 << 8;  if (y > 0.5) m |= 1 << 9;
-    pads[i++] |= m;
-  }
+/** Virtual pads from a frame's raw gamepads plus the keyboard layout. */
+function readPads(gamepads) {
+  const pads = gamepadPads(gamepads);
   if (inputMode() & INPUT_KEYS_RAW) return pads;   // the guest reads the keyboard itself
-  const kb = keyboardPads(keymap, held, i);
+  const kb = keyboardPads(keymap, held, gamepads.filter((g) => g.connected).length);
   return pads.map((p, k) => p | kb[k]);
+}
+/** The input for a batch of `n` frames (catch-up): text, events and deltas go to the first. */
+function batch(n) {
+  return Array.from({ length: n }, (_, k) => {
+    const input = rawInput.frame(k === 0);
+    return { pads: readPads(input.gamepads), text: k === 0 ? takeTyped() : '', input };
+  });
 }
 
 // "keys..." editor
@@ -146,6 +143,9 @@ class GasmOut extends AudioWorkletProcessor {
 registerProcessor('gasm-out', GasmOut);`;
 
 let audioCtx, audioNode, resampler;
+// Browsers start audio suspended until the page is clicked or a key is pressed
+// (e.g. with ?autostart): resume it on the first such gesture.
+for (const type of ['pointerdown', 'keydown']) addEventListener(type, () => { if (audioCtx?.state === 'suspended') audioCtx.resume(); });
 async function initAudio() {
   if (audioCtx) return;
   try {
@@ -164,13 +164,19 @@ async function initAudio() {
 // Two runtimes behind one loop: main thread (default; required for gasm:gfx) and
 // Worker mode (gasm-worker.js; lazy OPFS / File assets, guest off the main thread).
 let host = null, worker = null, gpu = null, inflight = false, running = false, rafId = 0;
+let startGen = 0;     // start() calls; an older one still loading gives up
+let frame2d = null;   // the latest 2D frame, drawn once per tick
 // The canvas' display size in device pixels (Worker mode: the OffscreenCanvas can't measure itself).
 const canvasSize = () => [Math.round(canvas.clientWidth * (devicePixelRatio || 1)) || canvas.width,
                           Math.round(canvas.clientHeight * (devicePixelRatio || 1)) || canvas.height];
 let folder = null; // { name, entries: [[relative name, File]] } from "open folder..."
 
-function present(rgba, w, h) {
-  if (gpu) return;                    // gfx guests: shown by the tick loop (WebGPU blit)
+// 2D frames: remember the latest (catch-up frames would be drawn and overwritten at once)
+function present(rgba, w, h) { if (!gpu) frame2d = [rgba, w, h]; }
+function draw2d() {
+  if (!frame2d) return;
+  const [rgba, w, h] = frame2d;
+  frame2d = null;
   ctx ??= canvas.getContext('2d');
   if (canvas.width !== w || canvas.height !== h) {
     canvas.width = w; canvas.height = h;
@@ -181,23 +187,38 @@ function present(rgba, w, h) {
 
 function onAudio(samples, rate, channels) {
   if (!audioNode) return;
-  const out = resampler.process(samples, rate, channels);
-  audioNode.port.postMessage(out.slice(), []);
+  const out = resampler.process(samples, rate, channels);   // a new buffer: transfer it
+  audioNode.port.postMessage(out, [out.buffer]);
 }
 
+// The guest exited or trapped: it is never called again (resume is disabled).
 function stopped(e) {
   running = false;
+  $('pause').disabled = true;
   if (e instanceof ProcExit) log(`game exited (code ${e.code})`);
   else { log(`guest trapped: ${e.message}`); console.error(e); }
+  host?.shutdown(); worker?.exit();
+}
+
+/** Stop the current game: gasm_exit (saves), close its sockets and storage, free the GPU. */
+async function stopGame() {
+  cancelAnimationFrame(rafId);
+  running = false;
+  const h = host, w = worker, g = gpu;
+  host = worker = gpu = null; inflight = false; frame2d = null;
+  await h?.shutdown();
+  await w?.exit();
+  g?.device.destroy();
 }
 
 let acc = 0, last = 0, fpsN = 0, fpsT = 0;
 function tick(now) {
+  if (!running) return;                // paused or stopped: resume schedules the next tick
   rafId = requestAnimationFrame(tick);
-  if (!running) return;
   if (escDown && now - escDown >= 1000) {   // Escape held: stop (a tap went to the game)
-    escDown = 0; running = false;
-    host?.exit(); worker?.exit();
+    escDown = 0;
+    $('pause').disabled = true;
+    stopGame();
     return log('stopped (Escape held)');
   }
   const rate = (worker ?? host).frameRate;
@@ -208,32 +229,22 @@ function tick(now) {
   const due = Math.min(4, Math.floor(acc / period));
   if (worker) {
     if (!inflight && due > 0) {       // one batch in flight: the worker sets the pace
-      const pads = readPads();
       inflight = true;
       acc -= due * period;
-      const texts = Array.from({ length: due }, (_, k) => (k === 0 ? takeTyped() : ''));
-      const inputs = Array.from({ length: due }, (_, k) => rawInput.frame(k === 0));
-      worker.frames(Array.from({ length: due }, () => pads), true, { texts, inputs, size: canvasSize() }).then((r) => {
+      const w = worker;
+      w.frames(batch(due), true, { size: canvasSize() }).then((r) => {
+        if (w !== worker) return;      // a newer game started meanwhile
         inflight = false;
         fpsN += due;
-        if (r.frame) present(r.frame.rgba, r.frame.width, r.frame.height);
-        rawInput.setMode(worker?.inputMode ?? 0);
+        if (r.frame) { present(r.frame.rgba, r.frame.width, r.frame.height); draw2d(); }
+        rawInput.setMode(w.inputMode);
       }, stopped);
     }
-  } else {
-    let presented = host.framesPresented;
-    for (let steps = 0; steps < due; steps++) {
-      const pads = readPads();
-      host.getPad = (p) => pads[p] ?? 0;
-      host.text = steps === 0 ? takeTyped() : '';
-      host.input = rawInput.frame(steps === 0);
-      host.showFrame = steps === due - 1;
-      if (gpu) gpu.used = false;
-      try { host.frame(); } catch (e) { return stopped(e); }
-      acc -= period; fpsN++;
-    }
-    // A gfx canvas can't take 2D frames: blit video_present output with WebGPU instead.
-    if (gpu && !gpu.used && host.width && host.framesPresented !== presented) gpu.presentVideo(host.rgba, host.width, host.height);
+  } else if (due > 0) {
+    // one batch: only the last frame is shown; a gfx canvas gets 2D frames as a WebGPU blit
+    try { host.runFrames(batch(due), true); } catch (e) { return stopped(e); }
+    acc -= due * period; fpsN += due;
+    draw2d();
     rawInput.setMode(host.inputMode);
   }
   if (acc > period * 4) acc = 0; // fell far behind: resync
@@ -253,6 +264,8 @@ async function hashRun(n) {
     } catch (e) { if (!(e instanceof ProcExit)) throw e; }
     s = worker.stats;
   } else {
+    // like the headless runners and the worker: frames aren't shown (begin_frame returns 0)
+    host.showFrame = false;
     try { for (let i = 0; i < n; i++) host.frame(); } catch (e) { if (!(e instanceof ProcExit)) throw e; }
     s = { frames: host.frameIndex, presented: host.framesPresented, width: host.width, height: host.height,
           videoHash: host.videoHash, audioHash: host.audioHash, audioFrames: host.audioFrames };
@@ -263,11 +276,21 @@ async function hashRun(n) {
   log(`hash ${worker ? '(worker)' : '(main)'}: ${out}`);
 }
 
+// Saves of games loaded from a URL (?wasm=) get a namespace of their own, so a
+// module from elsewhere can't read or overwrite the saves of a game here.
+async function namespaceFor(game) {
+  const name = game.split('/').pop().replace(/\.wasm$/, '').replace(/[^A-Za-z0-9._-]/g, '_') || 'game';
+  if (!game.includes('/')) return name;
+  const url = new URL(game, location.href);
+  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(url.origin + url.pathname)));
+  return `url-${[...digest.slice(0, 8)].map((b) => b.toString(16).padStart(2, '0')).join('')}-${name}`;
+}
+
 async function start({ romBytes } = {}) {
-  cancelAnimationFrame(rafId);
-  running = false;
-  host?.exit(); host = null;
-  await worker?.exit(); worker = null; inflight = false;
+  const gen = ++startGen;
+  const stale = () => gen !== startGen;   // a newer start() took over
+  await stopGame();
+  $('pause').disabled = false; $('pause').textContent = '❚❚ pause';
   await initAudio();
   audioCtx?.resume();
   const url = new URLSearchParams(location.search);
@@ -293,7 +316,10 @@ async function start({ romBytes } = {}) {
   if ($('relay').value.trim()) { params.relay = $('relay').value.trim(); params.room = $('room').value.trim() || 'sumo'; }
   try {
     const bytes = await fetchBytes(game.includes('/') ? new URL(game, location.href) : new URL(`build/${game}`, ROOT));
-    const usesGfx = WebAssembly.Module.imports(await WebAssembly.compile(bytes)).some((i) => i.module === 'gasm:gfx');
+    // compiled once: the imports tell where it can run, the same Module is instantiated
+    const module = await WebAssembly.compile(bytes);
+    if (stale()) return;
+    const usesGfx = WebAssembly.Module.imports(module).some((i) => i.module === 'gasm:gfx');
     // gfx guests go to the worker only if the canvas can be transferred (OffscreenCanvas);
     // the worker then needs WebGPU too, otherwise we fall back to the main thread below.
     const offscreenOk = typeof HTMLCanvasElement !== 'undefined' && 'transferControlToOffscreen' in HTMLCanvasElement.prototype;
@@ -301,7 +327,7 @@ async function start({ romBytes } = {}) {
     let c = freshCanvas();
     c.classList.toggle('gpu', usesGfx);
     gpu = null;
-    const namespace = game.split('/').pop().replace(/\.wasm$/, ''); // saves: one namespace per game file
+    const namespace = await namespaceFor(game); // saves: one namespace per game
     const prefix = url.get('prefix') ?? '';
     if (useWorker) {
       // Lazy sources: the worker reads OPFS / picked files synchronously on demand.
@@ -309,7 +335,7 @@ async function start({ romBytes } = {}) {
       if (url.has('opfs')) specs.push({ kind: 'opfs', dir: url.get('opfs'), prefix });
       if (folder) specs.push({ kind: 'files', entries: folder.entries, prefix });
       const start = (canvasOpt) => GasmWorker.start({
-        wasm: bytes.slice(), assets: specs, params, storage: namespace, allowNet: true, keyboard: true,
+        wasm: module, assets: specs, params, storage: namespace, allowNet: true, keyboard: true,
         hashing: hashFrames > 0, virtualTime: hashFrames > 0, onLog: log, onAudio, ...canvasOpt,
       });
       if (usesGfx) {
@@ -342,11 +368,14 @@ async function start({ romBytes } = {}) {
         log(`storage unavailable (${e.message}); saves won't persist`);
         return new MemoryStorage();
       });
-      host = new GasmHost({ assets, params, gfx, storage, allowNet: true, onPresent: present, onAudio, onLog: log,
-                            virtualTime: hashFrames > 0 });
-      host.text = '';     // the page has a keyboard
-      await host.load(bytes);
+      const h = new GasmHost({ assets, params, gfx, storage, allowNet: true, onPresent: present, onAudio, onLog: log,
+                               virtualTime: hashFrames > 0 });
+      h.text = '';     // the page has a keyboard
+      if (stale()) { h.shutdown(); gfx?.device.destroy(); return; }
+      host = h;
+      await host.load(module);
     }
+    if (stale()) return stopGame();
   } catch (e) {
     if (e instanceof ProcExit) log(`game exited during init (code ${e.code})`);
     else { log(`load failed: ${e.message}`); console.error(e); }
@@ -394,7 +423,13 @@ fetch(new URL('roms/', ROOT)).then((r) => (r.ok ? r.text() : '')).then((html) =>
 }).catch(() => {});
 
 $('start').onclick = () => start();
-$('pause').onclick = () => { running = !running; last = performance.now(); $('pause').textContent = running ? '❚❚ pause' : '▶ resume'; };
+$('pause').onclick = () => {
+  if (!host && !worker) return;   // nothing (alive) to pause or resume
+  running = !running;
+  last = performance.now();
+  $('pause').textContent = running ? '❚❚ pause' : '▶ resume';
+  if (running) rafId = requestAnimationFrame(tick);
+};
 // "open folder...": assets from a folder, named like gasm-run --asset-dir (case-insensitive).
 async function pickFolder() {
   if (window.showDirectoryPicker) {
@@ -441,5 +476,5 @@ const params = new URLSearchParams(location.search);
 if (params.get('game') in GAMES) $('game').value = params.get('game');
 $('game').onchange();
 if (params.has('autostart')) start();
-// Leaving the page: let the game flush its saves (gasm_exit).
-addEventListener('pagehide', () => { host?.exit(); worker?.exit(); });
+// Leaving the page: let the game flush its saves (gasm_exit), close its connections.
+addEventListener('pagehide', () => { stopGame(); });

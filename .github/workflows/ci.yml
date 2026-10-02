@@ -4,45 +4,70 @@ on:
   push:
     branches: [main]
   pull_request:
+  # release.yml runs this before publishing anything
+  workflow_call:
 
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.ref }}-${{ github.event_name }}
   cancel-in-progress: true
 
+# Third-party actions are pinned to commits (the tag in the comment).
 jobs:
   test:
     name: build + determinism + network tests
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: System packages (native runner)
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libasound2-dev libudev-dev pkg-config
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         with:
           version: 10
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
 
       - name: Rust toolchain
         run: rustup toolchain install stable --profile minimal --target wasm32-unknown-unknown
 
-      - uses: actions/cache@v4
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
             guests/target
             runners/native/target
-            tools/wasi-sdk
-          key: ${{ runner.os }}-cargo-${{ hashFiles('guests/Cargo.lock', 'runners/native/Cargo.lock', 'scripts/fetch-wasi-sdk.sh') }}
+          key: ${{ runner.os }}-cargo-${{ hashFiles('guests/Cargo.lock', 'runners/native/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-
+
+      # Toolchains and fetched sources (ScummVM builds in its tree: objects are kept
+      # too). Restoring an older entry is safe: every fetch script checks a version
+      # stamp and fetches again when it doesn't match.
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            tools/wasi-sdk
+            tools/binaryen
+            tools/SDL3-src
+            tools/doom-src
+            tools/scummvm-src
+            tools/scummvm-libs
+          key: ${{ runner.os }}-tools-${{ hashFiles('scripts/fetch-*.sh', 'scripts/build-scummvm-libs.sh', 'guests/doom/engine.patch', 'guests/scummvm/configure.patch') }}
+          restore-keys: ${{ runner.os }}-tools-
+
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: roms
+          key: roms-${{ hashFiles('scripts/fetch-roms.sh') }}
 
       - name: ABI conformance (spec/abi.json vs header, Rust bindings, runners)
         run: node scripts/gen-abi.mjs --check
+
+      - name: gfx validation, JS (tests/gfx-cases.json; natively in the unit tests)
+        run: node scripts/gfx-model-test.mjs
 
       - name: Build games + native runner
         run: make
@@ -50,18 +75,19 @@ jobs:
       - name: Fetch test ROMs
         run: make roms
 
-      - name: Determinism (wasmtime JIT vs AOT vs V8)
+      - name: Determinism (wasmtime JIT vs AOT vs V8, golden hashes)
         run: scripts/determinism-test.sh
 
       - name: Network lockstep (native <-> node via gasm-relay)
         run: scripts/net-test.sh
 
-      - name: Asset providers
-        run: LARGE_MB=50 scripts/asset-test.sh
-
-      - name: "Unit tests (gasm-host: assets, keymap, net)"
+      - name: "Unit tests (gasm-host: assets, keymap, net, storage, script)"
         working-directory: runners/native
         run: cargo test --release --lib
+
+      - name: Headless-only library (no window feature)
+        working-directory: runners/native
+        run: cargo check --release --lib --no-default-features
 
       - name: Asset providers (file-backed, folders, case-insensitive; 200 MB streaming)
         run: scripts/asset-test.sh
@@ -74,63 +100,64 @@ jobs:
       - name: Parity (NES native vs wasm)
         run: make parity ROM=roms/cpu_instr_test.nes FRAMES=600
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: games
+          name: games-ci
           path: build/*.wasm
 
-      # The other platforms reuse these (the WAD downloads need unzip/ar/xz)
-      - uses: actions/upload-artifact@v4
-        with:
-          name: roms
-          path: roms/
-
-  # Same suites on the other desktop platforms: builds gasm-run natively and runs
-  # the games built above. Proves the Windows/macOS runners are bit-identical.
+  # Same suites on the other platforms with the games built above: every runner must
+  # match the golden hashes (tests/golden/determinism.txt), so all platforms agree.
   platforms:
     name: runner tests (${{ matrix.os }})
     needs: test
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-2022, macos-14]
+        os: [windows-2022, macos-14, ubuntu-24.04-arm]
     runs-on: ${{ matrix.os }}
     defaults:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
 
-      - uses: actions/download-artifact@v4
+      - name: System packages (native runner)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libasound2-dev libudev-dev pkg-config
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          name: games
+          name: games-ci
           path: build
 
-      - uses: actions/download-artifact@v4
+      # test data comes from a cache, not an artifact: the test-only games in it
+      # (SCUMM demos, Drascula) are never republished
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
-          name: roms
           path: roms
+          key: roms-${{ hashFiles('scripts/fetch-roms.sh') }}
+          enableCrossOsArchive: true
 
-      - uses: actions/cache@v4
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             ~/.cargo/registry
             runners/native/target
-          key: ${{ runner.os }}-runner-${{ hashFiles('runners/native/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-runner-
+          key: ${{ runner.os }}-${{ runner.arch }}-runner-${{ hashFiles('runners/native/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-${{ runner.arch }}-runner-
 
       - name: Build native runner
         working-directory: runners/native
         run: cargo build --release
 
-      - name: Fetch test ROMs
+      - name: Fetch test ROMs (what the cache lacks)
         run: scripts/fetch-roms.sh
 
-      - name: Determinism (wasmtime JIT vs AOT vs V8)
+      - name: Determinism (wasmtime JIT vs AOT vs V8, golden hashes)
         run: scripts/determinism-test.sh
 
       - name: Network lockstep (native <-> node via gasm-relay)

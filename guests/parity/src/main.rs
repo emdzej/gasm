@@ -20,6 +20,7 @@ fn main() {
     assert_eq!(nes::gasm_init(), 0, "gasm_init failed");
     let t0 = Instant::now();
     for _ in 0..frames {
+        gasm::native::begin_frame();
         nes::gasm_frame();
         gasm::native::end_frame();
     }

@@ -112,9 +112,11 @@ static void PumpPointer(Uint64 ts)
     if (!shown || gasm_pointer(p, sizeof p) != GASM_POINTER_BYTES) {
         return;
     }
-    const float fx = F32(p + 8), fy = F32(p + 12), dx = F32(p + 16), dy = F32(p + 20);
-    const float wx = F32(p + 24), wy = F32(p + 28);
-    const Uint32 held = U32(p + 32), pressed = U32(p + 36), released = U32(p + 40), flags = U32(p + 44);
+    const float fx = F32(p + GASM_POINTER_OFF_FX), fy = F32(p + GASM_POINTER_OFF_FY);
+    const float dx = F32(p + GASM_POINTER_OFF_DX), dy = F32(p + GASM_POINTER_OFF_DY);
+    const float wx = F32(p + GASM_POINTER_OFF_WHEEL_X), wy = F32(p + GASM_POINTER_OFF_WHEEL_Y);
+    const Uint32 held = U32(p + GASM_POINTER_OFF_BUTTONS), pressed = U32(p + GASM_POINTER_OFF_PRESSED);
+    const Uint32 released = U32(p + GASM_POINTER_OFF_RELEASED), flags = U32(p + GASM_POINTER_OFF_FLAGS);
 
     if (relative_mode) {
         if (dx != 0.0f || dy != 0.0f) {
@@ -258,9 +260,9 @@ static bool GASM_UpdateWindowFramebuffer(SDL_VideoDevice *_this, SDL_Window *win
     }
     /* the frame is opaque, whatever was drawn into the alpha channel */
     for (int y = 0; y < surface->h; y++) {
-        Uint8 *row = (Uint8 *)surface->pixels + y * surface->pitch;
+        Uint32 *row = (Uint32 *)((Uint8 *)surface->pixels + y * surface->pitch);   /* RGBA bytes: A is the top byte */
         for (int x = 0; x < surface->w; x++) {
-            row[x * 4 + 3] = 0xff;
+            row[x] |= 0xff000000u;
         }
     }
     gasm_video_present(surface->pixels, (Uint32)surface->w, (Uint32)surface->h, (Uint32)surface->pitch);

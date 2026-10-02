@@ -1,33 +1,42 @@
-//! Read-only guest assets: in-memory buffers, or files opened (not read) at start.
+//! Read-only guest assets: in-memory buffers, or files read on demand.
 //!
-//! - **File-backed** (`--asset`, `--rom`, `--asset-dir`): `size` comes from file
+//! - **File-backed** (`--asset`, `--rom`, `--asset-dir`): the size comes from file
 //!   metadata and reads are positioned (`pread` on Unix, `seek_read` on
 //!   Windows) straight into guest memory. Nothing is loaded up front, so a
 //!   200 MB asset costs no RAM and no start-up time. A file that shrinks or
 //!   disappears while running just yields fewer bytes (possibly 0); reads never
-//!   panic.
+//!   panic. Explicit files are opened at start; folder entries are opened on
+//!   first read and kept in a small cache, so a CD-sized tree doesn't hit the
+//!   open-file limit.
 //! - **Folders** (`--asset-dir [prefix=]dir`): every regular file under `dir`,
 //!   named by its `/`-separated relative path as stored on disk. Symlinks are
-//!   skipped (so nothing outside `dir` is reachable) and so are hidden entries
-//!   (any path component starting with `.`, e.g. `.DS_Store`, `._foo`). The set
-//!   of names is fixed at start-up.
+//!   skipped (so nothing outside `dir` is reachable; a file replaced by a
+//!   symlink later is refused too) and so are hidden entries (any path
+//!   component starting with `.`, e.g. `.DS_Store`, `._foo`). The set of names
+//!   is fixed at start-up.
 //! - **Lookup:** an exact name always wins (explicit `--asset` entries override
 //!   folder entries of the same name). Otherwise folder entries also match
 //!   **case-insensitively** (ASCII folding): CD file systems are upper case,
 //!   games ask in mixed case. If several folder entries differ only in case, a
 //!   warning is logged at start-up and the first in sorted order wins.
-//! - Sizes are 32-bit in the ABI: files over 2 GiB - 1 are refused.
+//! - Sizes are 64-bit (`asset_size64`, `asset_read_at64`); `asset_size`
+//!   reports assets of 2 GiB and more as -2.
 
-use std::collections::{BTreeMap, HashMap};
+use std::cell::RefCell;
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::fs::File;
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 
-/// Largest asset the ABI can address (`asset_size -> i32`).
-pub const MAX_ASSET: u64 = i32::MAX as u64;
+/// Folder entries kept open at once (least recently used are closed).
+const OPEN_FILES: usize = 64;
 
 enum Source {
     Memory(Vec<u8>),
+    /// explicit file: opened at start (the path the user named)
     File { file: File, path: PathBuf },
+    /// folder entry: opened on first read
+    Lazy { path: PathBuf, len: u64 },
 }
 
 struct Entry {
@@ -40,6 +49,10 @@ pub struct Assets {
     exact: HashMap<String, Entry>,
     /// ASCII-lowercased name -> folder entry names, sorted
     folded: BTreeMap<String, Vec<String>>,
+    /// sorted names, built by `finish`
+    sorted: Vec<String>,
+    /// open folder entries, most recently used last
+    open: RefCell<VecDeque<(PathBuf, Rc<File>)>>,
 }
 
 impl From<HashMap<String, Vec<u8>>> for Assets {
@@ -48,20 +61,9 @@ impl From<HashMap<String, Vec<u8>>> for Assets {
         for (name, bytes) in map {
             a.insert_memory(&name, bytes);
         }
+        a.finish();
         a
     }
-}
-
-fn open_checked(path: &Path) -> Result<(File, u64), String> {
-    let file = File::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
-    let len = file.metadata().map_err(|e| format!("{}: {e}", path.display()))?.len();
-    if len > MAX_ASSET {
-        return Err(format!(
-            "{}: {len} bytes is larger than the 2 GiB the gasm ABI can address (asset sizes are 32-bit)",
-            path.display()
-        ));
-    }
-    Ok((file, len))
 }
 
 #[cfg(unix)]
@@ -72,6 +74,59 @@ fn pread(file: &File, buf: &mut [u8], offset: u64) -> std::io::Result<usize> {
 #[cfg(windows)]
 fn pread(file: &File, buf: &mut [u8], offset: u64) -> std::io::Result<usize> {
     std::os::windows::fs::FileExt::seek_read(file, buf, offset)
+}
+
+/// Fill `dst` from `offset`; stops early at the end of the file or on an error.
+fn read_file(file: &File, path: &Path, offset: u64, dst: &mut [u8]) -> usize {
+    let mut done = 0;
+    while done < dst.len() {
+        match pread(file, &mut dst[done..], offset + done as u64) {
+            Ok(0) => break,
+            Ok(n) => done += n,
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(e) => {
+                eprintln!("[gasm] assets: {}: {e}", path.display());
+                break;
+            }
+        }
+    }
+    done
+}
+
+/// A resolved asset: its size and reads, without looking the name up again.
+pub struct Asset<'a> {
+    assets: &'a Assets,
+    source: &'a Source,
+}
+
+impl Asset<'_> {
+    /// Size in bytes (for folder entries: as found at start-up).
+    pub fn size(&self) -> u64 {
+        match self.source {
+            Source::Memory(b) => b.len() as u64,
+            Source::File { file, .. } => file.metadata().map_or(0, |m| m.len()),
+            Source::Lazy { len, .. } => *len,
+        }
+    }
+
+    /// Copy bytes starting at `offset` into `dst`. Returns bytes copied (0 at or
+    /// past the end). Short reads (a file that shrank) return what was
+    /// available; I/O errors end the read early.
+    pub fn read_at(&self, offset: u64, dst: &mut [u8]) -> usize {
+        match self.source {
+            Source::Memory(b) => {
+                let start = offset.min(b.len() as u64) as usize;
+                let n = (b.len() - start).min(dst.len());
+                dst[..n].copy_from_slice(&b[start..start + n]);
+                n
+            }
+            Source::File { file, path } => read_file(file, path, offset, dst),
+            Source::Lazy { path, .. } => match self.assets.open_lazy(path) {
+                Some(file) => read_file(&file, path, offset, dst),
+                None => 0,
+            },
+        }
+    }
 }
 
 impl Assets {
@@ -95,7 +150,10 @@ impl Assets {
     /// Asset backed by a file, opened now and read on demand (overrides any
     /// entry with the same name).
     pub fn insert_file(&mut self, name: &str, path: &Path) -> Result<(), String> {
-        let (file, _) = open_checked(path)?;
+        let file = File::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
+        if !file.metadata().map_err(|e| format!("{}: {e}", path.display()))?.is_file() {
+            return Err(format!("{}: not a regular file", path.display()));
+        }
         self.exact.insert(name.to_owned(), Entry { source: Source::File { file, path: path.to_owned() }, from_dir: false });
         Ok(())
     }
@@ -111,7 +169,7 @@ impl Assets {
         let mut files = Vec::new();
         walk(dir, &mut Vec::new(), &mut files)?;
         let mut added = 0;
-        for (segments, path) in files {
+        for (segments, path, len) in files {
             let rel = segments.join("/");
             let name = match prefix {
                 Some(p) if !p.is_empty() => format!("{}/{rel}", p.trim_end_matches('/')),
@@ -120,18 +178,13 @@ impl Assets {
             if self.exact.contains_key(&name) {
                 continue;
             }
-            match open_checked(&path) {
-                Ok((file, _)) => {
-                    self.exact.insert(name, Entry { source: Source::File { file, path }, from_dir: true });
-                    added += 1;
-                }
-                Err(e) => eprintln!("[gasm] assets: skipping {e}"),
-            }
+            self.exact.insert(name, Entry { source: Source::Lazy { path, len }, from_dir: true });
+            added += 1;
         }
         Ok(added)
     }
 
-    /// Build the case-insensitive index for folder entries; logs collisions.
+    /// Build the case-insensitive index and the sorted name list; logs collisions.
     pub fn finish(&mut self) {
         self.folded.clear();
         for (name, entry) in &self.exact {
@@ -149,64 +202,69 @@ impl Assets {
                 );
             }
         }
+        self.sorted = self.exact.keys().cloned().collect();
+        self.sorted.sort();
     }
 
-    fn resolve(&self, name: &str) -> Option<&Entry> {
-        if let Some(e) = self.exact.get(name) {
-            return Some(e);
-        }
-        let canonical = self.folded.get(&name.to_ascii_lowercase())?.first()?;
-        self.exact.get(canonical)
+    /// Look an asset up (exact name, then case-insensitively among folder entries).
+    pub fn get(&self, name: &str) -> Option<Asset<'_>> {
+        let entry = match self.exact.get(name) {
+            Some(e) => e,
+            None => self.exact.get(self.folded.get(&name.to_ascii_lowercase())?.first()?)?,
+        };
+        Some(Asset { assets: self, source: &entry.source })
     }
 
-    /// Current size in bytes, or `None` if there is no such asset (or its file vanished).
+    /// Current size in bytes, or `None` if there is no such asset.
     pub fn size(&self, name: &str) -> Option<u64> {
-        match &self.resolve(name)?.source {
-            Source::Memory(b) => Some(b.len() as u64),
-            Source::File { file, .. } => file.metadata().ok().map(|m| m.len().min(MAX_ASSET)),
-        }
+        self.get(name).map(|a| a.size())
     }
 
-    /// Copy bytes starting at `offset` into `dst`. Returns bytes copied (0 at or
-    /// past the end), or `None` if there is no such asset. Short reads (a file
-    /// that shrank) return what was available; I/O errors end the read early.
+    /// Copy bytes starting at `offset` into `dst` (see [`Asset::read_at`]), or
+    /// `None` if there is no such asset.
     pub fn read_at(&self, name: &str, offset: u64, dst: &mut [u8]) -> Option<usize> {
-        match &self.resolve(name)?.source {
-            Source::Memory(b) => {
-                let start = (offset as usize).min(b.len());
-                let n = (b.len() - start).min(dst.len());
-                dst[..n].copy_from_slice(&b[start..start + n]);
-                Some(n)
-            }
-            Source::File { file, path } => {
-                let mut done = 0;
-                while done < dst.len() {
-                    match pread(file, &mut dst[done..], offset + done as u64) {
-                        Ok(0) => break,
-                        Ok(n) => done += n,
-                        Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
-                        Err(e) => {
-                            eprintln!("[gasm] assets: {}: {e}", path.display());
-                            break;
-                        }
-                    }
-                }
-                Some(done)
-            }
-        }
+        self.get(name).map(|a| a.read_at(offset, dst))
     }
 
-    /// All asset names, sorted.
-    pub fn names(&self) -> Vec<String> {
-        let mut v: Vec<String> = self.exact.keys().cloned().collect();
-        v.sort();
-        v
+    /// All asset names, sorted (by UTF-8 bytes).
+    pub fn names(&self) -> &[String] {
+        &self.sorted
+    }
+
+    /// Open a folder entry (cached). Refuses anything that is no longer a regular
+    /// file (e.g. replaced by a symlink since start-up).
+    fn open_lazy(&self, path: &Path) -> Option<Rc<File>> {
+        let mut open = self.open.borrow_mut();
+        if let Some(i) = open.iter().position(|(p, _)| p == path) {
+            let hit = open.remove(i)?;
+            let file = hit.1.clone();
+            open.push_back(hit);
+            return Some(file);
+        }
+        let ok = std::fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_file());
+        let file = match ok.then(|| File::open(path)) {
+            Some(Ok(f)) => Rc::new(f),
+            Some(Err(e)) => {
+                eprintln!("[gasm] assets: {}: {e}", path.display());
+                return None;
+            }
+            None => {
+                eprintln!("[gasm] assets: {}: no longer a regular file", path.display());
+                return None;
+            }
+        };
+        if open.len() >= OPEN_FILES {
+            open.pop_front();
+        }
+        open.push_back((path.to_owned(), file.clone()));
+        Some(file)
     }
 }
 
-/// Recursive, sorted walk collecting regular files; skips symlinks and hidden
-/// entries. Names must be valid UTF-8 (others are skipped with a warning).
-fn walk(dir: &Path, prefix: &mut Vec<String>, out: &mut Vec<(Vec<String>, PathBuf)>) -> Result<(), String> {
+/// Recursive, sorted walk collecting regular files (with their sizes); skips
+/// symlinks and hidden entries. Names must be valid UTF-8 (others are skipped
+/// with a warning).
+fn walk(dir: &Path, prefix: &mut Vec<String>, out: &mut Vec<(Vec<String>, PathBuf, u64)>) -> Result<(), String> {
     let mut entries: Vec<_> = std::fs::read_dir(dir)
         .map_err(|e| format!("{}: {e}", dir.display()))?
         .filter_map(Result::ok)
@@ -228,7 +286,10 @@ fn walk(dir: &Path, prefix: &mut Vec<String>, out: &mut Vec<(Vec<String>, PathBu
         if ft.is_dir() {
             walk(&entry.path(), prefix, out)?;
         } else if ft.is_file() {
-            out.push((prefix.clone(), entry.path()));
+            match entry.metadata() {
+                Ok(m) => out.push((prefix.clone(), entry.path(), m.len())),
+                Err(e) => eprintln!("[gasm] assets: skipping {}: {e}", entry.path().display()),
+            }
         }
         prefix.pop();
     }
@@ -284,6 +345,29 @@ mod tests {
         assert_eq!(&buf, b"data");
         assert_eq!(a.read_at("WORLDS/1PLAYER/MAP.RFM", 100, &mut buf), Some(0)); // past the end
         assert!(a.read_at("missing", 0, &mut buf).is_none());
+        assert!(a.names().windows(2).all(|w| w[0] < w[1]));
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn many_folder_files_stay_under_the_open_file_limit() {
+        let d = std::env::temp_dir().join(format!("gasm-assets-many-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        for i in 0..(OPEN_FILES * 3) {
+            std::fs::write(d.join(format!("F{i:04}")), format!("{i}")).unwrap();
+        }
+        let mut a = Assets::new();
+        a.add_dir(None, &d).unwrap();
+        a.finish();
+        let mut buf = [0u8; 8];
+        for round in 0..2 {
+            for i in 0..(OPEN_FILES * 3) {
+                let n = a.read_at(&format!("f{i:04}"), 0, &mut buf).unwrap();
+                assert_eq!(&buf[..n], format!("{i}").as_bytes(), "round {round}");
+            }
+        }
+        assert!(a.open.borrow().len() <= OPEN_FILES);
         let _ = std::fs::remove_dir_all(&d);
     }
 
@@ -293,6 +377,7 @@ mod tests {
         std::fs::write(&p, vec![7u8; 1000]).unwrap();
         let mut a = Assets::new();
         a.insert_file("f", &p).unwrap();
+        a.finish();
         std::fs::write(&p, vec![7u8; 10]).unwrap(); // truncate while "running"
         let mut buf = vec![0u8; 100];
         assert_eq!(a.size("f"), Some(10));

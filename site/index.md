@@ -40,7 +40,7 @@ features:
 |---|---|
 | **Runners** | `gasm-run`: native (Rust: wasmtime, wgpu, winit, cpal, gilrs), with AOT compilation for no-JIT platforms. Browser runner: WebAssembly, WebGPU, AudioWorklet, Gamepad API. Headless Node runner. |
 | **Games** | **Sumo**: 3D two-player arena with lockstep netcode. **NES**: a complete emulator (tetanes-core) passing the blargg CPU, timing and APU tests. **DOOM**: doomgeneric in C, with OPL music and saves, playing any IWAD. **ScummVM**: point-and-click adventures, starting with the freeware Beneath a Steel Sky. **SDL 3**: SDL programs build unchanged; SDL's own snake and woodeneye demos. **Triangle** and **test pattern**: minimal examples in Rust and C. |
-| **Tools** | `gasm-relay` (WebSocket rooms), the `gasm` Rust crate, `gasm.h` for C, cross-runner determinism and network test suites. |
+| **Tools** | `gasm-relay` (WebSocket rooms), the `gasm-sdk` Rust crate (library `gasm`), `gasm.h` and the C/C++ SDK, SDL 3 for gasm, cross-runner determinism and network test suites with golden hashes. |
 
 ## Performance
 
@@ -52,5 +52,5 @@ built natively. That's about 9× faster than the console itself. Sumo holds
 ## Status
 
 gasm is a **proof of concept**. ABI v0 is experimental and will change. See the
-[roadmap](/docs/abi#roadmap-not-in-v0): rollback netplay, render targets,
-and a wasm2c runner for consoles.
+[roadmap](/docs/abi#roadmap-not-in-v0): rollback netplay, `.gasm` packages,
+render targets.

@@ -53,8 +53,20 @@ driven inside the guest.
 - A switch is: unwind the current thread to the scheduler loop, then rewind the
   next one. The scheduler loop runs inside `gasm_frame` (or the loop helper's
   frame), on the remove list like `gasm_loop_frame`.
-- Thread-local storage: wasi-libc's `__tls_base` is swapped too, one TLS block
-  per thread (`__builtin_wasm_tls_size`, `__wasm_init_tls`).
+- **Thread-local storage needs care.** Without the `atomics` feature (the
+  default `wasm32-wasip1` target), clang turns `_Thread_local` variables into
+  plain globals, and wasi-libc has no TLS at all: `errno` is an ordinary global
+  (checked: no `__tls_base` in wasi-sdk 34's `wasm32-wasip1/libc.a`). With
+  `-matomics -mbulk-memory` on non-shared memory, wasm-ld lays the TLS
+  variables out as one block at `__tls_base`, but `__tls_base` is then an
+  immutable constant and there is no `__wasm_init_tls` (checked with wasi-sdk
+  34), so it can't be swapped. The scheduler therefore **copies**: games that
+  use green threads are built with `-matomics -mbulk-memory` (atomics on
+  unshared memory, accepted by every runner), and a switch saves the TLS block
+  (`__tls_base` … `+ __builtin_wasm_tls_size()`) of the outgoing thread and
+  restores the incoming one's. `errno` and the few other libc globals
+  (`strtok`, `rand` state) are saved and restored the same way, from a fixed
+  list. Cost per switch: a copy of the TLS size (tens of bytes for typical C).
 - Stacks and buffers are fixed per thread (sizes at creation, defaults like
   1 MiB stack + 256 KiB Asyncify buffer), allocated with `malloc`.
 
@@ -63,15 +75,28 @@ driven inside the guest.
 - **C** (`sdk/c/include/gasm_thread.h`): `gasm_thread_create(fn, arg, stack)`,
   `join`, `yield`, `sleep_ns`, plus mutex, condition, semaphore. Main-callback
   games (no loop helper) can use it too: the scheduler runs the other threads
-  after `gasm_frame` returns to it.
+  after `gasm_frame` returns to it. In such games **the main thread must not
+  block** (it is the frame callback, which can't be suspended: it is on the
+  Asyncify remove list); blocking there traps with a message. Games whose main
+  thread blocks use the loop helper, where the main thread is a suspendable
+  thread like the others.
 - **pthreads shim** (`sdk/c/src/gasm_pthread.c`): `pthread_create/join/detach`,
-  mutexes (normal, recursive), condition variables (with timeouts on virtual
-  time), `pthread_once`, keys, `sched_yield`, `nanosleep`. Built against
-  wasi-libc's `wasm32-wasip1` headers, so unchanged pthread code compiles.
-- **SDL 3**: SDL's private-platform hooks take it without patching SDL
-  (`SDL_THREAD_PRIVATE`: `SDL_systhread`, mutex, condition, semaphore, TLS on
-  the scheduler). `SDL_AddTimer` then works (its thread waits on virtual time),
-  and the synchronous async I/O can stay or move to a thread.
+  mutexes (normal, recursive), condition variables (with timeouts),
+  `pthread_once`, keys, `sched_yield`, `nanosleep`. Built against wasi-libc's
+  `wasm32-wasip1` headers, so unchanged pthread code compiles. **Timeouts and
+  sleeps use the clock the guest computes deadlines with**: `pthread_cond_timedwait`
+  takes an absolute `clock_gettime` time, so the scheduler compares deadlines
+  with `clock_time_get` at each switch and frame boundary. Runners make the
+  WASI clocks virtual in headless runs (CHANGELOG, after 0.5.0), so schedules
+  are reproducible there; in windowed runs they follow real time, like
+  everything else.
+- **SDL 3**: no SDL patch. SDL's `SDL_THREAD_PRIVATE` is only a CMake config
+  flag (nothing in SDL's sources uses it), so the backend is a set of files in
+  `sdk/sdl3/src` (`SDL_systhread.c`, mutex, condition, semaphore, TLS on the
+  scheduler) compiled instead of `src/thread/generic`, which the Makefile
+  leaves out with `SDL_SKIP`, as it does for the other replaced drivers.
+  `SDL_AddTimer` then works (its thread waits on the clock above), and the
+  synchronous async I/O can stay or move to a thread.
 - **Rust**: `gasm::thread::spawn` with the same scheduler, later; `std::thread`
   on `wasm32-unknown-unknown` can't be redirected.
 
@@ -83,8 +108,11 @@ driven inside the guest.
   main thread presenting, or the loop helper's `wait_frame`). A thread that
   never blocks would keep the frame from ending: the scheduler can preempt at
   `gasm_wait_frame` only, so a CPU-bound thread should yield (documented).
-- Sleeping threads wake at the first frame whose virtual time passes their
-  deadline (resolution: one frame, 16.7 ms), like `SDL_Delay` today.
+- Sleeping threads wake at the first switch point or frame boundary after
+  their deadline: the resolution is one frame at the guest's frame rate
+  (16.7 ms at 60 Hz, 28.6 ms for DOOM's 35 Hz), like `SDL_Delay` today.
+- **Deadlock** (every thread blocked, none waiting for the next frame or a
+  deadline) traps with a list of the blocked threads, instead of hanging.
 
 ### Limits
 
@@ -148,7 +176,20 @@ the runner on an OS thread (wasmtime) or a Web Worker (browser).
 - **Native**: wasmtime supports shared memory and wasi-threads; the runner
   needs a thread per guest thread and a policy for traps (one thread trapping
   ends the game).
+- **The browser's main thread can't block** (`Atomics.wait` is not allowed
+  there, and `memory.atomic.wait` traps). A guest whose main thread waits on a
+  lock must run in Worker mode. Today `gasm:gfx` guests fall back to the main
+  thread when a browser lacks WebGPU in workers; threaded gfx guests would have
+  to refuse to run there instead.
+- **Two builds**: a module either has shared memory or not, so one `.wasm`
+  can't serve real threads and the cooperative scheme. A game that wants both
+  ships two modules (the same source: the C API and the pthreads shim are
+  shared).
 - **Memory**: shared memories must declare a maximum size up front.
+- **Invariants that change**: "headless = reproducible" and rollback netplay
+  (snapshotting memory while other threads run) don't hold for these guests.
+  Headless runners would run them with one worker thread and mark the hashes as
+  not comparable, and lockstep games must not use them for simulation.
 
 ### When
 
@@ -160,8 +201,14 @@ pthreads shim, SDL backend) stays the same, so the same source can target either
 
 Runner-side stack switching (wasmtime's async support, JSPI in browsers, and
 eventually wasm's stack-switching proposal) is already on the ABI roadmap for an
-optional `gasm_main` export. It would also replace Asyncify in cooperative
+optional `gasm_run` export (not `gasm_main`: that name is the C loop helper's
+entry point in `gasm_loop.h`). It would also replace Asyncify in cooperative
 threads: same API, no code-size cost. Games wouldn't change.
+
+It is not free for runners: JSPI and wasmtime's async calls make a suspended
+guest call return a promise / future, while `GasmHost.frame()` and the Worker
+batching are synchronous today. The runners' frame loops would need an async
+path for such guests.
 
 ## Open questions
 

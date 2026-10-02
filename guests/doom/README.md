@@ -84,8 +84,10 @@ A gamepad can't type, so saving to an empty slot from the pad names it
   `gasm_opl.c`, which fires the player's timer callbacks at exact sample
   positions.
 - **Files:** there is no filesystem. `prelude.h` redirects the engine's
-  `fopen`/`remove`/`rename`. Reads come from assets (the WAD, read on demand)
-  or from `gasm:storage`; writes go to storage when the file is closed. The
+  `fopen`/`remove`/`rename`, and the streams come from the C SDK's
+  [`gasm_vfile.h`](https://github.com/emdzej/gasm/blob/main/sdk/c/include/gasm_vfile.h).
+  Reads come from assets (the WAD, read on demand) or from `gasm:storage`;
+  writes go to storage when the file is closed. The
   keys are `default.cfg`, `doomgenericdoom.cfg` and `doomsav0.dsg` ... `doomsav7.dsg`.
 - **Input:** the glue asks for `KEYS_RAW` (no keymap pads) and hides the
   cursor; it locks the pointer while a level is being played. Raw keys become
@@ -114,4 +116,6 @@ license of the DOOM source code. The files in this directory are gasm's own
 and MIT-licensed, except `engine.patch`, which modifies GPL code and is
 GPL-2.0 too. Releases include the complete source of `doom.wasm` as
 `gasm-<version>-doom-src.tar.gz` (built by `scripts/package-doom-src.sh`),
-and the website serves it next to the game.
+and the website serves it next to the game. The release workflow rebuilds
+`doom.wasm` from that archive and checks it's byte-identical before publishing.
+`THIRD-PARTY.txt` next to the games has the license notices.

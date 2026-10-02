@@ -13,13 +13,18 @@
 //! - `GP0(B0+B9+A1=0.5)` gamepad slot 0-3: buttons by index, axes `An=value`;
 //!   slots that appear anywhere in the script are connected (standard mapping)
 //!
-//! All arithmetic is done in f64 and rounded to f32 once, exactly like the JS runner.
+//! Numbers are plain decimals (no hex, inf or nan). All arithmetic is done in f64
+//! and rounded to f32 once, exactly like the JS runner (input-script.mjs), which
+//! accepts and rejects the same scripts.
 
 use crate::host::{Gamepad, KEY_STATE_BYTES, Pointer, RawInput};
-use crate::keymap::KEY_CODES;
+use crate::keys::KEY_CODES;
 
 const PAD_NAMES: [&str; 12] = ["A", "B", "X", "Y", "L", "R", "SELECT", "START", "UP", "DOWN", "LEFT", "RIGHT"];
 const MOUSE_NAMES: [&str; 5] = ["L", "R", "M", "BACK", "FWD"];
+
+/// (from, to, slot, buttons [(index, value)], axes [(index, value)])
+type GamepadItem = (u64, u64, usize, Vec<(usize, f64)>, Vec<(usize, f64)>);
 
 #[derive(Default, Clone)]
 pub struct Script {
@@ -29,8 +34,7 @@ pub struct Script {
     ptr: Vec<(u64, u64, f64, f64, u32)>,
     moves: Vec<(u64, u64, f64, f64)>,
     wheel: Vec<(u64, u64, f64, f64)>,
-    /// (from, to, slot, buttons [(index, value)], axes [(index, value)])
-    gp: Vec<(u64, u64, usize, Vec<(usize, f64)>, Vec<(usize, f64)>)>,
+    gp: Vec<GamepadItem>,
 }
 
 /// Carried between frames: previous keys, pointer position and buttons.
@@ -65,6 +69,15 @@ fn split_items(spec: &str) -> Vec<String> {
     items
 }
 
+/// A decimal number: optional sign, digits, optional fraction and exponent.
+fn decimal(v: &str) -> Option<f64> {
+    let digits = v.strip_prefix(['-', '+']).unwrap_or(v);
+    let ok = !digits.is_empty()
+        && digits.starts_with(|c: char| c.is_ascii_digit() || c == '.')
+        && digits.chars().all(|c| c.is_ascii_digit() || matches!(c, '.' | 'e' | 'E' | '-' | '+'));
+    v.parse::<f64>().ok().filter(|x| ok && x.is_finite())
+}
+
 fn args<'a>(rest: &'a str, name: &str) -> Option<&'a str> {
     rest.strip_prefix(name)?.strip_prefix('(')?.strip_suffix(')')
 }
@@ -77,7 +90,7 @@ impl Script {
             let (range, rest) = item.split_once(':').ok_or_else(bad)?;
             let (from, to) = range.split_once('-').unwrap_or((range, range));
             let (from, to): (u64, u64) = (from.parse().map_err(|_| bad())?, to.parse().map_err(|_| bad())?);
-            let num = |v: &str| v.trim().parse::<f64>().map_err(|_| bad());
+            let num = |v: &str| decimal(v.trim()).ok_or_else(bad);
             let pair = |a: &str| -> Result<(f64, f64), String> {
                 let (x, y) = a.split_once(',').ok_or_else(bad)?;
                 Ok((num(x)?, num(y)?))
@@ -124,7 +137,7 @@ impl Script {
                 let (x, y) = pair(a)?;
                 s.wheel.push((from, to, x, y));
             } else if rest.starts_with("GP") && rest.len() > 3 {
-                let slot: usize = rest[2..3].parse().map_err(|_| bad())?;
+                let slot: usize = rest.get(2..3).and_then(|d| d.parse().ok()).ok_or_else(bad)?;
                 let a = args(&rest[3..], "").ok_or_else(bad)?;
                 if slot > 3 {
                     return Err(bad());
@@ -273,5 +286,10 @@ mod tests {
         assert_eq!((g[1].buttons[0], g[1].axes[1]), (1.0, 0.5));
         assert_eq!(frames[8].pointer.unwrap().dx, 3.0); // frames shifted by remove(7): index 8 = frame 9
         assert!(Script::parse("1:KEY(NoSuchKey)").is_err());
+        // rejected by both runners (input-script.mjs has the same cases)
+        for bad in ["1-2-3:A", "1:PTR(0x10,1)", "1:MOVE(inf,0)", "1:MOVE(nan,0)", "1:\"a\\\"", "1:GP0(A1=0.5=3)", "1:GPé(B0)", "x:A"] {
+            assert!(Script::parse(bad).is_err(), "{bad}");
+        }
+        assert!(Script::parse("1:MOVE(-1.5e1,+2)").is_ok());
     }
 }

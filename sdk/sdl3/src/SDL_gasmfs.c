@@ -22,6 +22,7 @@
 #include <string.h>
 
 #include "gasm.h"
+#include "gasm_vfile.h"
 
 #define STORAGE_DIR "/storage/"
 #define KEY_MAX 128
@@ -38,17 +39,7 @@ typedef struct
 
 static bool ValidKey(const char *k)
 {
-    const size_t n = SDL_strlen(k);
-    if (n == 0 || n > KEY_MAX || !SDL_strcmp(k, ".") || !SDL_strcmp(k, "..")) {
-        return false;
-    }
-    for (size_t i = 0; i < n; i++) {
-        const char c = k[i];
-        if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '.' || c == '_' || c == '-')) {
-            return false;
-        }
-    }
-    return true;
+    return gasm_vfile_valid_key(k) != 0;
 }
 
 static Path Resolve(const char *path)
@@ -98,9 +89,9 @@ static Sint32 StorageSize(const char *key)
     return gasm_storage_get(key, (Uint32)SDL_strlen(key), NULL, 0);
 }
 
-static Sint32 AssetSize(const char *name)
+static Sint64 AssetSize(const char *name)
 {
-    return gasm_asset_size(name, (Uint32)SDL_strlen(name));
+    return gasm_asset_size64(name, (Uint32)SDL_strlen(name));
 }
 
 /* Asset `index`'s name, or false past the end. */
@@ -114,6 +105,13 @@ static bool AssetName(Uint32 index, char *buf, size_t cap)
     return true;
 }
 
+/* Does asset `name` lie in folder `dir`? Case-insensitive (ASCII), like the
+   runners' lookup of folder entries. */
+static bool InDir(const char *name, const char *dir, size_t n)
+{
+    return !SDL_strncasecmp(name, dir, n) && name[n] == '/';
+}
+
 /* Is `dir` a folder of assets (some asset name starts with "dir/")? */
 static bool AssetDir(const char *dir)
 {
@@ -121,179 +119,27 @@ static bool AssetDir(const char *dir)
     const size_t n = SDL_strlen(dir);
     const Uint32 count = gasm_asset_count();
     for (Uint32 i = 0; i < count; i++) {
-        if (AssetName(i, name, sizeof name) && !SDL_strncmp(name, dir, n) && name[n] == '/') {
+        if (AssetName(i, name, sizeof name) && InDir(name, dir, n)) {
             return true;
         }
     }
     return false;
 }
 
-/* ---- stdio streams (fopencookie) ------------------------------------------------------- */
-
-typedef struct
-{
-    char name[1024];
-    bool asset, writing, dirty;
-    Uint8 *data;
-    size_t len, cap;
-    off_t pos, size;
-} VFile;
-
-static ssize_t VF_Read(void *c, char *buf, size_t size)
-{
-    VFile *f = (VFile *)c;
-    if (f->pos >= f->size) {
-        return 0;
-    }
-    if ((off_t)size > f->size - f->pos) {
-        size = (size_t)(f->size - f->pos);
-    }
-    if (f->asset) {
-        const Sint32 n = gasm_asset_read_at(f->name, (Uint32)SDL_strlen(f->name), (Uint32)f->pos, buf, (Uint32)size);
-        if (n < 0) {
-            return -1;
-        }
-        size = (size_t)n;
-    } else {
-        SDL_memcpy(buf, f->data + f->pos, size);
-    }
-    f->pos += (off_t)size;
-    return (ssize_t)size;
-}
-
-static bool Reserve(VFile *f, size_t end)
-{
-    if (end <= f->cap) {
-        return true;
-    }
-    size_t cap = f->cap ? f->cap : 4096;
-    while (cap < end) {
-        cap *= 2;
-    }
-    Uint8 *d = (Uint8 *)SDL_realloc(f->data, cap);
-    if (!d) {
-        return false;
-    }
-    f->data = d;
-    f->cap = cap;
-    return true;
-}
-
-static ssize_t VF_Write(void *c, const char *buf, size_t size)
-{
-    VFile *f = (VFile *)c;
-    if (!f->writing) {
-        errno = EBADF;
-        return -1;
-    }
-    const size_t end = (size_t)f->pos + size;
-    if (!Reserve(f, end)) {
-        errno = ENOMEM;
-        return -1;
-    }
-    if ((size_t)f->pos > f->len) {
-        SDL_memset(f->data + f->len, 0, (size_t)f->pos - f->len);
-    }
-    SDL_memcpy(f->data + f->pos, buf, size);
-    f->pos = (off_t)end;
-    if (end > f->len) {
-        f->len = end;
-    }
-    f->size = (off_t)f->len;
-    f->dirty = true;
-    return (ssize_t)size;
-}
-
-static int VF_Seek(void *c, off_t *off, int whence)
-{
-    VFile *f = (VFile *)c;
-    const off_t base = whence == SEEK_SET ? 0 : whence == SEEK_CUR ? f->pos : f->size;
-    if (base + *off < 0) {
-        errno = EINVAL;
-        return -1;
-    }
-    f->pos = base + *off;
-    *off = f->pos;
-    return 0;
-}
-
-static int VF_Close(void *c)
-{
-    VFile *f = (VFile *)c;
-    int rc = 0;
-    if (f->writing && (f->dirty || f->len == 0) &&
-        gasm_storage_set(f->name, (Uint32)SDL_strlen(f->name), f->data, (Uint32)f->len) != 0) {
-        errno = EIO;
-        rc = -1;
-    }
-    SDL_free(f->data);
-    SDL_free(f);
-    return rc;
-}
-
-static bool LoadStorage(VFile *f)
-{
-    const Sint32 n = StorageSize(f->name);
-    if (n < 0) {
-        return false;
-    }
-    if (!Reserve(f, n ? (size_t)n : 1)) {
-        return false;
-    }
-    gasm_storage_get(f->name, (Uint32)SDL_strlen(f->name), f->data, (Uint32)n);
-    f->len = (size_t)n;
-    f->size = n;
-    return true;
-}
+/* ---- stdio streams: sdk/c gasm_vfile ------------------------------------------------- */
 
 /* fopen for SDL (SDL_iostream.c is built with -Dfopen=SDL_GASM_fopen). */
 FILE *SDL_GASM_fopen(const char *path, const char *mode)
 {
     const Path p = Resolve(path);
     const bool write = SDL_strchr(mode, 'w') || SDL_strchr(mode, 'a') || SDL_strchr(mode, '+');
-    VFile *f = (VFile *)SDL_calloc(1, sizeof *f);
-    if (!f) {
-        errno = ENOMEM;
-        return NULL;
-    }
-    SDL_strlcpy(f->name, p.name, sizeof f->name);
     if (p.kind == P_STORAGE) {
-        f->writing = write;
-        const bool exists = LoadStorage(f);
-        if (SDL_strchr(mode, 'w')) {
-            f->len = 0;
-            f->size = 0;
-            f->dirty = true;
-        } else if (!exists && !SDL_strchr(mode, 'a')) {
-            errno = ENOENT;
-            goto fail;
-        }
-        if (SDL_strchr(mode, 'a')) {
-            f->pos = f->size;
-            f->dirty = !exists;
-        }
-    } else if (p.kind == P_ASSET && !write) {
-        const Sint32 size = AssetSize(p.name);
-        if (size < 0) {
-            errno = ENOENT;
-            goto fail;
-        }
-        f->asset = true;
-        f->size = size;
-    } else {
-        errno = p.kind == P_ASSET ? EROFS : p.kind == P_NONE ? EINVAL : EISDIR;
-        goto fail;
+        return gasm_vfile_open(GASM_VFILE_STORAGE, p.name, mode);
     }
-    {
-        cookie_io_functions_t io = { VF_Read, VF_Write, VF_Seek, VF_Close };
-        FILE *file = fopencookie(f, mode, io);
-        if (file) {
-            return file;
-        }
+    if (p.kind == P_ASSET && !write) {
+        return gasm_vfile_open(GASM_VFILE_ASSET, p.name, mode);
     }
-fail:
-    SDL_free(f->data);
-    SDL_free(f);
+    errno = p.kind == P_ASSET ? EROFS : p.kind == P_NONE ? EINVAL : EISDIR;
     return NULL;
 }
 
@@ -356,9 +202,9 @@ bool SDL_SYS_EnumerateDirectory(const char *path, SDL_EnumerateDirectoryCallback
     const size_t plen = SDL_strlen(prefix);
     SDL_snprintf(dirname, sizeof dirname, "/%s%s", prefix, plen ? "/" : "");
 
-    /* entries directly inside: each once (folders appear once per file in them) */
-    char **seen = NULL;
-    int nseen = 0;
+    /* entries directly inside, each once: names are sorted, so the files of a
+       subfolder are next to each other and comparing with the last entry suffices */
+    char last[1024] = "";
     if (p.kind == P_ROOT) {
         rc = cb(userdata, dirname, "storage");
     }
@@ -367,7 +213,7 @@ bool SDL_SYS_EnumerateDirectory(const char *path, SDL_EnumerateDirectoryCallback
         if (!AssetName(i, name, sizeof name)) {
             continue;
         }
-        if (plen && (SDL_strncmp(name, prefix, plen) || name[plen] != '/')) {
+        if (plen && !InDir(name, prefix, plen)) {
             continue;
         }
         char *entry = name + (plen ? plen + 1 : 0);
@@ -375,25 +221,12 @@ bool SDL_SYS_EnumerateDirectory(const char *path, SDL_EnumerateDirectoryCallback
         if (slash) {
             *slash = 0;
         }
-        bool dup = false;
-        for (int j = 0; j < nseen && !dup; j++) {
-            dup = !SDL_strcmp(seen[j], entry);
-        }
-        if (dup) {
+        if (!SDL_strcmp(last, entry)) {
             continue;
         }
-        char **grown = (char **)SDL_realloc(seen, sizeof(char *) * (size_t)(nseen + 1));
-        if (!grown) {
-            break;
-        }
-        seen = grown;
-        seen[nseen++] = SDL_strdup(entry);
+        SDL_strlcpy(last, entry, sizeof last);
         rc = cb(userdata, dirname, entry);
     }
-    for (int j = 0; j < nseen; j++) {
-        SDL_free(seen[j]);
-    }
-    SDL_free(seen);
     return rc != SDL_ENUM_FAILURE;
 }
 
@@ -467,7 +300,7 @@ bool SDL_SYS_GetPathInfo(const char *path, SDL_PathInfo *info)
         return true;
     }
     case P_ASSET: {
-        const Sint32 n = AssetSize(p.name);
+        const Sint64 n = AssetSize(p.name);
         if (n >= 0) {
             info->type = SDL_PATHTYPE_FILE;
             info->size = (Uint64)n;

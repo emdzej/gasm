@@ -79,7 +79,7 @@ async function generate(name, sizeMb) {
   return copyInto(name, [
     ['big.bin', () => testStream(size), size],
     ['ART/ART.CAR', text('ART CAR FILE v1\n'), 16],
-    ['README.TXT', text('RETURN FIRE TEST DISC\n'), 22],
+    ['README.TXT', text('GASM TEST DISC\n'), 15],
   ]);
 }
 
@@ -95,31 +95,40 @@ async function refresh() {
     const fs = await opfsFileSystem({ namespace: `${ROOT}/${name}` });
     let files = 0, bytes = 0;
     for await (const e of walkFileSystem(fs)) if (e.kind === 'file') { files++; bytes += e.size; }
+    // built with DOM calls: directory names are data, never markup
     const tr = document.createElement('tr');
-    tr.innerHTML = `<td>${name}</td><td>${files}</td><td>${mb(bytes)}</td>
-      <td><a href="index.html?game=assetcheck.wasm&opfs=${ROOT}/${name}&read=art/art.car,readme.txt&stream=big.bin&autostart">test</a>
-      · <button data-del="${name}">delete</button></td>`;
+    const cell = (...nodes) => { const td = document.createElement('td'); td.append(...nodes); tr.append(td); };
+    const test = document.createElement('a');
+    test.href = `index.html?${new URLSearchParams({ game: 'assetcheck.wasm', opfs: `${ROOT}/${name}`, read: 'art/art.car,readme.txt', stream: 'big.bin', autostart: '' })}`;
+    test.textContent = 'test';
+    const del = document.createElement('button');
+    del.textContent = 'delete';
+    del.onclick = async () => { await root.removeEntry(name, { recursive: true }); refresh(); };
+    cell(name); cell(String(files)); cell(mb(bytes)); cell(test, ' · ', del);
     tbody.append(tr);
   }
-  tbody.querySelectorAll('[data-del]').forEach((b) => (b.onclick = async () => {
-    await root.removeEntry(b.dataset.del, { recursive: true });
-    refresh();
-  }));
   const est = await navigator.storage.estimate?.();
   if (est) $('quota').textContent = `Storage: ${mb(est.usage ?? 0)} used of ${mb(est.quota ?? 0)}.`;
 }
 
 $('pick').onclick = importPicked;
-$('generate').onclick = () => generate(cleanName($('name').value || 'test-data'), Number($('mb').value) || 200);
+// test data size: 1 MB to 4 GB
+const MAX_MB = 4096;
+const sizeMb = (v) => Math.min(MAX_MB, Math.max(1, Math.floor(Number(v)) || 200));
+$('generate').onclick = () => generate(cleanName($('name').value || 'test-data'), sizeMb($('mb').value));
 
 if (!isOpfsSupported()) log('This browser has no origin private file system.');
 else refresh();
 
-// ?generate=<name>&mb=<n>: create test data, then (with &then=<url>) continue, e.g. to a game.
+// ?generate=<name>&mb=<n>: create test data, then (with &then=<url>) continue, e.g. to a
+// game. Only pages of this site: anything else (another origin, javascript:) is ignored.
 const q = new URLSearchParams(location.search);
+const sameOrigin = (u) => { try { const url = new URL(u, location.href); return url.origin === location.origin ? url.href : null; } catch { return null; } };
 if (q.has('generate')) {
-  generate(cleanName(q.get('generate')), Number(q.get('mb') ?? 200)).then((r) => {
-    globalThis.__gasmImported = r;
-    if (q.get('then')) location.href = q.get('then');
+  generate(cleanName(q.get('generate')), sizeMb(q.get('mb') ?? 200)).then((r) => {
+    globalThis.__gasmImported = r;   // read by scripts/opfs-test.mjs
+    const next = q.get('then') && sameOrigin(q.get('then'));
+    if (next) location.href = next;
+    else if (q.get('then')) log(`not continuing to ${q.get('then')}: only pages of this site`);
   }, (e) => log(`generate failed: ${e.message}`));
 }

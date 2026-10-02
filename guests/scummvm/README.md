@@ -120,7 +120,8 @@ Not done yet:
   (the system cursor is hidden; ScummVM draws its own), the wheel, and the first
   gamepad as ScummVM joystick events.
 - **Files.** The assets are a read-only directory tree (`asset_count`,
-  `asset_name`), streamed with `asset_read_at`. Engine data files are built in.
+  `asset_name`), streamed with 64-bit `asset_read_at64` through a 16 KB
+  read-ahead buffer. Engine data files are built in.
 - **Saves and settings.** `gasm:storage`: save games are `save.<name>`, the
   config is `scummvm.ini`; save lists come from the storage keys.
 - **Reproducible builds.** `SOURCE_DATE_EPOCH` pins the build date ScummVM puts
@@ -135,7 +136,8 @@ license). The backend in this directory is gasm's own and MIT-licensed; the
 complete source as `gasm-<version>-scummvm-src.tar.gz`: exactly the ScummVM
 files the build used, the libraries' release sources, the backend, the patch
 and the build scripts (`scripts/package-scummvm-src.sh`); rebuilding from it
-gives the same module.
+gives the same module, which the release workflow checks before publishing.
+`THIRD-PARTY.txt` next to the games has the libraries' license notices.
 The website serves it next to the game.
 
 Beneath a Steel Sky is freeware from Revolution Software; its readme (with the

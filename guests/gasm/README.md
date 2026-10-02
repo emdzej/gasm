@@ -10,7 +10,7 @@ CI, bit-identically.
 crate-type = ["cdylib"]
 
 [dependencies]
-gasm-sdk = "0.1"
+gasm-sdk = "0.5"
 ```
 
 ```rust
@@ -40,10 +40,17 @@ gasm-run target/wasm32-unknown-unknown/release/hello.wasm
 What's in it:
 
 - **Core:** logging, time, frame rate, launch params, RGBA video, audio, four
-  virtual gamepads, assets.
-- **`gfx`:** a WebGPU subset with WGSL shaders and JSON descriptors.
+  virtual gamepads, assets of any size (`asset_size`, `asset_read_at` with
+  `u64` offsets), and `has(name)` to ask whether the runner provides an import.
+- **`input`, `keys`:** raw keyboard, pointer, gamepads and joysticks.
+- **`gfx`:** a WebGPU subset with WGSL shaders and JSON descriptors;
+  `gfx::destroy` frees objects.
 - **`net`:** WebSocket-style messages.
-- **`storage`:** per-game saves.
+- **`storage`:** per-game saves; `storage::try_set` says why a write failed
+  (`storage::Error`: `Key`, `Size`, `Quota`, `Io`).
+- **`main_loop!`:** for games with their own loop (`main_loop!(run)`, or
+  `main_loop!(run, on_exit)` to export `gasm_exit` too), with Binaryen's
+  Asyncify. Games using `game!` don't carry its export or imports.
 - **Native builds:** on non-wasm targets the crate links an in-process stub
   host (`gasm::native`), so the same game builds natively for debugging and
   parity tests.

@@ -24,7 +24,8 @@ expensive part of bringing it to gasm:
 
 - **Godot.** Its Compatibility renderer (`drivers/gles3`) targets exactly
   GLES 3 / WebGL 2 and already has web-specific code paths (`WEB_ENABLED`) for
-  WebGL 2's restrictions. It uses 126 distinct GL functions. With `gasm:gl`,
+  WebGL 2's restrictions. It uses about 130 distinct GL functions (an estimate
+  from grepping `drivers/gles3`; to be counted from a build). With `gasm:gl`,
   Godot 2D and simple 3D games need a platform port (`platform/gasm`) and no new
   renderer.
 - **Engines and games with an Emscripten/WebGL 2 build.** Their GL code already
@@ -35,8 +36,11 @@ expensive part of bringing it to gasm:
 
 1. Guests written in C/C++ compile against a standard `GLES3/gl3.h` and run
    unchanged on every runner.
-2. Same behaviour in the browser and natively: ANGLE on both sides (Chrome,
-   Firefox on Windows and Safari use ANGLE for WebGL too).
+2. Same behaviour in the browser and natively, as far as possible: ANGLE on
+   both sides where browsers use it (Chrome and Edge everywhere, Safari, Firefox
+   on Windows). Firefox on macOS and Linux implements WebGL 2 on the system's
+   OpenGL instead, so driver differences show up there as they do for any WebGL
+   game.
 3. gasm's properties are kept: every guest pointer is checked, nothing can crash
    the runner, headless runs are reproducible and hashed.
 4. Worker mode works (WebGL 2 on an `OffscreenCanvas`).
@@ -45,7 +49,8 @@ expensive part of bringing it to gasm:
 
 - Desktop OpenGL, GL 1.x fixed function, GLES 3.1+ (compute, SSBOs, images).
 - Client-side vertex arrays and other things WebGL 2 forbids.
-- Mixing `gasm:gl` and `gasm:gfx` in one guest.
+- Mixing `gasm:gl` and `gasm:gfx` in one guest. Runners refuse a module that
+  imports both, at load time, with an error saying so.
 - Making rendered pixels identical across GPUs (they aren't, as with `gasm:gfx`).
 
 ## The API
@@ -74,12 +79,17 @@ What the ABI looks like:
   the gasm boundary (out-of-bounds pointers, impossible lengths, bad names for
   the handle table) do trap, as everywhere else.
 - Extensions are queried with `get_string(GL_EXTENSIONS)` and enabled the WebGL
-  way (`enable_extension(name)`). The set exposed is the intersection the
+  way (`enable_extension(name)`). Headless runs report a fixed set (see
+  "Null GL" below), so a guest's choices don't depend on the machine. The set exposed is the intersection the
   runners can provide on every platform, plus optional ones a game must check:
   `EXT_color_buffer_float`, `OES_texture_float_linear`,
   `EXT_texture_filter_anisotropic`, and compressed formats (S3TC/BPTC on desktop,
   ETC2/ASTC where the GPU has them).
 - Shaders are GLSL ES 3.00 (`#version 300 es`), as in WebGL 2.
+- `generate_mipmap` is part of WebGL 2 and of this module: here runners do
+  generate mipmaps, unlike `gasm:gfx`, where guests upload every level (the
+  "runners never generate mipmaps" rule is about `gasm:gfx`). The null GL only
+  records that the levels exist; hashes cover the uploads, not generated levels.
 
 **Frames and the default framebuffer.** The runner owns the window surface:
 
@@ -109,7 +119,7 @@ implementation so `glow`-based code (egui_glow, many small engines) runs as is.
 |---|---|---|---|
 | Context | canvas `getContext('webgl2')` (also `OffscreenCanvas` in Worker mode) | ANGLE via EGL: Metal (macOS), D3D11 (Windows), Vulkan (Linux, X11 and Wayland) | null GL |
 | Calls | forwarded to WebGL 2 through the name table | forwarded to ANGLE's GLES 3 (`glow` loads the entry points) | validated, objects tracked, nothing drawn |
-| Screenshots | canvas | ANGLE pbuffer surface, `readPixels` | with `--screenshot`: ANGLE offscreen |
+| Screenshots | canvas | ANGLE pbuffer surface, `readPixels` | `gasm-run --screenshot`: ANGLE offscreen. The Node runner has no GL (it stays dependency-free) and captures nothing, as with `gasm:gfx` |
 
 **Native details.**
 
@@ -128,8 +138,10 @@ exist but aren't something to depend on. Plan: a separate workflow
 (`.github/workflows/angle.yml`) builds ANGLE at a pinned revision for macOS
 (universal), Windows x86_64, Linux x86_64 and arm64, and publishes the libraries
 as a release (`angle-<revision>`). `scripts/fetch-angle.sh` downloads them for
-local builds; the release bundles and the macOS `.app`s include them (about
-10 MB per platform, BSD-3-Clause, notices included). The ANGLE build runs only
+local builds (checksum-pinned, like every other download); the release bundles
+and the macOS `.app`s include them (size to be measured; BSD-3-Clause, notices
+in `THIRD-PARTY.txt`). CI also needs ANGLE's SwiftShader backend for GPU-less
+runners (size to be measured too). The ANGLE build runs only
 when the pinned revision changes.
 
 **macOS signatures.** No Apple certificate is involved, but one packaging step
@@ -160,9 +172,33 @@ is needed:
 - Each object kind has its own name table in every runner, so a texture name
   can't be used as a buffer. Unknown names follow GL rules (`GL_INVALID_*`).
 - **Null GL:** the same tables and the same checks, so headless runs report the
-  same GL errors as a real context for API misuse. Queries that need a GPU
-  (`readPixels`, occlusion queries, shader compile and link status)
-  return documented defaults: zeros, "passed", success.
+  same GL errors as a real context for the misuse it can see (bad names,
+  wrong targets, invalid enums, out-of-range levels and sizes, incomplete
+  framebuffers by its own completeness rules). Everything a guest may branch on
+  is fixed in headless runs, so they stay reproducible on every machine:
+  - **Limits** (`GL_MAX_*`) are WebGL 2's guaranteed minimums, from a table in
+    `abi.json`; windowed runs report the device's.
+  - **Extensions:** none of the optional ones.
+  - **Shaders and programs** compile and link successfully. The null GL
+    doesn't parse GLSL, so introspection is synthetic and deterministic:
+    `get_uniform_location`, `get_attrib_location` and
+    `get_uniform_block_index` give every name asked for a new location or
+    index, numbered in the order of the queries, never -1;
+    `GL_ACTIVE_UNIFORMS`, `GL_ACTIVE_ATTRIBUTES` and `GL_ACTIVE_UNIFORM_BLOCKS`
+    are 0. So `uniform*` calls reach the hash; a guest that enumerates active
+    uniforms instead of looking them up sees none headless (Godot looks them
+    up).
+  - **GPU results:** `read_pixels` returns zeros, occlusion queries "passed",
+    timer queries 0, `client_wait_sync` "already signaled".
+- **Error parity is tested, not assumed.** Three implementations answer
+  `get_error` (WebGL, ANGLE, the null GL in Rust and JS). gltest includes a
+  list of misuse cases (each with the error it must produce), run on all of
+  them in CI: Chrome, native ANGLE (SwiftShader), and both null GLs. The null
+  GL only claims parity for the cases on that list; growing the list is part
+  of each phase.
+- **Hashing:** headless runners fold every upload into the video hash: buffer
+  data, texture data (header + payload, as `write_texture`), uniform values.
+  Draw calls and state aren't hashed, as in `gasm:gfx`.
 - **Hashing:** headless runners fold every upload into the video hash: buffer
   data, texture data (header + payload, as `write_texture`), uniform values.
   Draw calls and state aren't hashed, as in `gasm:gfx`.
@@ -209,9 +245,20 @@ project.
   into wasmtime are cheap; in the browser each call crosses into JavaScript, as
   with any Emscripten WebGL build. Expected to be fine; measure with gltest and
   Godot.
+- **Asynchronous WebGL.** Some results only arrive after the page returns to
+  the browser's event loop: query results (`GL_QUERY_RESULT_AVAILABLE` stays
+  false within a frame), and `client_wait_sync` can only wait with timeout 0.
+  Natively they could arrive at once. To behave the same, runners report
+  query results and sync status no earlier than the next frame on every
+  runner (natively too), and `client_wait_sync` with a timeout above 0 returns
+  `GL_TIMEOUT_EXPIRED` unless already signaled.
+- **Context loss.** Browsers can drop a WebGL context (GPU reset, too many
+  contexts). The runner stops the guest with a clear message (no restore in
+  v1); natively ANGLE contexts are robust and report resets the same way.
 - **Compressed textures** differ by platform (S3TC/BPTC on desktop, ETC2/ASTC on
   mobile and some browsers). Games must query, as on WebGL. Godot already does.
 - **Two GPU modules** means two paths in each runner. Mitigated by keeping them
   separate (one per guest) and sharing the surface, input and frame logic.
-- **Version.** Additive like 0.4/0.5 (new optional module), so
-  `GASM_ABI_VERSION` stays 0.
+- **Version.** An additive change by the ABI's versioning rules (a new optional
+  module, see `spec/ABI.md`), so `GASM_ABI_VERSION` stays 0; guests probe
+  with `has("gasm:gl")`.

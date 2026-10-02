@@ -63,7 +63,7 @@ Command line: the `args` param (`--param "args=-x 1"`) becomes `argv[1...]`.
 | Audio playback (streams, callbacks) | `audio_push`: float, mono or stereo, one frame of samples per gasm frame |
 | `SDL_GetTicks`, performance counter, `SDL_Delay` | virtual time: 1/60 s per frame, so runs are reproducible |
 | `SDL_GetCurrentTime`, date/time | virtual too, from 2026-01-01 00:00 UTC; local time is UTC |
-| Files: `SDL_IOFromFile`, `SDL_GetBasePath` (`/`), title storage | assets, read-only and streamed (`asset_read_at`); folders work (`SDL_EnumerateDirectory`, `SDL_GetPathInfo`) |
+| Files: `SDL_IOFromFile`, `SDL_GetBasePath` (`/`), title storage | assets, read-only and streamed (`asset_read_at64`, any size); folders work (`SDL_EnumerateDirectory`, `SDL_GetPathInfo`) |
 | `SDL_GetPrefPath` (`/storage/`), user storage | `gasm:storage`: a file is a key, written when closed |
 | Async I/O | done at once (gasm guests have one thread); results are ready on the next poll |
 | `SDL_ShowMessageBox` | the log; returns the default button |
@@ -80,7 +80,7 @@ loading shared objects. Each fails the way SDL fails on a platform without it.
   presenting or delaying never sees one. Present or `SDL_Delay` in such loops.
 - A frame ends at the first present. A program that presents more than once per
   frame (or never, for long stretches) should add `SDL_Delay` pacing.
-- Sizes: SDL adds about 0.9 MB to a module (`sdl3-snake.wasm` is 934 KB);
+- Sizes: SDL adds about 0.8 MB to a module (`sdl3-snake.wasm` is 810 KB);
   Asyncify adds a little more for a `main()` loop (`sdl3-classic.wasm`: 1.15 MB).
 
 ## Files
@@ -93,4 +93,5 @@ loading shared objects. Each fails the way SDL fails on a platform without it.
 - `cmake/SDL3Config.cmake`: `find_package(SDL3)` and `gasm_sdl3_app()`
 
 gasm's files here are zlib-licensed like SDL (the examples are MIT). `libSDL3.a`
-also contains the C SDK's `gasm_loop.c` (MIT).
+also contains the C SDK's `gasm_loop.c` and `gasm_vfile.c` (MIT; `fopen` in SDL's
+`SDL_iostream.c` goes through `gasm_vfile` to assets and storage).

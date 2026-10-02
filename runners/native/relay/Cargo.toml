@@ -1,0 +1,17 @@
+[package]
+name = "gasm-relay"
+version = "0.5.0"
+edition = "2024"
+description = "gasm-relay: a tiny, game-agnostic WebSocket room relay for gasm games (lockstep netplay)"
+license = "MIT"
+repository = "https://github.com/emdzej/gasm"
+homepage = "https://gasm.emdzej.pl"
+rust-version = "1.85"
+# released as binaries and ghcr.io/emdzej/gasm-relay; not on crates.io yet
+publish = false
+
+[dependencies]
+tungstenite = { version = "0.30", features = ["rustls-tls-native-roots"] }
+# TLS for --tls-cert (wss://); ring = no cmake/NASM needed
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+rustls-pki-types = { version = "1", features = ["std"] }

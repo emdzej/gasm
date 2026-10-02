@@ -26,6 +26,7 @@
 #include <sys/types.h>
 
 #include "gasm.h"
+#include "gasm_vfile.h"
 #include "gasm_doom.h"
 
 #include "d_event.h"
@@ -74,13 +75,19 @@ void DG_DrawFrame(void) {
         rgba[i] = r | g << 8 | b << 16 | 0xffu << 24; /* bytes R,G,B,A on little-endian wasm */
     }
     uint32_t *out = (uint32_t *)fb;
-    for (int y = 0; y < OUT_H; y++) {
-        const uint8_t *row = src + (y * DOOMGENERIC_RESY / OUT_H) * DOOMGENERIC_RESX;
+    int last = -1;
+    for (int y = 0; y < OUT_H; y++, out += OUT_W) {
+        int sy = y * DOOMGENERIC_RESY / OUT_H;
+        if (sy == last) {   /* the same source row again: copy the row just made */
+            memcpy(out, out - OUT_W, OUT_W * 4);
+            continue;
+        }
+        last = sy;
+        const uint8_t *row = src + sy * DOOMGENERIC_RESX;
         for (int x = 0; x < DOOMGENERIC_RESX; x++) {
             uint32_t c = rgba[row[x]];
             out[2 * x] = out[2 * x + 1] = c;
         }
-        out += OUT_W;
     }
 }
 
@@ -241,9 +248,9 @@ static void poll_raw(void) {
     if (gasm_pointer(p, sizeof p) < 0) return;
     float dx;
     uint32_t buttons, flags;
-    memcpy(&dx, p + 16, 4);
-    memcpy(&buttons, p + 32, 4);
-    memcpy(&flags, p + 44, 4);
+    memcpy(&dx, p + GASM_POINTER_OFF_DX, 4);
+    memcpy(&buttons, p + GASM_POINTER_OFF_BUTTONS, 4);
+    memcpy(&flags, p + GASM_POINTER_OFF_FLAGS, 4);
     if (!(flags & GASM_POINTER_IS_LOCKED)) buttons = 0;   /* the click that locks it isn't a shot */
     int motion = (flags & GASM_POINTER_IS_LOCKED) ? (int)dx : 0;
     /* DOOM's mouse buttons: left fire, right strafe, middle forward. No vertical motion. */
@@ -292,15 +299,6 @@ static void poll_input(void) {
 
 static char iwad_alias[16];   /* canonical IWAD name that maps to the "wad" asset */
 
-typedef struct {
-    char key[129];
-    int writing;
-    char asset[256];          /* reading an asset: its name */
-    uint8_t *data;            /* reading storage, or the write buffer */
-    size_t len, cap;
-    off_t pos, size;
-} vfile;
-
 static const char *strip_path(const char *path) {
     while (path[0] == '.' && path[1] == '/') path += 2;
     return path;
@@ -310,11 +308,8 @@ static const char *strip_path(const char *path) {
 static int storage_key(const char *path, char *key) {
     const char *base = strrchr(path, '/');
     base = base ? base + 1 : strip_path(path);
-    size_t n = strlen(base);
-    if (n == 0 || n > 128 || !strcmp(base, ".") || !strcmp(base, "..")) return 0;
-    for (size_t i = 0; i < n; i++)
-        if (!isalnum((unsigned char)base[i]) && base[i] != '.' && base[i] != '_' && base[i] != '-') return 0;
-    memcpy(key, base, n + 1);
+    if (!gasm_vfile_valid_key(base)) return 0;
+    strcpy(key, base);
     return 1;
 }
 
@@ -324,93 +319,19 @@ static const char *asset_name(const char *path) {
     return path;
 }
 
-static ssize_t vf_read(void *c, char *buf, size_t size) {
-    vfile *f = c;
-    if (f->pos >= f->size) return 0;
-    if ((off_t)size > f->size - f->pos) size = (size_t)(f->size - f->pos);
-    if (f->asset[0]) {
-        int32_t n = gasm_asset_read_at(f->asset, (uint32_t)strlen(f->asset), (uint32_t)f->pos, buf, (uint32_t)size);
-        if (n < 0) return -1;
-        size = (size_t)n;
-    } else {
-        memcpy(buf, f->data + f->pos, size);
-    }
-    f->pos += (off_t)size;
-    return (ssize_t)size;
-}
-
-static ssize_t vf_write(void *c, const char *buf, size_t size) {
-    vfile *f = c;
-    size_t end = (size_t)f->pos + size;
-    if (end > f->cap) {
-        size_t cap = f->cap ? f->cap : 4096;
-        while (cap < end) cap *= 2;
-        uint8_t *d = realloc(f->data, cap);
-        if (!d) return -1;
-        f->data = d;
-        f->cap = cap;
-    }
-    if ((size_t)f->pos > f->len) memset(f->data + f->len, 0, (size_t)f->pos - f->len);
-    memcpy(f->data + f->pos, buf, size);
-    f->pos = (off_t)end;
-    if (end > f->len) f->len = end;
-    f->size = (off_t)f->len;
-    return (ssize_t)size;
-}
-
-/* Save games use ftell() while writing (for alignment padding), so writes seek too. */
-static int vf_seek(void *c, off_t *off, int whence) {
-    vfile *f = c;
-    off_t base = whence == SEEK_SET ? 0 : whence == SEEK_CUR ? f->pos : f->size;
-    if (base + *off < 0) return -1;
-    f->pos = base + *off;
-    *off = f->pos;
-    return 0;
-}
-
-static int vf_close(void *c) {
-    vfile *f = c;
-    int rc = 0;
-    if (f->writing && gasm_storage_set(f->key, (uint32_t)strlen(f->key), f->data, (uint32_t)f->len) != 0) {
-        fprintf(stderr, "doom: could not save %s\n", f->key);
-        rc = -1;
-    }
-    free(f->data);
-    free(f);
-    return rc;
-}
-
+/* Saves and the config are storage keys (by file name); everything else is an
+   asset. A file name that exists in storage shadows the asset of that name. */
 FILE *gasm_doom_fopen(const char *path, const char *mode) {
-    vfile *f = calloc(1, sizeof *f);
-    if (!f) return NULL;
-    int have_key = storage_key(path, f->key);
-    if (strchr(mode, 'w') || strchr(mode, 'a')) {
-        if (!have_key) goto fail;
-        f->writing = 1;
-    } else {
-        int32_t n = have_key ? gasm_storage_get(f->key, (uint32_t)strlen(f->key), NULL, 0) : -1;
-        if (n >= 0) {
-            f->data = malloc(n ? (size_t)n : 1);
-            if (!f->data) goto fail;
-            gasm_storage_get(f->key, (uint32_t)strlen(f->key), f->data, (uint32_t)n);
-            f->size = n;
-        } else {
-            const char *name = asset_name(path);
-            int32_t size = gasm_asset_size(name, (uint32_t)strlen(name));
-            if (size < 0) goto fail;
-            if (strlen(name) >= sizeof f->asset) goto fail;
-            strcpy(f->asset, name);
-            f->size = size;
-        }
+    char key[129];
+    int have_key = storage_key(path, key);
+    if (strpbrk(mode, "wa+")) {
+        if (!have_key) { errno = EROFS; return NULL; }
+        FILE *f = gasm_vfile_open(GASM_VFILE_STORAGE, key, mode);
+        if (!f) fprintf(stderr, "doom: could not open %s for writing\n", key);
+        return f;
     }
-    cookie_io_functions_t io = { vf_read, vf_write, vf_seek, vf_close };
-    FILE *file = fopencookie(f, mode, io);
-    if (file) return file;
-fail:
-    free(f->data);
-    free(f);
-    errno = ENOENT;
-    return NULL;
+    if (have_key && gasm_storage_get(key, (uint32_t)strlen(key), NULL, 0) >= 0) return gasm_vfile_open(GASM_VFILE_STORAGE, key, mode);
+    return gasm_vfile_open(GASM_VFILE_ASSET, asset_name(path), mode);
 }
 
 int gasm_doom_remove(const char *path) {

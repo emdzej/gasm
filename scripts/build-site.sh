@@ -11,17 +11,19 @@ mkdir -p "$PLAY/build"
 scripts/vendor-web.sh >/dev/null   # csfs for the OPFS import page
 cp runners/web/index.html runners/web/app.js runners/web/gasm-host.js runners/web/webgpu-gfx.js \
    runners/web/gasm-worker.js runners/web/opfs.html runners/web/opfs.js runners/web/testdata.js "$PLAY/"
-cp -R runners/web/vendor "$PLAY/"
+cp -R runners/web/lib runners/web/vendor "$PLAY/"
 for g in sumo triangle textured inputtest nes doom scummvm test-pattern assetcheck sdl3-snake sdl3-woodeneye sdl3-callbacks sdl3-classic; do
   [ -f "build/$g.wasm" ] || { echo "missing build/$g.wasm; run 'make guests' first" >&2; exit 1; }
   cp "build/$g.wasm" "$PLAY/build/"
 done
 # The DOOM demo's default WAD: shareware episode 1 (freely distributable).
-[ -f roms/doom1.wad ] || scripts/fetch-roms.sh >/dev/null
+[ -f roms/doom1.wad ] || scripts/fetch-roms.sh doom1 >/dev/null
 mkdir -p "$PLAY/roms" && cp roms/doom1.wad "$PLAY/roms/"
 # ScummVM's demo game: Beneath a Steel Sky (freeware, with its readme).
-[ -f roms/bass/sky.dnr ] || scripts/fetch-roms.sh >/dev/null
+[ -f roms/bass/sky.dnr ] || scripts/fetch-roms.sh bass >/dev/null
 mkdir -p "$PLAY/roms/bass" && cp roms/bass/sky.dnr roms/bass/sky.dsk roms/bass/readme.txt "$PLAY/roms/bass/"
+# license notices for the third-party code in the games
+scripts/third-party-notices.sh "$(git rev-parse --short HEAD 2>/dev/null || echo site)" > "$PLAY/build/THIRD-PARTY.txt"
 # scummvm.wasm is GPL-3.0: its complete source is served next to it.
 cp "$(scripts/package-scummvm-src.sh "$(git rev-parse --short HEAD 2>/dev/null || echo site)")" "$PLAY/build/scummvm-src.tar.gz"
 # doom.wasm is GPL-2.0: its complete source is served next to it.

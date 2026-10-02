@@ -1,0 +1,79 @@
+{
+  "$comment": "gasm:gfx validation cases, replayed on the null GPU by both runners (runners/native/src/gfx.rs tests, scripts/gfx-model-test.mjs). Each case is a list of calls; handles are numbered 1, 2, ... in creation order. `fails`: index of the first call that must trap (null: all succeed). Descriptors are JSON objects, as guests pass them.",
+  "shader": "@vertex fn vs() -> @builtin(position) vec4f { return vec4f(0.0); }",
+  "cases": [
+    { "name": "draw with a pipeline and a large enough vertex buffer", "fails": null, "calls": [
+      ["create_shader"], ["create_buffer", 64, 32],
+      ["create_pipeline", { "vertex": { "module": 1, "buffers": [{ "arrayStride": 16, "attributes": [{ "format": "float32x4", "offset": 0, "shaderLocation": 0 }] }] }, "fragment": { "module": 1, "targets": [{ "format": "surface" }] } }],
+      ["begin_frame"], ["set_pipeline", 3], ["set_vertex_buffer", 0, 2, 0], ["draw", 4, 1, 0, 0], ["end_frame"] ] },
+    { "name": "draw reading past the vertex buffer", "fails": 6, "calls": [
+      ["create_shader"], ["create_buffer", 64, 32],
+      ["create_pipeline", { "vertex": { "module": 1, "buffers": [{ "arrayStride": 16, "attributes": [{ "format": "float32x4", "offset": 0, "shaderLocation": 0 }] }] }, "fragment": { "module": 1, "targets": [{}] } }],
+      ["begin_frame"], ["set_pipeline", 3], ["set_vertex_buffer", 0, 2, 16], ["draw", 4, 1, 0, 0] ] },
+    { "name": "draw without a pipeline", "fails": 1, "calls": [["begin_frame"], ["draw", 3, 1, 0, 0]] },
+    { "name": "draw without the vertex buffer the pipeline reads", "fails": 4, "calls": [
+      ["create_shader"],
+      ["create_pipeline", { "vertex": { "module": 1, "buffers": [{ "arrayStride": 8, "attributes": [{ "format": "float32x2", "offset": 0, "shaderLocation": 0 }] }] }, "fragment": { "module": 1, "targets": [{}] } }],
+      ["begin_frame"], ["set_pipeline", 2], ["draw", 3, 1, 0, 0] ] },
+    { "name": "set calls outside a frame", "fails": 2, "calls": [
+      ["create_shader"], ["create_pipeline", { "vertex": { "module": 1 }, "fragment": { "module": 1, "targets": [{}] } }], ["set_pipeline", 2] ] },
+    { "name": "a pipeline without exactly one color target", "fails": 3, "calls": [
+      ["create_shader"], ["create_pipeline", { "vertex": { "module": 1 } }], ["begin_frame"], ["set_pipeline", 2] ] },
+    { "name": "vertex buffer offset past the end (crashed the native runner)", "fails": 2, "calls": [
+      ["create_buffer", 16, 32], ["begin_frame"], ["set_vertex_buffer", 0, 1, 1000000] ] },
+    { "name": "vertex buffer without VERTEX usage", "fails": 2, "calls": [["create_buffer", 16, 64], ["begin_frame"], ["set_vertex_buffer", 0, 1, 0]] },
+    { "name": "vertex buffer slot 8", "fails": 2, "calls": [["create_buffer", 16, 32], ["begin_frame"], ["set_vertex_buffer", 8, 1, 0]] },
+    { "name": "index format 2", "fails": 2, "calls": [["create_buffer", 16, 16], ["begin_frame"], ["set_index_buffer", 1, 2, 0]] },
+    { "name": "index buffer offset not a multiple of 4 for uint32", "fails": 2, "calls": [["create_buffer", 16, 16], ["begin_frame"], ["set_index_buffer", 1, 1, 2]] },
+    { "name": "draw_indexed past the index buffer", "fails": 6, "calls": [
+      ["create_shader"], ["create_buffer", 12, 16],
+      ["create_pipeline", { "vertex": { "module": 1 }, "fragment": { "module": 1, "targets": [{}] } }],
+      ["begin_frame"], ["set_pipeline", 3], ["set_index_buffer", 2, 0, 0], ["draw_indexed", 7, 1, 0, 0, 0] ] },
+    { "name": "draw_indexed within the index buffer", "fails": null, "calls": [
+      ["create_shader"], ["create_buffer", 12, 16],
+      ["create_pipeline", { "vertex": { "module": 1 }, "fragment": { "module": 1, "targets": [{}] } }],
+      ["begin_frame"], ["set_pipeline", 3], ["set_index_buffer", 2, 0, 0], ["draw_indexed", 6, 1, 0, 0, 0], ["end_frame"] ] },
+    { "name": "write_buffer out of range", "fails": 1, "calls": [["create_buffer", 16, 64], ["write_buffer", 1, 8, 16]] },
+    { "name": "write_buffer to a shader handle", "fails": 1, "calls": [["create_shader"], ["write_buffer", 1, 0, 4]] },
+    { "name": "use after destroy", "fails": 2, "calls": [["create_buffer", 16, 64], ["destroy", 1], ["write_buffer", 1, 0, 4]] },
+    { "name": "destroy twice", "fails": 2, "calls": [["create_buffer", 16, 64], ["destroy", 1], ["destroy", 1]] },
+    { "name": "handles are not reused after destroy", "fails": 3, "calls": [
+      ["create_buffer", 16, 64], ["destroy", 1], ["create_buffer", 16, 64], ["write_buffer", 1, 0, 4] ] },
+    { "name": "a bind group keeps its buffer after the buffer is destroyed", "fails": null, "calls": [
+      ["create_buffer", 256, 64],
+      ["create_bind_group_layout", { "entries": [{ "binding": 0, "visibility": 1, "buffer": {} }] }],
+      ["create_bind_group", { "layout": 2, "entries": [{ "binding": 0, "buffer": 1 }] }],
+      ["destroy", 1], ["create_shader"],
+      ["create_pipeline", { "layout": [2], "vertex": { "module": 4 }, "fragment": { "module": 4, "targets": [{}] } }],
+      ["begin_frame"], ["set_pipeline", 5], ["set_bind_group", 0, 3], ["draw", 3, 1, 0, 0], ["end_frame"] ] },
+    { "name": "explicit layout pipeline without its bind group", "fails": 6, "calls": [
+      ["create_bind_group_layout", { "entries": [{ "binding": 0, "visibility": 1, "buffer": {} }] }],
+      ["create_shader"],
+      ["create_pipeline", { "layout": [1], "vertex": { "module": 2 }, "fragment": { "module": 2, "targets": [{}] } }],
+      ["create_buffer", 256, 64],
+      ["begin_frame"], ["set_pipeline", 3], ["draw", 3, 1, 0, 0] ] },
+    { "name": "a bind group with dynamic offsets bound without offsets", "fails": 4, "calls": [
+      ["create_buffer", 1024, 64],
+      ["create_bind_group_layout", { "entries": [{ "binding": 0, "visibility": 1, "buffer": { "hasDynamicOffset": true } }] }],
+      ["create_bind_group", { "layout": 2, "entries": [{ "binding": 0, "buffer": 1, "size": 256 }] }],
+      ["begin_frame"], ["set_bind_group", 0, 3] ] },
+    { "name": "bind group index 4", "fails": 3, "calls": [
+      ["create_shader"], ["create_pipeline", { "vertex": { "module": 1 }, "fragment": { "module": 1, "targets": [{}] } }],
+      ["create_bind_group", { "pipeline": 2, "group": 0, "entries": [] }], ["set_bind_group", 4, 3] ] },
+    { "name": "an auto-layout bind group with another pipeline", "fails": 7, "calls": [
+      ["create_shader"],
+      ["create_pipeline", { "vertex": { "module": 1 }, "fragment": { "module": 1, "targets": [{}] } }],
+      ["create_pipeline", { "vertex": { "module": 1 }, "fragment": { "module": 1, "targets": [{}] } }],
+      ["create_bind_group", { "pipeline": 2, "group": 0, "entries": [] }],
+      ["begin_frame"], ["set_pipeline", 3], ["set_bind_group", 0, 4], ["draw", 3, 1, 0, 0] ] },
+    { "name": "unknown cullMode", "fails": 1, "calls": [
+      ["create_shader"], ["create_pipeline", { "vertex": { "module": 1 }, "primitive": { "cullMode": "sideways" } }] ] },
+    { "name": "color target format other than surface", "fails": 1, "calls": [
+      ["create_shader"], ["create_pipeline", { "vertex": { "module": 1 }, "fragment": { "module": 1, "targets": [{ "format": "rgba16float" }] } }] ] },
+    { "name": "attribute outside the vertex stride", "fails": 1, "calls": [
+      ["create_shader"], ["create_pipeline", { "vertex": { "module": 1, "buffers": [{ "arrayStride": 8, "attributes": [{ "format": "float32x4", "offset": 0, "shaderLocation": 0 }] }] } }] ] },
+    { "name": "begin_frame twice", "fails": 1, "calls": [["begin_frame"], ["begin_frame"]] },
+    { "name": "texture writes in range and out of range", "fails": 2, "calls": [
+      ["create_texture", { "size": [16, 8], "mipLevelCount": 2 }], ["write_texture", 1, 1, 0, 0, 8, 4, 128], ["write_texture", 1, 1, 0, 0, 16, 4, 256] ] }
+  ]
+}

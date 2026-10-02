@@ -1,5 +1,6 @@
 // Scripted input for headless runs (--input). Mirrors runners/native/src/script.rs
-// item for item; arithmetic in doubles, rounded to f32 once, so both runners feed
+// item for item (the same scripts are accepted and rejected; numbers are plain
+// decimals); arithmetic in doubles, rounded to f32 once, so both runners feed
 // guests the same bits.
 //
 // Items are FRAMES:ACTION, comma-separated (commas inside quotes or parentheses don't
@@ -33,6 +34,7 @@ function splitItems(spec) {
   return items;
 }
 
+const DECIMAL = /^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/;
 const args = (rest, name) => (rest.startsWith(name + '(') && rest.endsWith(')') ? rest.slice(name.length + 1, -1) : null);
 
 export class InputScript {
@@ -46,15 +48,22 @@ export class InputScript {
     const i = item.indexOf(':');
     if (i < 0) throw bad();
     const range = item.slice(0, i), rest = item.slice(i + 1);
-    const [a, b = a] = range.split('-');
-    const from = Number(a), to = Number(b);
-    if (!/^\d+$/.test(a) || !/^\d+$/.test(b)) throw bad();
-    const num = (v) => { const n = Number(v.trim()); if (v.trim() === '' || !Number.isFinite(n)) throw bad(); return n; };
+    const r = /^(\d+)(?:-(\d+))?$/.exec(range);
+    if (!r) throw bad();
+    const from = Number(r[1]), to = Number(r[2] ?? r[1]);
+    const num = (v) => { const t = v.trim(), n = Number(t); if (!DECIMAL.test(t) || !Number.isFinite(n)) throw bad(); return n; };
     const pair = (s) => { const k = s.indexOf(','); if (k < 0) throw bad(); return [num(s.slice(0, k)), num(s.slice(k + 1))]; };
     let x;
     if (rest.startsWith('"')) {
       if (!rest.endsWith('"') || rest.length < 2) throw bad();
-      this.text.push([from, rest.slice(1, -1).replace(/\\(.)/g, (_, c) => (c === 'n' ? '\n' : c === 'b' ? '\b' : c))]);
+      let t = '';
+      const body = [...rest.slice(1, -1)];
+      for (let k = 0; k < body.length; k++) {
+        if (body[k] !== '\\') { t += body[k]; continue; }
+        if (++k >= body.length) throw bad();   // a lone trailing backslash
+        t += body[k] === 'n' ? '\n' : body[k] === 'b' ? '\b' : body[k];
+      }
+      this.text.push([from, t]);
     } else if ((x = args(rest, 'KEY')) !== null) {
       const codes = x.split('+').map((k) => {
         const c = KEY_CODES.indexOf(k);
@@ -82,7 +91,11 @@ export class InputScript {
       const buttons = [], axes = [];
       for (const part of body.split('+').filter(Boolean)) {
         if (part[0] === 'B' && /^\d+$/.test(part.slice(1))) buttons.push([Number(part.slice(1)), 1]);
-        else if (part[0] === 'A' && part.includes('=')) { const [k, v] = part.slice(1).split('='); if (!/^\d+$/.test(k)) throw bad(); axes.push([Number(k), num(v)]); }
+        else if (part[0] === 'A' && part.includes('=')) {
+          const eq = part.indexOf('='), k = part.slice(1, eq);
+          if (!/^\d+$/.test(k)) throw bad();
+          axes.push([Number(k), num(part.slice(eq + 1))]);
+        }
         else throw bad();
       }
       this.gp.push([from, to, slot, buttons, axes]);

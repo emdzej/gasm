@@ -9,6 +9,7 @@
 #include "backends/platform/gasm/gasm-fs.h"
 
 #include "common/array.h"
+#include "common/bufferedstream.h"
 #include "common/stream.h"
 
 #include "gasm.h"
@@ -36,14 +37,18 @@ static const Common::Array<Common::String> &assetNames() {
 	return names;
 }
 
-static int32 assetSize(const Common::String &name) {
-	return gasm_asset_size(name.c_str(), name.size());
+static int64 assetSize(const Common::String &name) {
+	return gasm_asset_size64(name.c_str(), name.size());
 }
 
-/** An asset read on demand. */
+/** Bytes read from the runner at once: engines read a few bytes at a time
+ *  (readByte, readUint16LE), and each host call is a lookup and a positioned read. */
+static const uint32 kReadAhead = 16 * 1024;
+
+/** An asset read on demand (wrapped in a read-ahead buffer by createReadStream). */
 class GasmAssetStream : public Common::SeekableReadStream {
 public:
-	GasmAssetStream(const Common::String &name, int32 size) : _name(name), _size(size), _pos(0), _eos(false), _err(false) {}
+	GasmAssetStream(const Common::String &name, int64 size) : _name(name), _size(size), _pos(0), _eos(false), _err(false) {}
 	bool err() const override { return _err; }
 	void clearErr() override { _err = false; _eos = false; }
 	bool eos() const override { return _eos; }
@@ -52,9 +57,9 @@ public:
 			_eos = true;
 			return 0;
 		}
-		if (dataSize > (uint32)(_size - _pos))
+		if ((int64)dataSize > _size - _pos)
 			dataSize = (uint32)(_size - _pos);
-		int32 n = gasm_asset_read_at(_name.c_str(), _name.size(), (uint32)_pos, dataPtr, dataSize);
+		int32 n = gasm_asset_read_at64(_name.c_str(), _name.size(), (uint64)_pos, dataPtr, dataSize);
 		if (n < 0) {
 			_err = true;
 			return 0;
@@ -124,7 +129,9 @@ bool GasmFSNode::getChildren(AbstractFSList &list, ListMode mode, bool) const {
 	if (!_isDir)
 		return false;
 	Common::String prefix = _path.empty() ? "" : _path + "/";
-	Common::Array<Common::String> seen;
+	// names are sorted, so a subfolder's files are adjacent: comparing with the last child suffices
+	Common::String last;
+	bool any = false;
 	for (const Common::String &n : assetNames()) {
 		if (!n.hasPrefixIgnoreCase(prefix))
 			continue;
@@ -134,20 +141,20 @@ bool GasmFSNode::getChildren(AbstractFSList &list, ListMode mode, bool) const {
 		Common::String child = dir ? rest.substr(0, slash) : rest;
 		if (child.empty() || (mode == Common::FSNode::kListFilesOnly && dir) || (mode == Common::FSNode::kListDirectoriesOnly && !dir))
 			continue;
-		bool dup = false;
-		for (const Common::String &s : seen)
-			dup = dup || s == child;
-		if (dup)
+		if (any && child == last)
 			continue;
-		seen.push_back(child);
+		last = child;
+		any = true;
 		list.push_back(new GasmFSNode(n.substr(0, prefix.size()) + child));
 	}
 	return true;
 }
 
 Common::SeekableReadStream *GasmFSNode::createReadStream() {
-	int32 size = _isFile ? assetSize(_path) : -1;
-	return size >= 0 ? new GasmAssetStream(_path, size) : nullptr;
+	int64 size = _isFile ? assetSize(_path) : -1;
+	if (size < 0)
+		return nullptr;
+	return Common::wrapBufferedSeekableReadStream(new GasmAssetStream(_path, size), kReadAhead, DisposeAfterUse::YES);
 }
 
 AbstractFSNode *GasmFilesystemFactory::makeFileNodePath(const Common::String &path) const {

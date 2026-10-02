@@ -1,25 +1,38 @@
 #!/usr/bin/env bash
 # Cross-runner determinism test: every case must produce identical video/audio
 # hashes on the native runner (wasmtime JIT), the native runner with an AOT
-# artifact, and the Node runner (V8).
+# artifact, and the Node runner (V8), and match the golden hashes in
+# tests/golden/determinism.txt (the same on every platform: CI runs this on
+# Linux, macOS and Windows).
+#
+#   scripts/determinism-test.sh                  run all cases
+#   UPDATE_GOLDEN=1 scripts/determinism-test.sh  record new golden hashes (after
+#                                                a change that is meant to alter output)
 set -uo pipefail
 cd "$(dirname "$0")/.."
+GOLDEN=tests/golden/determinism.txt
+UPDATE=${UPDATE_GOLDEN:-}
+NEW_GOLDEN=$(mktemp)
+trap 'rm -f "$NEW_GOLDEN"' EXIT
 NATIVE=runners/native/target/release/gasm-run
 NODE="node runners/web/headless.mjs"
 [ -d roms ] && [ -n "$(ls roms/*.nes 2>/dev/null)" ] && [ -f roms/freedoom2.wad ] && [ -f roms/doom1.wad ] && [ -f roms/bass/sky.dnr ] && [ -d roms/scumm/dott-dos-ni-demo-en ] && [ -f roms/drascula/flac/audio/track28.flac ] || scripts/fetch-roms.sh
-for g in nes test-pattern sumo textured inputtest loopdemo loopdemo-c doom scummvm sdl3-snake sdl3-woodeneye sdl3-callbacks sdl3-classic; do "$NATIVE" build/$g.wasm --compile build/$g.cwasm 2>/dev/null; done
+for g in nes test-pattern sumo triangle textured inputtest loopdemo loopdemo-c doom scummvm sdl3-snake sdl3-woodeneye sdl3-callbacks sdl3-classic; do "$NATIVE" build/$g.wasm --compile build/$g.cwasm 2>/dev/null; done
 
 pass=0; fail=0
 check() { # <name> <guest-basename> <frames> [runner args...]
   local name=$1 guest=$2 frames=$3; shift 3
   local a b c
-  a=$("$NATIVE" build/$guest.wasm  --headless "$frames" "$@" 2>/dev/null | grep -E '^(frames|video)')
-  b=$("$NATIVE" build/$guest.cwasm --headless "$frames" "$@" 2>/dev/null | grep -E '^(frames|video)')
-  c=$($NODE     build/$guest.wasm  --headless "$frames" "$@" 2>/dev/null | grep -E '^(frames|video)')
-  if [ -n "$a" ] && [ "$a" = "$b" ] && [ "$a" = "$c" ]; then
-    pass=$((pass + 1)); printf 'PASS  %-22s %s\n' "$name" "$(echo "$a" | tail -1 | cut -d' ' -f1-2)"
+  a=$("$NATIVE" build/$guest.wasm  --headless "$frames" "$@" 2>/dev/null | grep -E '^(frames|video)' | tr '\n' ' ')
+  b=$("$NATIVE" build/$guest.cwasm --allow-precompiled --headless "$frames" "$@" 2>/dev/null | grep -E '^(frames|video)' | tr '\n' ' ')
+  c=$($NODE     build/$guest.wasm  --headless "$frames" "$@" 2>/dev/null | grep -E '^(frames|video)' | tr '\n' ' ')
+  local want
+  want=$([ -f "$GOLDEN" ] && grep "^$name " "$GOLDEN" | cut -d' ' -f2-)
+  [ -n "$a" ] && printf '%s %s\n' "$name" "$a" >> "$NEW_GOLDEN"
+  if [ -n "$a" ] && [ "$a" = "$b" ] && [ "$a" = "$c" ] && { [ -n "$UPDATE" ] || [ "$a" = "$want" ]; }; then
+    pass=$((pass + 1)); printf 'PASS  %-22s %s\n' "$name" "$(echo "$a" | cut -d' ' -f4-5)"
   else
-    fail=$((fail + 1)); printf 'FAIL  %s\n  jit:  %s\n  aot:  %s\n  node: %s\n' "$name" "$a" "$b" "$c"
+    fail=$((fail + 1)); printf 'FAIL  %s\n  jit:    %s\n  aot:    %s\n  node:   %s\n  golden: %s\n' "$name" "$a" "$b" "$c" "${want:-(none; UPDATE_GOLDEN=1 records it)}"
   fi
 }
 
@@ -41,6 +54,8 @@ check sdl3-snake          sdl3-snake 900 --input '100-110:KEY(ArrowUp),200-210:K
 check sdl3-woodeneye      sdl3-woodeneye 400 --input '50-150:KEY(KeyW),100-200:MOVE(8,0),160-180:KEY(KeyA+Space),210:PTR(640,360),211-213:PTR(640,360,L),250-300:KEY(KeyD)'
 check sdl3-callbacks      sdl3-callbacks 300 --input '20-21:KEY(Digit1),60-61:KEY(Digit5),100-103:GP0(B0),140-142:GP0(B3),200-201:KEY(Digit8),280-281:KEY(Escape)'
 check sdl3-classic        sdl3-classic 300 --input '20-60:KEY(ArrowRight),70-71:KEY(Tab),80:"hello gasm",90-91:KEY(Backspace),100-140:KEY(ArrowDown+ArrowLeft),250-251:KEY(Escape)'
+# triangle: the smallest gfx guest (one buffer, one pipeline); --screenshot of it is the GPU smoke test
+check triangle            triangle 300
 check sumo-vs-bot         sumo 3000 --input "130-900:RIGHT+A,900-1800:UP+B,1800-3000:LEFT+DOWN"
 check cpu_instr_test     nes 3000 --rom roms/cpu_instr_test.nes
 check cpu_timing_test    nes 1200 --rom roms/cpu_timing_test.nes
@@ -71,4 +86,11 @@ check freedoom2-save-load doom 1100 --asset wad=roms/freedoom2.wad --param "args
   --input "20-200:UP+A,210-211:START,220-221:DOWN,230-231:DOWN,240-241:DOWN,250-251:A,260-261:A,270-271:A,300-500:LEFT+UP+A,510-511:START,520-521:UP,530-531:A,540-541:A,600-900:RIGHT+UP+A+Y,905-906:X,910-1100:LEFT+R+A"
 
 echo "$pass passed, $fail failed"
+if [ -n "$UPDATE" ] && [ "$fail" -eq 0 ]; then
+  mkdir -p "$(dirname "$GOLDEN")"
+  { echo "# golden hashes: <case> frames=… presented=… size=… video_fnv32=… audio_fnv32=… audio_frames=…"
+    echo "# from scripts/determinism-test.sh; regenerate with UPDATE_GOLDEN=1 after an intended output change"
+    cat "$NEW_GOLDEN"; } > "$GOLDEN"
+  echo "golden hashes written to $GOLDEN"
+fi
 [ "$fail" -eq 0 ]

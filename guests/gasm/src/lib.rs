@@ -39,6 +39,13 @@ pub fn time_ms() -> f64 {
     unsafe { sys::time_ms() }
 }
 
+/// Does the runner provide an import? A module (`"gasm:gfx"`) or a function in
+/// one (`"gasm.asset_size64"`, `"gasm:gfx.destroy"`). Calling an import the
+/// runner lacks traps, so probe optional features first.
+pub fn has(name: &str) -> bool {
+    unsafe { sys::has(name.as_ptr(), name.len() as u32) == 1 }
+}
+
 /// Rate at which the runner calls `frame()`. Default 60.
 pub fn set_frame_rate(hz: f64) {
     unsafe { sys::set_frame_rate(hz) }
@@ -62,9 +69,13 @@ pub fn exit(code: i32) -> ! {
 
 // ---- video / audio / input / assets --------------------------------------------
 
-/// Present an RGBA8 frame (`stride` bytes per row).
+/// Present an RGBA8 frame (`stride` bytes per row; 1-4096 pixels each way).
 pub fn present(rgba: &[u8], width: u32, height: u32, stride: u32) {
-    assert!(rgba.len() >= (stride * (height - 1) + width * 4) as usize, "present: buffer too small");
+    let need = (stride as u64)
+        .checked_mul(height.saturating_sub(1) as u64)
+        .and_then(|n| n.checked_add(width as u64 * 4))
+        .filter(|_| width > 0 && height > 0 && stride as u64 >= width as u64 * 4);
+    assert!(need.is_some_and(|n| rgba.len() as u64 >= n), "present: bad geometry or buffer too small");
     unsafe { sys::video_present(rgba.as_ptr(), width, height, stride) }
 }
 
@@ -72,15 +83,20 @@ pub mod audio {
     use std::sync::atomic::{AtomicU32, Ordering};
     static CHANNELS: AtomicU32 = AtomicU32::new(2);
 
-    /// Format for [`push`]: sample rate (8–192 kHz) and 1 or 2 channels.
+    /// Format for [`push`]: sample rate (8–192 kHz) and 1 or 2 channels. Other
+    /// values are ignored (by the runner too): the format stays as it was.
     pub fn config(sample_rate: u32, channels: u32) {
-        CHANNELS.store(channels, Ordering::Relaxed);
+        if (8000..=192_000).contains(&sample_rate) && (channels == 1 || channels == 2) {
+            CHANNELS.store(channels, Ordering::Relaxed);
+        }
         unsafe { crate::sys::audio_config(sample_rate, channels) }
     }
 
-    /// Queue interleaved f32 samples in [-1, 1].
+    /// Queue interleaved f32 samples in [-1, 1] (whole frames: a length that is a
+    /// multiple of the channel count).
     pub fn push(samples: &[f32]) {
-        let ch = CHANNELS.load(Ordering::Relaxed).max(1);
+        let ch = CHANNELS.load(Ordering::Relaxed);
+        debug_assert!(samples.len() % ch as usize == 0, "audio::push: not a whole number of frames");
         unsafe { crate::sys::audio_push(samples.as_ptr(), samples.len() as u32 / ch) }
     }
 }
@@ -90,18 +106,18 @@ pub mod audio {
 pub struct Buttons(pub u32);
 
 impl Buttons {
-    pub const A: u32 = 1 << 0;
-    pub const B: u32 = 1 << 1;
-    pub const X: u32 = 1 << 2;
-    pub const Y: u32 = 1 << 3;
-    pub const L: u32 = 1 << 4;
-    pub const R: u32 = 1 << 5;
-    pub const SELECT: u32 = 1 << 6;
-    pub const START: u32 = 1 << 7;
-    pub const UP: u32 = 1 << 8;
-    pub const DOWN: u32 = 1 << 9;
-    pub const LEFT: u32 = 1 << 10;
-    pub const RIGHT: u32 = 1 << 11;
+    pub const A: u32 = sys::GASM_BTN_A;
+    pub const B: u32 = sys::GASM_BTN_B;
+    pub const X: u32 = sys::GASM_BTN_X;
+    pub const Y: u32 = sys::GASM_BTN_Y;
+    pub const L: u32 = sys::GASM_BTN_L;
+    pub const R: u32 = sys::GASM_BTN_R;
+    pub const SELECT: u32 = sys::GASM_BTN_SELECT;
+    pub const START: u32 = sys::GASM_BTN_START;
+    pub const UP: u32 = sys::GASM_BTN_UP;
+    pub const DOWN: u32 = sys::GASM_BTN_DOWN;
+    pub const LEFT: u32 = sys::GASM_BTN_LEFT;
+    pub const RIGHT: u32 = sys::GASM_BTN_RIGHT;
 
     pub fn held(self, mask: u32) -> bool {
         self.0 & mask != 0
@@ -145,7 +161,13 @@ pub fn asset_names() -> Vec<String> {
         .collect()
 }
 
-/// Read a whole asset.
+/// Size of an asset in bytes (any size), or `None` if it doesn't exist.
+pub fn asset_size(name: &str) -> Option<u64> {
+    let n = unsafe { sys::asset_size64(name.as_ptr(), name.len() as u32) };
+    (n >= 0).then_some(n as u64)
+}
+
+/// Read a whole asset (it must fit in memory: under 2 GiB).
 pub fn asset(name: &str) -> Option<Vec<u8>> {
     let n = unsafe { sys::asset_size(name.as_ptr(), name.len() as u32) };
     if n < 0 {
@@ -159,10 +181,9 @@ pub fn asset(name: &str) -> Option<Vec<u8>> {
 
 /// Read up to `buf.len()` bytes of an asset starting at `offset` (for streaming
 /// large assets). Returns bytes read (0 at the end), or `None` if missing.
-pub fn asset_read_at(name: &str, offset: u32, buf: &mut [u8]) -> Option<usize> {
-    let n = unsafe {
-        sys::asset_read_at(name.as_ptr(), name.len() as u32, offset, buf.as_mut_ptr(), buf.len() as u32)
-    };
+pub fn asset_read_at(name: &str, offset: u64, buf: &mut [u8]) -> Option<usize> {
+    let len = buf.len().min(u32::MAX as usize) as u32;
+    let n = unsafe { sys::asset_read_at64(name.as_ptr(), name.len() as u32, offset, buf.as_mut_ptr(), len) };
     (n >= 0).then_some(n as usize)
 }
 
@@ -185,9 +206,33 @@ pub mod storage {
         Some(buf)
     }
 
-    /// Store a value. False on invalid key, size/quota limits or I/O error.
+    /// Why [`try_set`] failed.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub enum Error {
+        /// not 1–128 bytes of `[A-Za-z0-9._-]`
+        Key,
+        /// value over 1 MiB
+        Size,
+        /// the game's 16 MiB are used up
+        Quota,
+        /// the runner couldn't write it
+        Io,
+    }
+
+    /// Store a value.
+    pub fn try_set(key: &str, value: &[u8]) -> Result<(), Error> {
+        match unsafe { sys::storage_set(key.as_ptr(), key.len() as u32, value.as_ptr(), value.len() as u32) } {
+            sys::GASM_STORAGE_OK => Ok(()),
+            sys::GASM_STORAGE_ERR_KEY => Err(Error::Key),
+            sys::GASM_STORAGE_ERR_SIZE => Err(Error::Size),
+            sys::GASM_STORAGE_ERR_QUOTA => Err(Error::Quota),
+            _ => Err(Error::Io),
+        }
+    }
+
+    /// Store a value. False on invalid key, size/quota limits or I/O error ([`try_set`] says which).
     pub fn set(key: &str, value: &[u8]) -> bool {
-        unsafe { sys::storage_set(key.as_ptr(), key.len() as u32, value.as_ptr(), value.len() as u32) == 0 }
+        try_set(key, value).is_ok()
     }
 
     /// Delete a key. False if it didn't exist.
@@ -227,17 +272,21 @@ pub mod input {
     use crate::sys;
 
     /// The runner stops mapping the keyboard to pads (gamepads still map).
-    pub const KEYS_RAW: u32 = 1 << 0;
+    pub const KEYS_RAW: u32 = sys::GASM_INPUT_KEYS_RAW;
     /// Hide the system cursor over the game.
-    pub const POINTER_HIDDEN: u32 = 1 << 1;
+    pub const POINTER_HIDDEN: u32 = sys::GASM_INPUT_POINTER_HIDDEN;
     /// Capture the pointer for relative motion (best effort; the browser needs a click).
-    pub const POINTER_LOCKED: u32 = 1 << 2;
+    pub const POINTER_LOCKED: u32 = sys::GASM_INPUT_POINTER_LOCKED;
 
-    pub const MOUSE_LEFT: u32 = 1 << 0;
-    pub const MOUSE_RIGHT: u32 = 1 << 1;
-    pub const MOUSE_MIDDLE: u32 = 1 << 2;
-    pub const MOUSE_BACK: u32 = 1 << 3;
-    pub const MOUSE_FORWARD: u32 = 1 << 4;
+    pub const MOUSE_LEFT: u32 = sys::GASM_MOUSE_LEFT;
+    pub const MOUSE_RIGHT: u32 = sys::GASM_MOUSE_RIGHT;
+    pub const MOUSE_MIDDLE: u32 = sys::GASM_MOUSE_MIDDLE;
+    pub const MOUSE_BACK: u32 = sys::GASM_MOUSE_BACK;
+    pub const MOUSE_FORWARD: u32 = sys::GASM_MOUSE_FORWARD;
+
+    const KEY_BYTES: usize = sys::GASM_KEY_STATE_BYTES as usize;
+    const POINTER_BYTES: usize = sys::GASM_POINTER_BYTES as usize;
+    const GAMEPAD_BYTES: usize = sys::GASM_GAMEPAD_BYTES as usize;
 
     /// `KEYS_RAW | POINTER_HIDDEN | POINTER_LOCKED`, any combination.
     pub fn set_mode(flags: u32) {
@@ -246,18 +295,18 @@ pub mod input {
 
     /// Keys held this frame; index with [`crate::keys`] constants.
     #[derive(Clone, Copy, Default, PartialEq, Eq)]
-    pub struct Keys(pub [u8; 32]);
+    pub struct Keys(pub [u8; KEY_BYTES]);
 
     impl Keys {
         pub fn held(&self, code: u32) -> bool {
-            (code as usize) < 256 && self.0[code as usize / 8] & (1 << (code % 8)) != 0
+            (code as usize) < KEY_BYTES * 8 && self.0[code as usize / 8] & (1 << (code % 8)) != 0
         }
     }
 
     /// `None` if the runner has no keyboard.
     pub fn keys() -> Option<Keys> {
         let mut k = Keys::default();
-        (unsafe { sys::key_state(k.0.as_mut_ptr(), 32) } >= 0).then_some(k)
+        (unsafe { sys::key_state(k.0.as_mut_ptr(), KEY_BYTES as u32) } >= 0).then_some(k)
     }
 
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -276,7 +325,7 @@ pub mod input {
         if n > 0 {
             unsafe { sys::key_events(b.as_mut_ptr(), n as u32) };
         }
-        Some(b.chunks_exact(4).map(|e| KeyEvent { code: u16::from_le_bytes([e[0], e[1]]) as u32, down: e[2] != 0 }).collect())
+        Some(b.chunks_exact(sys::GASM_KEY_EVENT_BYTES as usize).map(|e| KeyEvent { code: u16::from_le_bytes([e[0], e[1]]) as u32, down: e[2] != 0 }).collect())
     }
 
     #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -311,15 +360,19 @@ pub mod input {
 
     /// `None` if the runner has no pointer.
     pub fn pointer() -> Option<Pointer> {
-        let mut b = [0u8; 48];
-        if unsafe { sys::pointer(b.as_mut_ptr(), 48) } < 0 {
+        let mut b = [0u8; POINTER_BYTES];
+        if unsafe { sys::pointer(b.as_mut_ptr(), POINTER_BYTES as u32) } < 0 {
             return None;
         }
-        let f = |i: usize| f32::from_le_bytes([b[i], b[i + 1], b[i + 2], b[i + 3]]);
-        let u = |i: usize| u32::from_le_bytes([b[i], b[i + 1], b[i + 2], b[i + 3]]);
+        let f = |o: u32| { let i = o as usize; f32::from_le_bytes([b[i], b[i + 1], b[i + 2], b[i + 3]]) };
+        let u = |o: u32| { let i = o as usize; u32::from_le_bytes([b[i], b[i + 1], b[i + 2], b[i + 3]]) };
         Some(Pointer {
-            x: f(0), y: f(4), frame_x: f(8), frame_y: f(12), dx: f(16), dy: f(20), wheel_x: f(24), wheel_y: f(28),
-            buttons: u(32), pressed: u(36), released: u(40), flags: u(44),
+            x: f(sys::GASM_POINTER_OFF_X), y: f(sys::GASM_POINTER_OFF_Y),
+            frame_x: f(sys::GASM_POINTER_OFF_FX), frame_y: f(sys::GASM_POINTER_OFF_FY),
+            dx: f(sys::GASM_POINTER_OFF_DX), dy: f(sys::GASM_POINTER_OFF_DY),
+            wheel_x: f(sys::GASM_POINTER_OFF_WHEEL_X), wheel_y: f(sys::GASM_POINTER_OFF_WHEEL_Y),
+            buttons: u(sys::GASM_POINTER_OFF_BUTTONS), pressed: u(sys::GASM_POINTER_OFF_PRESSED),
+            released: u(sys::GASM_POINTER_OFF_RELEASED), flags: u(sys::GASM_POINTER_OFF_FLAGS),
         })
     }
 
@@ -336,18 +389,22 @@ pub mod input {
 
     /// Slot 0-3 (connection order). `None` if the runner has no gamepad support.
     pub fn gamepad(slot: u32) -> Option<Gamepad> {
-        let mut b = [0u8; 204];
-        if unsafe { sys::gamepad(slot, b.as_mut_ptr(), 204) } < 0 {
+        let mut b = [0u8; GAMEPAD_BYTES];
+        if unsafe { sys::gamepad(slot, b.as_mut_ptr(), GAMEPAD_BYTES as u32) } < 0 {
             return None;
         }
         let u = |i: usize| u32::from_le_bytes([b[i], b[i + 1], b[i + 2], b[i + 3]]);
         let f = |i: usize| f32::from_le_bytes([b[i], b[i + 1], b[i + 2], b[i + 3]]);
-        let (flags, nb, na) = (u(0), (u(4) as usize).min(32), (u(8) as usize).min(16));
+        let (flags, nb, na) = (
+            u(sys::GASM_GAMEPAD_OFF_FLAGS as usize),
+            (u(sys::GASM_GAMEPAD_OFF_BUTTON_COUNT as usize) as usize).min(sys::GASM_GAMEPAD_BUTTONS as usize),
+            (u(sys::GASM_GAMEPAD_OFF_AXIS_COUNT as usize) as usize).min(sys::GASM_GAMEPAD_AXES as usize),
+        );
         Some(Gamepad {
-            connected: flags & 1 != 0,
-            standard: flags & 2 != 0,
-            buttons: (0..nb).map(|i| f(12 + i * 4)).collect(),
-            axes: (0..na).map(|i| f(140 + i * 4)).collect(),
+            connected: flags & sys::GASM_GAMEPAD_CONNECTED != 0,
+            standard: flags & sys::GASM_GAMEPAD_STANDARD != 0,
+            buttons: (0..nb).map(|i| f(sys::GASM_GAMEPAD_OFF_BUTTONS as usize + i * 4)).collect(),
+            axes: (0..na).map(|i| f(sys::GASM_GAMEPAD_OFF_AXES as usize + i * 4)).collect(),
         })
     }
 
@@ -389,23 +446,32 @@ pub mod gfx {
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     pub struct Sampler(pub u32);
 
-    pub const COPY_DST: u32 = 0x08;
-    pub const INDEX: u32 = 0x10;
-    pub const VERTEX: u32 = 0x20;
-    pub const UNIFORM: u32 = 0x40;
-    pub const STORAGE: u32 = 0x80;
+    pub const COPY_DST: u32 = sys::GASM_BUF_COPY_DST;
+    pub const INDEX: u32 = sys::GASM_BUF_INDEX;
+    pub const VERTEX: u32 = sys::GASM_BUF_VERTEX;
+    pub const UNIFORM: u32 = sys::GASM_BUF_UNIFORM;
+    pub const STORAGE: u32 = sys::GASM_BUF_STORAGE;
 
     /// Bind group layout entry visibility.
-    pub const STAGE_VERTEX: u32 = 0x1;
-    pub const STAGE_FRAGMENT: u32 = 0x2;
+    pub const STAGE_VERTEX: u32 = sys::GASM_STAGE_VERTEX;
+    pub const STAGE_FRAGMENT: u32 = sys::GASM_STAGE_FRAGMENT;
     /// Dynamic offsets must be multiples of this.
     pub const OFFSET_ALIGNMENT: u32 = 256;
 
     #[derive(Clone, Copy)]
     pub enum IndexFormat {
-        U16 = 0,
-        U32 = 1,
+        U16 = sys::GASM_INDEX_U16 as isize,
+        U32 = sys::GASM_INDEX_U32 as isize,
     }
+
+    /// Any object handle (for [`destroy`]).
+    pub trait Handle {
+        fn raw(&self) -> u32;
+    }
+    macro_rules! handles {
+        ($($t:ident),*) => { $(impl Handle for $t { fn raw(&self) -> u32 { self.0 } })* };
+    }
+    handles!(Shader, Buffer, Pipeline, BindGroup, BindGroupLayout, Texture, Sampler);
 
     /// Plain-old-data that can be uploaded byte for byte.
     ///
@@ -501,6 +567,11 @@ pub mod gfx {
     pub fn end_frame() {
         unsafe { sys::gfx_end_frame() }
     }
+    /// Release an object (its handle traps from now on); objects made from it stay
+    /// valid. Check `gasm::has("gasm:gfx.destroy")` first on older runners.
+    pub fn destroy(h: impl Handle) {
+        unsafe { sys::gfx_destroy(h.raw()) }
+    }
 }
 
 // ---- net ---------------------------------------------------------------------------
@@ -581,11 +652,14 @@ pub trait Game: Sized + 'static {
 
 #[doc(hidden)]
 pub struct GameCell<T>(pub UnsafeCell<Option<T>>);
-// Wasm guests are single-threaded; the runner never calls exports concurrently.
-unsafe impl<T> Sync for GameCell<T> {}
+// Wasm guests are single-threaded and the runner never calls exports concurrently;
+// natively (tests), the exports must not be called from several threads at once.
+unsafe impl<T: Send> Sync for GameCell<T> {}
 
+/// # Safety
+/// Not reentrant: call only from the exports [`game!`] defines, never concurrently.
 #[doc(hidden)]
-pub fn __init<G: Game>(cell: &GameCell<G>) -> i32 {
+pub unsafe fn __init<G: Game>(cell: &GameCell<G>) -> i32 {
     std::panic::set_hook(Box::new(|info| log(&format!("panic: {info}"))));
     match G::init() {
         Ok(g) => {
@@ -599,15 +673,19 @@ pub fn __init<G: Game>(cell: &GameCell<G>) -> i32 {
     }
 }
 
+/// # Safety
+/// As [`__init`].
 #[doc(hidden)]
-pub fn __frame<G: Game>(cell: &GameCell<G>) {
+pub unsafe fn __frame<G: Game>(cell: &GameCell<G>) {
     if let Some(g) = unsafe { (*cell.0.get()).as_mut() } {
         g.frame();
     }
 }
 
+/// # Safety
+/// As [`__init`].
 #[doc(hidden)]
-pub fn __exit<G: Game>(cell: &GameCell<G>) {
+pub unsafe fn __exit<G: Game>(cell: &GameCell<G>) {
     if let Some(g) = unsafe { (*cell.0.get()).as_mut() } {
         g.exit();
     }
@@ -625,15 +703,15 @@ macro_rules! game {
         }
         #[unsafe(no_mangle)]
         pub extern "C" fn gasm_init() -> i32 {
-            $crate::__init::<$t>(&__GASM_GAME)
+            unsafe { $crate::__init::<$t>(&__GASM_GAME) }
         }
         #[unsafe(no_mangle)]
         pub extern "C" fn gasm_frame() {
-            $crate::__frame::<$t>(&__GASM_GAME)
+            unsafe { $crate::__frame::<$t>(&__GASM_GAME) }
         }
         #[unsafe(no_mangle)]
         pub extern "C" fn gasm_exit() {
-            $crate::__exit::<$t>(&__GASM_GAME)
+            unsafe { $crate::__exit::<$t>(&__GASM_GAME) }
         }
     };
 }
@@ -661,7 +739,8 @@ macro_rules! game {
 /// gasm::main_loop!(run);
 /// ```
 ///
-/// wasm32 only: native builds of such a game run `run` straight through.
+/// `main_loop!(run, on_exit)` also exports `gasm_exit` (the player is quitting: flush
+/// saves). wasm32 only: native builds of such a game run `run` straight through.
 pub mod main_loop {
     // the suspend/resume state only exists on wasm32
     #![cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
@@ -745,11 +824,13 @@ pub mod main_loop {
         }
     }
 
-    /// The frame driver; on Asyncify's remove list (it is the one frame that must not unwind).
+    /// The frame driver, inlined into the `gasm_loop_frame` export that
+    /// [`main_loop!`](crate::main_loop!) defines: that export is on Asyncify's
+    /// remove list (it is the one frame that must not unwind). Games that don't
+    /// use the macro don't get it (nor the asyncify imports).
     #[doc(hidden)]
-    #[unsafe(no_mangle)]
-    #[inline(never)]
-    pub extern "C" fn gasm_loop_frame() {
+    #[inline(always)]
+    pub fn __loop_frame() {
         unsafe {
             if FINISHED {
                 return;
@@ -796,7 +877,19 @@ macro_rules! main_loop {
         }
         #[unsafe(no_mangle)]
         pub extern "C" fn gasm_frame() {
-            $crate::main_loop::gasm_loop_frame()
+            gasm_loop_frame()
+        }
+        #[unsafe(no_mangle)]
+        #[inline(never)]
+        pub extern "C" fn gasm_loop_frame() {
+            $crate::main_loop::__loop_frame()
+        }
+    };
+    ($main:path, $exit:path) => {
+        $crate::main_loop!($main);
+        #[unsafe(no_mangle)]
+        pub extern "C" fn gasm_exit() {
+            $exit()
         }
     };
 }

@@ -1,14 +1,16 @@
 //! gasm:gfx on wgpu, plus the 2D `video_present` blit.
 //!
-//! Handles index a single object table. Creation descriptors are JSON that
-//! mirrors WebGPU (see spec/ABI.md#gasmgfx). Validation errors from wgpu are
-//! caught with error scopes and returned as `Err`, which traps the guest.
+//! Handles index a single object table, numbered in creation order and never
+//! reused (`destroy` leaves a tombstone). Creation descriptors are JSON that
+//! mirrors WebGPU (see spec/ABI.md#gasmgfx).
 //!
-//! Without a GPU (`Gfx::null`) every call still validates handles and
-//! allocates ids, so guests behave identically in headless runs. Each object
-//! also gets a [`Meta`] record (kind, sizes, layout entries) in both modes:
-//! textures, samplers, layouts and dynamic offsets are validated against it,
-//! so they trap the same way with and without a GPU (and like the JS runner).
+//! Every object has a [`Meta`] record (kind, sizes, layouts, vertex layout) and
+//! the render pass state (pipeline, bind groups, vertex and index buffers) is
+//! tracked the same way with and without a GPU, so handles, ranges, usages,
+//! bind group compatibility and draw ranges are validated (and trap) identically
+//! on the null GPU, the real GPU and the JS runner (`GfxModel` in gasm-host.js).
+//! What only the GPU can check (WGSL, pipeline/shader interface) is caught with
+//! wgpu error scopes and becomes `Err`, which traps the guest.
 
 use std::sync::Arc;
 
@@ -18,10 +20,24 @@ use wgpu::util::DeviceExt;
 pub const SAMPLE_COUNT: u32 = 4;
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth24Plus;
 
+/// Drawable size of headless runs (null GPU and offscreen screenshots).
+pub const HEADLESS_SIZE: (u32, u32) = (1280, 720);
 /// Largest texture side (WebGPU's default `maxTextureDimension2D`).
 pub const MAX_TEXTURE_SIZE: u32 = 8192;
 /// Dynamic offsets must be multiples of this (WebGPU's default alignment limits).
 pub const OFFSET_ALIGNMENT: u32 = 256;
+/// WebGPU default limits used for validation.
+pub const MAX_BIND_GROUPS: u32 = 4;
+pub const MAX_VERTEX_BUFFERS: u32 = 8;
+const MAX_VERTEX_ATTRIBUTES: usize = 16;
+const MAX_VERTEX_STRIDE: u64 = 2048;
+
+// GASM_BUF_* (spec/abi.json; WebGPU GPUBufferUsage bits)
+pub const BUF_COPY_DST: u32 = 0x08;
+pub const BUF_INDEX: u32 = 0x10;
+pub const BUF_VERTEX: u32 = 0x20;
+pub const BUF_UNIFORM: u32 = 0x40;
+pub const BUF_STORAGE: u32 = 0x80;
 
 enum Obj {
     Shader(wgpu::ShaderModule),
@@ -31,6 +47,7 @@ enum Obj {
     Layout(wgpu::BindGroupLayout),
     Texture(wgpu::Texture, wgpu::TextureView),
     Sampler(wgpu::Sampler),
+    /// null GPU, or destroyed
     Null,
 }
 
@@ -39,12 +56,12 @@ enum Obj {
 enum Meta {
     Shader,
     Buffer { size: u64, usage: u32 },
-    Pipeline,
-    /// dynamic-offset entries in binding order
-    BindGroup { dynamic: Vec<DynEntry> },
+    Pipeline(PipelineMeta),
+    BindGroup { dynamic: Vec<DynEntry>, layout: GroupLayout },
     Layout { entries: Vec<LayoutEntry> },
     Texture { width: u32, height: u32, mips: u32 },
     Sampler,
+    Destroyed(&'static str),
 }
 
 impl Meta {
@@ -52,13 +69,40 @@ impl Meta {
         match self {
             Meta::Shader => "shader",
             Meta::Buffer { .. } => "buffer",
-            Meta::Pipeline => "pipeline",
+            Meta::Pipeline(_) => "pipeline",
             Meta::BindGroup { .. } => "bind group",
             Meta::Layout { .. } => "bind group layout",
             Meta::Texture { .. } => "texture",
             Meta::Sampler => "sampler",
+            Meta::Destroyed(_) => "destroyed object",
         }
     }
+}
+
+#[derive(Clone)]
+struct PipelineMeta {
+    /// explicit layouts: the entries of each group; None = "auto"
+    groups: Option<Vec<Vec<LayoutEntry>>>,
+    vertex: Vec<VertexSlot>,
+    /// color targets of the fragment stage (the pass has exactly one)
+    targets: usize,
+}
+
+/// One vertex buffer of a pipeline.
+#[derive(Clone, Copy)]
+struct VertexSlot {
+    stride: u64,
+    instance: bool,
+    /// bytes the last element reads: max(attribute offset + size)
+    last: u64,
+}
+
+/// What a bind group was created against.
+#[derive(Clone)]
+enum GroupLayout {
+    Explicit(Vec<LayoutEntry>),
+    /// from a pipeline with layout "auto": only compatible with that pipeline
+    Auto { pipeline: u32, group: u32 },
 }
 
 #[derive(Clone, Copy)]
@@ -76,7 +120,7 @@ enum Slot {
     Sampler,
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 struct LayoutEntry {
     binding: u32,
     visibility: u32,
@@ -85,6 +129,16 @@ struct LayoutEntry {
     min_binding_size: u64,
     /// texture: "float" (filterable) or "unfilterable-float"; sampler: "filtering" or "non-filtering"
     filterable: bool,
+}
+
+/// Render pass state between begin_frame and end_frame, tracked in every mode.
+#[derive(Default)]
+struct Pass {
+    pipeline: Option<u32>,
+    groups: [Option<u32>; MAX_BIND_GROUPS as usize],
+    vertex: [Option<(u32, u64)>; MAX_VERTEX_BUFFERS as usize],
+    /// (buffer, index size in bytes, offset)
+    index: Option<(u32, u64, u64)>,
 }
 
 pub struct Gpu {
@@ -98,6 +152,7 @@ pub enum Target {
     Offscreen { texture: wgpu::Texture },
 }
 
+/// GPU work of a shown frame.
 struct Frame {
     pass: wgpu::RenderPass<'static>,
     encoder: wgpu::CommandEncoder,
@@ -113,15 +168,21 @@ struct Blit {
     texture: Option<(wgpu::Texture, wgpu::BindGroup, u32, u32)>,
 }
 
+struct Object {
+    obj: Obj,
+    meta: Meta,
+}
+
 pub struct Gfx {
     gpu: Option<Gpu>,
     target: Option<Target>,
     width: u32,
     height: u32,
-    objects: Vec<Obj>,
-    meta: Vec<Meta>,
+    objects: Vec<Object>,
     msaa: Option<wgpu::TextureView>,
     depth: Option<wgpu::TextureView>,
+    /// between begin_frame and end_frame (shown or not)
+    pass: Option<Pass>,
     frame: Option<Frame>,
     blit: Option<Blit>,
     /// set by the guest calling any gfx draw API this frame (suppresses the 2D blit)
@@ -130,13 +191,23 @@ pub struct Gfx {
 
 type R<T> = Result<T, String>;
 
+fn add_u64(a: u64, b: u64, what: &str) -> R<u64> {
+    a.checked_add(b).ok_or_else(|| format!("gfx: {what} overflows"))
+}
+
 impl Gfx {
-    /// No GPU: ids only (headless runs without screenshots, CI).
+    fn new(gpu: Option<Gpu>, target: Option<Target>, width: u32, height: u32) -> Gfx {
+        let blit = gpu.as_ref().map(Blit::new);
+        Gfx { gpu, target, width, height, objects: Vec::new(), msaa: None, depth: None, pass: None, frame: None, blit, used: false }
+    }
+
+    /// No GPU: ids and validation only (headless runs without screenshots, CI).
     pub fn null() -> Gfx {
-        Gfx { gpu: None, target: None, width: 1280, height: 720, objects: Vec::new(), meta: Vec::new(), msaa: None, depth: None, frame: None, blit: None, used: false }
+        Gfx::new(None, None, HEADLESS_SIZE.0, HEADLESS_SIZE.1)
     }
 
     /// Render into a window.
+    #[cfg(feature = "window")]
     pub fn for_window(window: Arc<winit::window::Window>) -> R<Gfx> {
         let size = window.inner_size();
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
@@ -147,7 +218,7 @@ impl Gfx {
             ..Default::default()
         }))
         .map_err(|e| format!("no GPU adapter: {e}"))?;
-        let gpu = open_device(&adapter, |caps_formats| pick_format(caps_formats), &surface)?;
+        let gpu = open_device(&adapter, pick_format, &surface)?;
         let mut config = surface
             .get_default_config(&adapter, size.width.max(1), size.height.max(1))
             .ok_or("surface not supported by adapter")?;
@@ -155,7 +226,7 @@ impl Gfx {
         config.present_mode = wgpu::PresentMode::AutoVsync;
         surface.configure(&gpu.device, &config);
         eprintln!("[gasm] gpu: {} ({:?}), surface {:?}", adapter.get_info().name, adapter.get_info().backend, gpu.format);
-        let mut g = Gfx::with_gpu(gpu, Target::Window { surface, config }, size.width.max(1), size.height.max(1));
+        let mut g = Gfx::new(Some(gpu), Some(Target::Window { surface, config }), size.width.max(1), size.height.max(1));
         g.recreate_attachments();
         Ok(g)
     }
@@ -179,14 +250,9 @@ impl Gfx {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
             view_formats: &[],
         });
-        let mut g = Gfx::with_gpu(Gpu { device, queue, format }, Target::Offscreen { texture }, width, height);
+        let mut g = Gfx::new(Some(Gpu { device, queue, format }), Some(Target::Offscreen { texture }), width, height);
         g.recreate_attachments();
         Ok(g)
-    }
-
-    fn with_gpu(gpu: Gpu, target: Target, width: u32, height: u32) -> Gfx {
-        let blit = Some(Blit::new(&gpu));
-        Gfx { gpu: Some(gpu), target: Some(target), width, height, objects: Vec::new(), meta: Vec::new(), msaa: None, depth: None, frame: None, blit, used: false }
     }
 
     pub fn size(&self) -> (u32, u32) {
@@ -230,16 +296,23 @@ impl Gfx {
     // ---- object table ------------------------------------------------------------
 
     fn add(&mut self, obj: Obj, meta: Meta) -> u32 {
-        self.objects.push(obj);
-        self.meta.push(meta);
+        self.objects.push(Object { obj, meta });
         self.objects.len() as u32
     }
 
-    fn meta(&self, h: u32) -> R<&Meta> {
-        self.meta.get((h as usize).wrapping_sub(1)).ok_or_else(|| format!("gfx: invalid handle {h}"))
+    fn object(&self, h: u32) -> R<&Object> {
+        let o = self.objects.get((h as usize).wrapping_sub(1)).ok_or_else(|| format!("gfx: invalid handle {h}"))?;
+        if let Meta::Destroyed(kind) = o.meta {
+            return Err(format!("gfx: {kind} {h} was destroyed"));
+        }
+        Ok(o)
     }
 
-    /// Check that `h` is an object of kind `want` (see [`Meta::kind`]).
+    fn meta(&self, h: u32) -> R<&Meta> {
+        Ok(&self.object(h)?.meta)
+    }
+
+    /// Check that `h` is a live object of kind `want` (see [`Meta::kind`]).
     fn expect(&self, h: u32, want: &str) -> R<&Meta> {
         let m = self.meta(h)?;
         if m.kind() != want {
@@ -248,35 +321,63 @@ impl Gfx {
         Ok(m)
     }
 
-    fn get(&self, h: u32) -> R<&Obj> {
-        self.objects.get((h as usize).wrapping_sub(1)).ok_or_else(|| format!("gfx: invalid handle {h}"))
+    fn buffer_meta(&self, h: u32) -> R<(u64, u32)> {
+        match self.expect(h, "buffer")? {
+            Meta::Buffer { size, usage } => Ok((*size, *usage)),
+            _ => unreachable!(),
+        }
+    }
+
+    fn pipeline_meta(&self, h: u32) -> R<&PipelineMeta> {
+        match self.expect(h, "pipeline")? {
+            Meta::Pipeline(p) => Ok(p),
+            _ => unreachable!(),
+        }
+    }
+
+    fn obj(&self, h: u32) -> R<&Obj> {
+        Ok(&self.object(h)?.obj)
     }
 
     fn shader(&self, h: u32) -> R<&wgpu::ShaderModule> {
-        match self.get(h)? { Obj::Shader(s) => Ok(s), _ => Err(format!("gfx: handle {h} is not a shader")) }
+        match self.obj(h)? { Obj::Shader(s) => Ok(s), _ => Err(format!("gfx: handle {h} is not a shader")) }
     }
     fn buffer(&self, h: u32) -> R<&wgpu::Buffer> {
-        match self.get(h)? { Obj::Buffer(b) => Ok(b), _ => Err(format!("gfx: handle {h} is not a buffer")) }
+        match self.obj(h)? { Obj::Buffer(b) => Ok(b), _ => Err(format!("gfx: handle {h} is not a buffer")) }
     }
     fn pipeline(&self, h: u32) -> R<&wgpu::RenderPipeline> {
-        match self.get(h)? { Obj::Pipeline(p) => Ok(p), _ => Err(format!("gfx: handle {h} is not a pipeline")) }
+        match self.obj(h)? { Obj::Pipeline(p) => Ok(p), _ => Err(format!("gfx: handle {h} is not a pipeline")) }
     }
     fn bind_group(&self, h: u32) -> R<&wgpu::BindGroup> {
-        match self.get(h)? { Obj::BindGroup(b) => Ok(b), _ => Err(format!("gfx: handle {h} is not a bind group")) }
+        match self.obj(h)? { Obj::BindGroup(b) => Ok(b), _ => Err(format!("gfx: handle {h} is not a bind group")) }
     }
     fn layout(&self, h: u32) -> R<&wgpu::BindGroupLayout> {
-        match self.get(h)? { Obj::Layout(l) => Ok(l), _ => Err(format!("gfx: handle {h} is not a bind group layout")) }
+        match self.obj(h)? { Obj::Layout(l) => Ok(l), _ => Err(format!("gfx: handle {h} is not a bind group layout")) }
+    }
+
+    /// Release an object: the handle becomes a tombstone (never reused). wgpu
+    /// keeps the resource alive while bind groups or a recorded pass use it.
+    pub fn destroy(&mut self, h: u32) -> R<()> {
+        let kind = self.meta(h)?.kind();
+        let o = &mut self.objects[h as usize - 1];
+        o.obj = Obj::Null;
+        o.meta = Meta::Destroyed(kind);
+        Ok(())
     }
 
     /// Run `f` inside a validation error scope; wgpu errors become `Err`.
     fn scoped<T>(&self, what: &str, f: impl FnOnce(&Gpu) -> R<T>) -> R<T> {
-        let gpu = self.gpu.as_ref().unwrap();
+        let gpu = self.gpu.as_ref().ok_or("gfx: no GPU")?;
         let scope = gpu.device.push_error_scope(wgpu::ErrorFilter::Validation);
         let out = f(gpu);
         if let Some(e) = pollster::block_on(scope.pop()) {
             return Err(format!("gfx: {what}: {e}"));
         }
         out
+    }
+
+    fn pass_mut(&mut self, what: &str) -> R<&mut Pass> {
+        self.pass.as_mut().ok_or_else(|| format!("gfx.{what} called outside begin_frame/end_frame"))
     }
 
     // ---- creation ------------------------------------------------------------------------
@@ -298,7 +399,7 @@ impl Gfx {
         if size == 0 || size % 4 != 0 {
             return Err(format!("gfx.create_buffer: size {size} must be a non-zero multiple of 4"));
         }
-        let meta = Meta::Buffer { size: size as u64, usage: usage | 0x08 };
+        let meta = Meta::Buffer { size: size as u64, usage: usage | BUF_COPY_DST };
         let Some(gpu) = &self.gpu else { return Ok(self.add(Obj::Null, meta)) };
         // WebGPU usage bits == wgpu BufferUsages bits; COPY_DST is always added for write_buffer.
         let usage = wgpu::BufferUsages::from_bits_truncate(usage) | wgpu::BufferUsages::COPY_DST;
@@ -310,25 +411,44 @@ impl Gfx {
         if offset % 4 != 0 || data.len() % 4 != 0 {
             return Err(format!("gfx.write_buffer: offset {offset} and length {} must be multiples of 4", data.len()));
         }
-        if self.gpu.is_none() {
-            return self.get(h).map(|_| ());
+        let (size, _) = self.buffer_meta(h)?;
+        if offset as u64 + data.len() as u64 > size {
+            return Err(format!("gfx.write_buffer: {}+{} exceeds buffer size {size}", offset, data.len()));
         }
-        let buf = self.buffer(h)?;
-        if offset as u64 + data.len() as u64 > buf.size() {
-            return Err(format!("gfx.write_buffer: {}+{} exceeds buffer size {}", offset, data.len(), buf.size()));
+        if let Some(gpu) = &self.gpu {
+            gpu.queue.write_buffer(self.buffer(h)?, offset as u64, data);
         }
-        self.gpu.as_ref().unwrap().queue.write_buffer(buf, offset as u64, data);
         Ok(())
     }
 
     pub fn create_pipeline(&mut self, json: &str) -> R<u32> {
         let d: Value = serde_json::from_str(json).map_err(|e| format!("gfx.create_pipeline: invalid JSON: {e}"))?;
         let layouts = self.pipeline_layouts(&d)?;
-        if self.gpu.is_none() {
-            return Ok(self.add(Obj::Null, Meta::Pipeline));
+        let v = d.get("vertex").ok_or("pipeline: missing vertex")?;
+        self.expect(uint(v, "module")?, "shader")?;
+        let f = d.get("fragment");
+        if let Some(f) = f {
+            self.expect(uint(f, "module")?, "shader")?;
         }
-        let p = self.build_pipeline(&d, layouts)?;
-        Ok(self.add(Obj::Pipeline(p), Meta::Pipeline))
+        let meta = PipelineMeta {
+            groups: match &layouts {
+                Some(hs) => Some(hs.iter().map(|h| self.layout_entries(*h)).collect::<R<Vec<_>>>()?),
+                None => None,
+            },
+            vertex: vertex_slots(v)?,
+            targets: f.and_then(|f| f.get("targets")).and_then(Value::as_array).map_or(0, Vec::len),
+        };
+        Ok(match self.build_pipeline(&d, layouts)? {
+            Some(p) => self.add(Obj::Pipeline(p), Meta::Pipeline(meta)),
+            None => self.add(Obj::Null, Meta::Pipeline(meta)),
+        })
+    }
+
+    fn layout_entries(&self, h: u32) -> R<Vec<LayoutEntry>> {
+        match self.expect(h, "bind group layout")? {
+            Meta::Layout { entries } => Ok(entries.clone()),
+            _ => unreachable!(),
+        }
     }
 
     /// `"layout"`: omitted / `"auto"` (None), or an array of bind group layout handles.
@@ -337,9 +457,12 @@ impl Gfx {
             None => Ok(None),
             Some(Value::String(s)) if s == "auto" => Ok(None),
             Some(Value::Array(a)) => {
+                if a.len() > MAX_BIND_GROUPS as usize {
+                    return Err(format!("pipeline: at most {MAX_BIND_GROUPS} bind group layouts, got {}", a.len()));
+                }
                 let mut out = Vec::new();
                 for v in a {
-                    let h = v.as_u64().ok_or("pipeline: layout entries must be bind group layout handles")? as u32;
+                    let h = v.as_u64().and_then(|h| u32::try_from(h).ok()).ok_or("pipeline: layout entries must be bind group layout handles")?;
                     self.expect(h, "bind group layout")?;
                     out.push(h);
                 }
@@ -350,51 +473,87 @@ impl Gfx {
     }
 
     pub fn create_bind_group(&mut self, json: &str) -> R<u32> {
+        #[derive(PartialEq)]
+        enum Res {
+            Buffer,
+            Texture,
+            Sampler,
+        }
         let d: Value = serde_json::from_str(json).map_err(|e| format!("gfx.create_bind_group: invalid JSON: {e}"))?;
         let entries_json = d.get("entries").and_then(Value::as_array).cloned().unwrap_or_default();
         // Resolve and check every entry against the object table (both modes).
-        let mut resolved = Vec::new(); // (binding, Slot of the resource, handle, offset, size)
+        let mut resolved: Vec<(u32, Res, u32, u64, Option<u64>)> = Vec::new(); // (binding, resource, handle, offset, size)
         for e in &entries_json {
             let binding = uint(e, "binding")?;
-            if resolved.iter().any(|r: &(u32, Slot, u32, u64, Option<u64>)| r.0 == binding) {
+            if resolved.iter().any(|r| r.0 == binding) {
                 return Err(format!("bind group: binding {binding} appears twice"));
             }
-            if let Some(h) = e.get("buffer").and_then(Value::as_u64) {
-                let Meta::Buffer { size, .. } = self.expect(h as u32, "buffer")? else { unreachable!() };
+            if let Some(h) = e.get("buffer") {
+                let h = handle(h)?;
+                let (size, _) = self.buffer_meta(h)?;
                 let offset = e.get("offset").and_then(Value::as_u64).unwrap_or(0);
                 let bsize = e.get("size").and_then(Value::as_u64);
-                if offset + bsize.unwrap_or(0) > *size || offset > *size {
+                if offset > size || add_u64(offset, bsize.unwrap_or(0), "bind group range")? > size || bsize == Some(0) {
                     return Err(format!("bind group: binding {binding}: range {offset}+{} exceeds buffer size {size}", bsize.unwrap_or(0)));
                 }
-                resolved.push((binding, Slot::Uniform, h as u32, offset, bsize));
-            } else if let Some(h) = e.get("texture").and_then(Value::as_u64) {
-                self.expect(h as u32, "texture")?;
-                resolved.push((binding, Slot::Texture, h as u32, 0, None));
-            } else if let Some(h) = e.get("sampler").and_then(Value::as_u64) {
-                self.expect(h as u32, "sampler")?;
-                resolved.push((binding, Slot::Sampler, h as u32, 0, None));
+                resolved.push((binding, Res::Buffer, h, offset, bsize));
+            } else if let Some(h) = e.get("texture") {
+                let h = handle(h)?;
+                self.expect(h, "texture")?;
+                resolved.push((binding, Res::Texture, h, 0, None));
+            } else if let Some(h) = e.get("sampler") {
+                let h = handle(h)?;
+                self.expect(h, "sampler")?;
+                resolved.push((binding, Res::Sampler, h, 0, None));
             } else {
                 return Err(format!("bind group: binding {binding} needs a \"buffer\", \"texture\" or \"sampler\""));
             }
         }
         let mut dynamic = Vec::new();
-        let explicit = d.get("layout").and_then(Value::as_u64).map(|h| h as u32);
-        if let Some(lh) = explicit {
-            let Meta::Layout { entries } = self.expect(lh, "bind group layout")?.clone() else { unreachable!() };
+        let explicit = match d.get("layout") {
+            Some(h) => Some(handle(h)?),
+            None => None,
+        };
+        // the layout's entries: an explicit layout, or group G of a pipeline with explicit layouts
+        let from_pipeline = match explicit {
+            Some(_) => None,
+            None => {
+                let p = uint(&d, "pipeline").map_err(|_| "bind group: needs \"layout\" or \"pipeline\"".to_string())?;
+                let group = d.get("group").and_then(Value::as_u64).unwrap_or(0);
+                if group >= MAX_BIND_GROUPS as u64 {
+                    return Err(format!("bind group: group {group} must be below {MAX_BIND_GROUPS}"));
+                }
+                Some((p, group as u32))
+            }
+        };
+        let explicit_entries = match (explicit, from_pipeline) {
+            (Some(lh), _) => Some(self.layout_entries(lh)?),
+            (None, Some((p, g))) => match &self.pipeline_meta(p)?.groups {
+                Some(groups) => Some(groups.get(g as usize).cloned().ok_or_else(|| format!("bind group: pipeline {p} has no group {g}"))?),
+                None => None,
+            },
+            _ => unreachable!(),
+        };
+        let layout_meta = if let Some(entries) = explicit_entries {
+            let lh = explicit.map_or_else(|| "of the pipeline".to_string(), |h| h.to_string());
             if resolved.len() != entries.len() {
                 return Err(format!("bind group: layout {lh} has {} entries, got {}", entries.len(), resolved.len()));
             }
             for le in &entries {
                 let r = resolved.iter().find(|r| r.0 == le.binding).ok_or_else(|| format!("bind group: missing binding {}", le.binding))?;
-                let is_buffer = matches!(le.slot, Slot::Uniform | Slot::Storage);
-                if (is_buffer && r.1 != Slot::Uniform) || (!is_buffer && r.1 != le.slot) {
+                let want = match le.slot {
+                    Slot::Uniform | Slot::Storage => Res::Buffer,
+                    Slot::Texture => Res::Texture,
+                    Slot::Sampler => Res::Sampler,
+                };
+                if r.1 != want {
                     return Err(format!("bind group: binding {} has the wrong resource kind for its layout", le.binding));
                 }
-                if is_buffer {
-                    let Meta::Buffer { size, usage } = self.meta(r.2)?.clone() else { unreachable!() };
-                    let need = if le.slot == Slot::Uniform { 0x40 } else { 0x80 };
+                if want == Res::Buffer {
+                    let (size, usage) = self.buffer_meta(r.2)?;
+                    let need = if le.slot == Slot::Uniform { BUF_UNIFORM } else { BUF_STORAGE };
                     if usage & need == 0 {
-                        return Err(format!("bind group: binding {}: buffer {} lacks {} usage", le.binding, r.2, if need == 0x40 { "UNIFORM" } else { "STORAGE" }));
+                        return Err(format!("bind group: binding {}: buffer {} lacks {} usage", le.binding, r.2, if need == BUF_UNIFORM { "UNIFORM" } else { "STORAGE" }));
                     }
                     let bsize = r.4.unwrap_or(size - r.3);
                     if bsize < le.min_binding_size {
@@ -406,10 +565,12 @@ impl Gfx {
                 }
             }
             dynamic.sort_by_key(|d| d.0);
+            GroupLayout::Explicit(entries)
         } else {
-            self.expect(uint(&d, "pipeline").map_err(|_| "bind group: needs \"layout\" or \"pipeline\"".to_string())?, "pipeline")?;
-        }
-        let meta = Meta::BindGroup { dynamic: dynamic.into_iter().map(|d| d.1).collect() };
+            let (pipeline, group) = from_pipeline.unwrap();
+            GroupLayout::Auto { pipeline, group }
+        };
+        let meta = Meta::BindGroup { dynamic: dynamic.into_iter().map(|d| d.1).collect(), layout: layout_meta };
         if self.gpu.is_none() {
             return Ok(self.add(Obj::Null, meta));
         }
@@ -418,11 +579,11 @@ impl Gfx {
             None => self.pipeline(uint(&d, "pipeline")?)?.get_bind_group_layout(d.get("group").and_then(Value::as_u64).unwrap_or(0) as u32),
         };
         let mut entries = Vec::new();
-        for (binding, slot, h, offset, size) in &resolved {
-            let resource = match slot {
-                Slot::Texture => match self.get(*h)? { Obj::Texture(_, v) => wgpu::BindingResource::TextureView(v), _ => unreachable!() },
-                Slot::Sampler => match self.get(*h)? { Obj::Sampler(s) => wgpu::BindingResource::Sampler(s), _ => unreachable!() },
-                _ => wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+        for (binding, res, h, offset, size) in &resolved {
+            let resource = match res {
+                Res::Texture => match self.obj(*h)? { Obj::Texture(_, v) => wgpu::BindingResource::TextureView(v), _ => unreachable!() },
+                Res::Sampler => match self.obj(*h)? { Obj::Sampler(s) => wgpu::BindingResource::Sampler(s), _ => unreachable!() },
+                Res::Buffer => wgpu::BindingResource::Buffer(wgpu::BufferBinding {
                     buffer: self.buffer(*h)?,
                     offset: *offset,
                     size: size.and_then(wgpu::BufferSize::new),
@@ -435,7 +596,6 @@ impl Gfx {
         })?;
         Ok(self.add(Obj::BindGroup(bg), meta))
     }
-
     pub fn create_bind_group_layout(&mut self, json: &str) -> R<u32> {
         let d: Value = serde_json::from_str(json).map_err(|e| format!("gfx.create_bind_group_layout: invalid JSON: {e}"))?;
         let mut entries: Vec<LayoutEntry> = Vec::new();
@@ -575,7 +735,7 @@ impl Gfx {
         if data.len() as u64 != w as u64 * ht as u64 * 4 {
             return Err(format!("gfx.write_texture: len {} must be width*height*4 = {}", data.len(), w as u64 * ht as u64 * 4));
         }
-        let (Some(gpu), Obj::Texture(t, _)) = (&self.gpu, self.get(h)?) else { return Ok(()) };
+        let (Some(gpu), Obj::Texture(t, _)) = (&self.gpu, self.obj(h)?) else { return Ok(()) };
         gpu.queue.write_texture(
             wgpu::TexelCopyTextureInfo { texture: t, mip_level: mip, origin: wgpu::Origin3d { x, y, z: 0 }, aspect: wgpu::TextureAspect::All },
             data,
@@ -635,10 +795,11 @@ impl Gfx {
         Ok(self.add(Obj::Sampler(smp), Meta::Sampler))
     }
 
-    fn build_pipeline(&self, d: &Value, group_layouts: Option<Vec<u32>>) -> R<wgpu::RenderPipeline> {
-        let gpu = self.gpu.as_ref().unwrap();
+    /// Parse and validate a pipeline descriptor (both modes); with a GPU, create it.
+    fn build_pipeline(&self, d: &Value, group_layouts: Option<Vec<u32>>) -> R<Option<wgpu::RenderPipeline>> {
+        let surface = self.gpu.as_ref().map_or(wgpu::TextureFormat::Bgra8Unorm, |g| g.format);
         let v = d.get("vertex").ok_or("pipeline: missing vertex")?;
-        let vmod = self.shader(uint(v, "module")?)?;
+        self.expect(uint(v, "module")?, "shader")?;
         let buffers_json = v.get("buffers").and_then(Value::as_array).cloned().unwrap_or_default();
         let mut attrs: Vec<Vec<wgpu::VertexAttribute>> = Vec::new();
         for b in &buffers_json {
@@ -660,7 +821,7 @@ impl Gfx {
                     array_stride: b.get("arrayStride").and_then(Value::as_u64).unwrap_or(0),
                     step_mode: match b.get("stepMode").and_then(Value::as_str) {
                         Some("instance") => wgpu::VertexStepMode::Instance,
-                        _ => wgpu::VertexStepMode::Vertex,
+                        _ => wgpu::VertexStepMode::Vertex, // other values rejected by vertex_slots
                     },
                     attributes: a,
                 })
@@ -671,10 +832,11 @@ impl Gfx {
         let fragment_module;
         let f = d.get("fragment");
         if let Some(f) = f {
-            fragment_module = Some(self.shader(uint(f, "module")?)?);
+            fragment_module = Some(uint(f, "module")?);
+            self.expect(fragment_module.unwrap(), "shader")?;
             for t in f.get("targets").and_then(Value::as_array).cloned().unwrap_or_default() {
                 let format = match t.get("format").and_then(Value::as_str) {
-                    Some("surface") | None => gpu.format,
+                    Some("surface") | None => surface,
                     Some(other) => return Err(format!("pipeline: color target format must be \"surface\", got {other:?}")),
                 };
                 let blend = match t.get("blend") {
@@ -684,11 +846,11 @@ impl Gfx {
                     }),
                     None => None,
                 };
-                let write_mask = t
-                    .get("writeMask")
-                    .and_then(Value::as_u64)
-                    .map(|m| wgpu::ColorWrites::from_bits_truncate(m as u32))
-                    .unwrap_or(wgpu::ColorWrites::ALL);
+                let write_mask = match t.get("writeMask").and_then(Value::as_u64) {
+                    None => wgpu::ColorWrites::ALL,
+                    Some(m) if m <= 0xf => wgpu::ColorWrites::from_bits_truncate(m as u32),
+                    Some(m) => return Err(format!("pipeline: writeMask {m} must be 0-15")),
+                };
                 targets.push(Some(wgpu::ColorTargetState { format, blend, write_mask }));
             }
         } else {
@@ -709,16 +871,19 @@ impl Gfx {
             strip_index_format: match ps("stripIndexFormat") {
                 Some("uint16") => Some(wgpu::IndexFormat::Uint16),
                 Some("uint32") => Some(wgpu::IndexFormat::Uint32),
-                _ => None,
+                None => None,
+                Some(o) => return Err(format!("pipeline: unknown stripIndexFormat {o:?}")),
             },
             front_face: match ps("frontFace").unwrap_or("ccw") {
                 "cw" => wgpu::FrontFace::Cw,
-                _ => wgpu::FrontFace::Ccw,
+                "ccw" => wgpu::FrontFace::Ccw,
+                o => return Err(format!("pipeline: unknown frontFace {o:?}")),
             },
             cull_mode: match ps("cullMode").unwrap_or("none") {
                 "front" => Some(wgpu::Face::Front),
                 "back" => Some(wgpu::Face::Back),
-                _ => None,
+                "none" => None,
+                o => return Err(format!("pipeline: unknown cullMode {o:?}")),
             },
             ..Default::default()
         };
@@ -755,6 +920,14 @@ impl Gfx {
 
         let entry = |s: &Value| s.get("entryPoint").and_then(Value::as_str).map(str::to_owned);
         let (v_entry, f_entry) = (entry(v), f.and_then(entry));
+        if self.gpu.is_none() {
+            return Ok(None);
+        }
+        let vmod = self.shader(uint(v, "module")?)?;
+        let fragment_module = match fragment_module {
+            Some(h) => Some(self.shader(h)?),
+            None => None,
+        };
         let bgls = match &group_layouts {
             Some(hs) => Some(hs.iter().map(|h| self.layout(*h)).collect::<R<Vec<_>>>()?),
             None => None,
@@ -786,16 +959,18 @@ impl Gfx {
                 cache: None,
             }))
         })
+        .map(Some)
     }
 
     // ---- frame -----------------------------------------------------------------------------
 
     /// Start a frame. `show`: whether the runner will display it.
     pub fn begin_frame(&mut self, clear: [f32; 4], show: bool) -> R<bool> {
-        if self.frame.is_some() {
+        if self.pass.is_some() {
             return Err("gfx.begin_frame called twice without end_frame".into());
         }
         self.used = true;
+        self.pass = Some(Pass::default());
         let (Some(gpu), Some(target), true) = (&self.gpu, &self.target, show) else { return Ok(false) };
         let (resolve_view, surface_texture) = match target {
             Target::Window { surface, config } => {
@@ -840,21 +1015,29 @@ impl Gfx {
     }
 
     pub fn set_pipeline(&mut self, h: u32) -> R<()> {
-        if self.gpu.is_none() { return self.get(h).map(|_| ()) }
-        let p = self.pipeline(h)?.clone();
-        if let Some(f) = &mut self.frame { f.pass.set_pipeline(&p); }
+        let targets = self.pipeline_meta(h)?.targets;
+        if targets != 1 {
+            return Err(format!("gfx.set_pipeline: pipeline {h} has {targets} color targets; the render pass has one (\"surface\")"));
+        }
+        self.pass_mut("set_pipeline")?.pipeline = Some(h);
+        if self.frame.is_some() {
+            let p = self.pipeline(h)?.clone();
+            if let Some(f) = &mut self.frame {
+                f.pass.set_pipeline(&p);
+            }
+        }
         Ok(())
     }
 
     pub fn set_bind_group(&mut self, index: u32, h: u32) -> R<()> {
-        if self.gpu.is_none() { return self.get(h).map(|_| ()) }
-        let bg = self.bind_group(h)?.clone();
-        if let Some(f) = &mut self.frame { f.pass.set_bind_group(index, &bg, &[]); }
-        Ok(())
+        self.set_bind_group_offsets(index, h, &[])
     }
 
     pub fn set_bind_group_offsets(&mut self, index: u32, h: u32, offsets: &[u32]) -> R<()> {
-        let Meta::BindGroup { dynamic } = self.expect(h, "bind group")? else { unreachable!() };
+        if index >= MAX_BIND_GROUPS {
+            return Err(format!("gfx.set_bind_group: index {index} must be below {MAX_BIND_GROUPS}"));
+        }
+        let Meta::BindGroup { dynamic, .. } = self.expect(h, "bind group")? else { unreachable!() };
         if offsets.len() != dynamic.len() {
             return Err(format!("gfx.set_bind_group_offsets: bind group {h} has {} dynamic entries, got {} offsets", dynamic.len(), offsets.len()));
         }
@@ -862,13 +1045,17 @@ impl Gfx {
             if o % OFFSET_ALIGNMENT != 0 {
                 return Err(format!("gfx.set_bind_group_offsets: offset {o} is not a multiple of {OFFSET_ALIGNMENT}"));
             }
-            if *o as u64 + d.offset + d.size > d.buffer_size {
+            if add_u64(*o as u64 + d.offset, d.size, "dynamic offset")? > d.buffer_size {
                 return Err(format!("gfx.set_bind_group_offsets: offset {o} + binding {}+{} exceeds buffer size {}", d.offset, d.size, d.buffer_size));
             }
         }
-        if self.gpu.is_none() { return Ok(()) }
-        let bg = self.bind_group(h)?.clone();
-        if let Some(f) = &mut self.frame { f.pass.set_bind_group(index, &bg, offsets); }
+        self.pass_mut("set_bind_group")?.groups[index as usize] = Some(h);
+        if self.frame.is_some() {
+            let bg = self.bind_group(h)?.clone();
+            if let Some(f) = &mut self.frame {
+                f.pass.set_bind_group(index, &bg, offsets);
+            }
+        }
         Ok(())
     }
 
@@ -887,6 +1074,7 @@ impl Gfx {
         if !(0.0..=1.0).contains(&min_depth) || !(0.0..=1.0).contains(&max_depth) || min_depth > max_depth {
             return Err(format!("gfx.set_viewport: depth range {min_depth}..{max_depth} must be within 0..1"));
         }
+        self.pass_mut("set_viewport")?;
         let (x, y, w, h) = self.clamp_rect(x as f64, y as f64, w as f64, h as f64);
         if let Some(f) = &mut self.frame {
             f.empty_viewport = w <= 0.0 || h <= 0.0;
@@ -898,6 +1086,7 @@ impl Gfx {
     }
 
     pub fn set_scissor_rect(&mut self, x: u32, y: u32, w: u32, h: u32) -> R<()> {
+        self.pass_mut("set_scissor_rect")?;
         let (x, y, w, h) = self.clamp_rect(x as f64, y as f64, w as f64, h as f64);
         if let Some(f) = &mut self.frame {
             f.empty_scissor = w <= 0.0 || h <= 0.0;
@@ -909,47 +1098,132 @@ impl Gfx {
     }
 
     pub fn set_vertex_buffer(&mut self, slot: u32, h: u32, offset: u32) -> R<()> {
-        if self.gpu.is_none() { return self.get(h).map(|_| ()) }
-        let b = self.buffer(h)?.clone();
-        if let Some(f) = &mut self.frame { f.pass.set_vertex_buffer(slot, b.slice(offset as u64..)); }
+        if slot >= MAX_VERTEX_BUFFERS {
+            return Err(format!("gfx.set_vertex_buffer: slot {slot} must be below {MAX_VERTEX_BUFFERS}"));
+        }
+        let (size, usage) = self.buffer_meta(h)?;
+        if usage & BUF_VERTEX == 0 {
+            return Err(format!("gfx.set_vertex_buffer: buffer {h} lacks VERTEX usage"));
+        }
+        if offset % 4 != 0 || offset as u64 > size {
+            return Err(format!("gfx.set_vertex_buffer: offset {offset} must be a multiple of 4 within the buffer ({size} bytes)"));
+        }
+        self.pass_mut("set_vertex_buffer")?.vertex[slot as usize] = Some((h, offset as u64));
+        if self.frame.is_some() && (offset as u64) < size {
+            let b = self.buffer(h)?.clone();
+            if let Some(f) = &mut self.frame {
+                f.pass.set_vertex_buffer(slot, b.slice(offset as u64..));
+            }
+        }
         Ok(())
     }
 
     pub fn set_index_buffer(&mut self, h: u32, format: u32, offset: u32) -> R<()> {
-        if self.gpu.is_none() { return self.get(h).map(|_| ()) }
-        let b = self.buffer(h)?.clone();
-        let fmt = if format == 1 { wgpu::IndexFormat::Uint32 } else { wgpu::IndexFormat::Uint16 };
-        if let Some(f) = &mut self.frame { f.pass.set_index_buffer(b.slice(offset as u64..), fmt); }
+        let (fmt, isize) = match format {
+            0 => (wgpu::IndexFormat::Uint16, 2),
+            1 => (wgpu::IndexFormat::Uint32, 4),
+            f => return Err(format!("gfx.set_index_buffer: format {f} must be GASM_INDEX_U16 (0) or GASM_INDEX_U32 (1)")),
+        };
+        let (size, usage) = self.buffer_meta(h)?;
+        if usage & BUF_INDEX == 0 {
+            return Err(format!("gfx.set_index_buffer: buffer {h} lacks INDEX usage"));
+        }
+        if offset as u64 % isize != 0 || offset as u64 > size {
+            return Err(format!("gfx.set_index_buffer: offset {offset} must be a multiple of {isize} within the buffer ({size} bytes)"));
+        }
+        self.pass_mut("set_index_buffer")?.index = Some((h, isize, offset as u64));
+        if self.frame.is_some() && (offset as u64) < size {
+            let b = self.buffer(h)?.clone();
+            if let Some(f) = &mut self.frame {
+                f.pass.set_index_buffer(b.slice(offset as u64..), fmt);
+            }
+        }
         Ok(())
     }
 
-    pub fn draw(&mut self, vc: u32, ic: u32, fv: u32, fi: u32) {
-        if let Some(f) = &mut self.frame
-            && !f.empty_viewport
-            && !f.empty_scissor
-        {
-            f.pass.draw(fv..fv + vc, fi..fi + ic);
+    /// Validate a draw against the pass state: pipeline, compatible bind groups,
+    /// vertex buffers large enough (`vertices`: first + count, None for indexed
+    /// draws, whose per-vertex reads aren't checked, as in WebGPU).
+    fn check_draw(&self, what: &str, vertices: Option<u64>, instances: u64) -> R<()> {
+        let pass = self.pass.as_ref().ok_or_else(|| format!("gfx.{what} called outside begin_frame/end_frame"))?;
+        let ph = pass.pipeline.ok_or_else(|| format!("gfx.{what}: no pipeline set"))?;
+        let pm = self.pipeline_meta(ph)?;
+        if let Some(groups) = &pm.groups {
+            for (i, entries) in groups.iter().enumerate() {
+                let bg = pass.groups[i].ok_or_else(|| format!("gfx.{what}: pipeline {ph} needs a bind group at index {i}"))?;
+                let Meta::BindGroup { layout, .. } = self.expect(bg, "bind group")? else { unreachable!() };
+                if !matches!(layout, GroupLayout::Explicit(e) if e == entries) {
+                    return Err(format!("gfx.{what}: bind group {bg} at index {i} doesn't match pipeline {ph}'s layout"));
+                }
+            }
+        } else {
+            for (i, bg) in pass.groups.iter().enumerate() {
+                let Some(bg) = *bg else { continue };
+                let Meta::BindGroup { layout, .. } = self.expect(bg, "bind group")? else { unreachable!() };
+                match layout {
+                    GroupLayout::Auto { pipeline, group } if *group == i as u32 && *pipeline != ph => {
+                        return Err(format!("gfx.{what}: bind group {bg} was made for pipeline {pipeline} (\"auto\" layouts are per pipeline), not {ph}"));
+                    }
+                    _ => {}
+                }
+            }
         }
+        for (slot, vs) in pm.vertex.iter().enumerate() {
+            let (b, offset) = pass.vertex[slot].ok_or_else(|| format!("gfx.{what}: pipeline {ph} needs a vertex buffer in slot {slot}"))?;
+            let (size, _) = self.buffer_meta(b)?;
+            let count = if vs.instance { Some(instances) } else { vertices };
+            if let Some(n) = count.filter(|n| *n > 0) {
+                let need = (n - 1).checked_mul(vs.stride).and_then(|x| x.checked_add(vs.last)).ok_or_else(|| format!("gfx.{what}: draw range overflows"))?;
+                if need > size - offset {
+                    return Err(format!("gfx.{what}: vertex buffer {b} in slot {slot} has {} bytes after its offset, the draw reads {need}", size - offset));
+                }
+            }
+        }
+        Ok(())
     }
 
-    pub fn draw_indexed(&mut self, ic: u32, inst: u32, first: u32, base: i32, fi: u32) {
-        if let Some(f) = &mut self.frame
-            && !f.empty_viewport
-            && !f.empty_scissor
-        {
-            f.pass.draw_indexed(first..first + ic, base, fi..fi + inst);
-        }
+    fn skip_draw(&self) -> bool {
+        self.frame.as_ref().is_none_or(|f| f.empty_viewport || f.empty_scissor)
     }
 
+    pub fn draw(&mut self, vc: u32, ic: u32, fv: u32, fi: u32) -> R<()> {
+        self.check_draw("draw", Some(fv as u64 + vc as u64), fi as u64 + ic as u64)?;
+        if !self.skip_draw() {
+            let f = self.frame.as_mut().unwrap();
+            f.pass.draw(fv..fv.saturating_add(vc), fi..fi.saturating_add(ic));
+        }
+        Ok(())
+    }
+
+    pub fn draw_indexed(&mut self, ic: u32, inst: u32, first: u32, base: i32, fi: u32) -> R<()> {
+        self.check_draw("draw_indexed", None, fi as u64 + inst as u64)?;
+        let pass = self.pass.as_ref().unwrap();
+        let (b, isize, offset) = pass.index.ok_or("gfx.draw_indexed: no index buffer set")?;
+        let (size, _) = self.buffer_meta(b)?;
+        let need = (first as u64 + ic as u64) * isize;
+        if need > size - offset {
+            return Err(format!("gfx.draw_indexed: index buffer {b} has {} bytes after its offset, the draw reads {need}", size - offset));
+        }
+        if !self.skip_draw() {
+            let f = self.frame.as_mut().unwrap();
+            f.pass.draw_indexed(first..first.saturating_add(ic), base, fi..fi.saturating_add(inst));
+        }
+        Ok(())
+    }
+
+    /// End the frame: submit (inside an error scope, so GPU validation errors
+    /// trap) and present.
     pub fn end_frame(&mut self) -> R<()> {
+        self.pass.take();
         let Some(Frame { pass, encoder, surface_texture, .. }) = self.frame.take() else { return Ok(()) };
-        drop(pass);
-        let gpu = self.gpu.as_ref().unwrap();
-        gpu.queue.submit([encoder.finish()]);
-        if let Some(st) = surface_texture {
-            gpu.queue.present(st);
-        }
-        Ok(())
+        self.scoped("end_frame", move |gpu| {
+            drop(pass);
+            gpu.queue.submit([encoder.finish()]);
+            if let Some(st) = surface_texture {
+                gpu.queue.present(st);
+            }
+            Ok(())
+        })
     }
 
     // ---- 2D path: show a video_present frame -----------------------------------------------
@@ -1024,6 +1298,7 @@ impl Gfx {
     }
 }
 
+#[cfg(feature = "window")]
 fn open_device(
     adapter: &wgpu::Adapter,
     choose: impl FnOnce(&[wgpu::TextureFormat]) -> wgpu::TextureFormat,
@@ -1037,6 +1312,7 @@ fn open_device(
     Ok(Gpu { device, queue, format })
 }
 
+#[cfg(feature = "window")]
 /// Prefer a non-sRGB 8-bit format: browsers' canvas formats are non-sRGB, so
 /// guests look the same on both runners.
 fn pick_format(formats: &[wgpu::TextureFormat]) -> wgpu::TextureFormat {
@@ -1045,7 +1321,61 @@ fn pick_format(formats: &[wgpu::TextureFormat]) -> wgpu::TextureFormat {
 }
 
 fn uint(v: &Value, key: &str) -> R<u32> {
-    v.get(key).and_then(Value::as_u64).map(|n| n as u32).ok_or_else(|| format!("descriptor: missing number {key:?}"))
+    v.get(key).and_then(Value::as_u64).and_then(|n| u32::try_from(n).ok()).ok_or_else(|| format!("descriptor: missing number {key:?}"))
+}
+
+/// An object handle in a descriptor.
+fn handle(v: &Value) -> R<u32> {
+    v.as_u64().and_then(|n| u32::try_from(n).ok()).ok_or_else(|| format!("descriptor: {v} is not a handle"))
+}
+
+/// Byte size of a vertex format.
+fn vertex_format_size(s: &str) -> R<u64> {
+    Ok(match s {
+        "float32" | "uint32" | "sint32" | "uint8x4" | "unorm8x4" | "uint16x2" | "float16x2" => 4,
+        "float32x2" | "uint32x2" | "sint32x2" | "uint16x4" | "float16x4" => 8,
+        "float32x3" | "uint32x3" | "sint32x3" => 12,
+        "float32x4" | "uint32x4" | "sint32x4" => 16,
+        o => return Err(format!("unsupported vertex format {o:?}")),
+    })
+}
+
+/// The vertex buffers of a pipeline's `vertex` stage, validated like WebGPU's
+/// createRenderPipeline (strides, attribute offsets and locations).
+fn vertex_slots(v: &Value) -> R<Vec<VertexSlot>> {
+    let buffers = v.get("buffers").and_then(Value::as_array).cloned().unwrap_or_default();
+    if buffers.len() > MAX_VERTEX_BUFFERS as usize {
+        return Err(format!("pipeline: at most {MAX_VERTEX_BUFFERS} vertex buffers, got {}", buffers.len()));
+    }
+    let mut locations = Vec::new();
+    let mut out = Vec::new();
+    for (i, b) in buffers.iter().enumerate() {
+        let stride = b.get("arrayStride").and_then(Value::as_u64).unwrap_or(0);
+        if stride % 4 != 0 || stride > MAX_VERTEX_STRIDE {
+            return Err(format!("pipeline: vertex buffer {i}: arrayStride {stride} must be a multiple of 4, at most {MAX_VERTEX_STRIDE}"));
+        }
+        let instance = match b.get("stepMode").and_then(Value::as_str).unwrap_or("vertex") {
+            "vertex" => false,
+            "instance" => true,
+            o => return Err(format!("pipeline: vertex buffer {i}: unknown stepMode {o:?}")),
+        };
+        let mut last = 0;
+        for a in b.get("attributes").and_then(Value::as_array).cloned().unwrap_or_default() {
+            let size = vertex_format_size(string(&a, "format")?)?;
+            let offset = a.get("offset").and_then(Value::as_u64).unwrap_or(0);
+            let location = uint(&a, "shaderLocation")?;
+            if offset % size.min(4) != 0 || (stride > 0 && offset + size > stride) || offset + size > MAX_VERTEX_STRIDE {
+                return Err(format!("pipeline: vertex buffer {i}: attribute at offset {offset} doesn't fit (arrayStride {stride})"));
+            }
+            if location as usize >= MAX_VERTEX_ATTRIBUTES || locations.contains(&location) {
+                return Err(format!("pipeline: shaderLocation {location} is used twice or is not below {MAX_VERTEX_ATTRIBUTES}"));
+            }
+            locations.push(location);
+            last = last.max(offset + size);
+        }
+        out.push(VertexSlot { stride, instance, last });
+    }
+    Ok(out)
 }
 
 fn string<'a>(v: &'a Value, key: &str) -> R<&'a str> {
@@ -1208,5 +1538,57 @@ struct VO { @builtin(position) pos: vec4<f32>, @location(0) uv: vec2<f32> };
             wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(w * 4), rows_per_image: Some(h) },
             wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// One call of tests/gfx-cases.json on `g`.
+    fn call(g: &mut Gfx, c: &[Value], shader: &str) -> R<()> {
+        let n = |i: usize| c[i].as_u64().unwrap() as u32;
+        let json = |i: usize| c[i].to_string();
+        match c[0].as_str().unwrap() {
+            "create_shader" => g.create_shader(shader).map(drop),
+            "create_buffer" => g.create_buffer(n(1), n(2)).map(drop),
+            "create_pipeline" => g.create_pipeline(&json(1)).map(drop),
+            "create_bind_group" => g.create_bind_group(&json(1)).map(drop),
+            "create_bind_group_layout" => g.create_bind_group_layout(&json(1)).map(drop),
+            "create_texture" => g.create_texture(&json(1)).map(drop),
+            "write_buffer" => g.write_buffer(n(1), n(2), &vec![0; n(3) as usize]),
+            "write_texture" => g.write_texture(n(1), n(2), n(3), n(4), n(5), n(6), &vec![0; n(7) as usize]),
+            "begin_frame" => g.begin_frame([0.0; 4], false).map(drop),
+            "set_pipeline" => g.set_pipeline(n(1)),
+            "set_bind_group" => g.set_bind_group(n(1), n(2)),
+            "set_vertex_buffer" => g.set_vertex_buffer(n(1), n(2), n(3)),
+            "set_index_buffer" => g.set_index_buffer(n(1), n(2), n(3)),
+            "draw" => g.draw(n(1), n(2), n(3), n(4)),
+            "draw_indexed" => g.draw_indexed(n(1), n(2), n(3), n(4) as i32, n(5)),
+            "end_frame" => g.end_frame(),
+            "destroy" => g.destroy(n(1)),
+            other => panic!("unknown call {other}"),
+        }
+    }
+
+    /// The validation cases shared with the JS runner (scripts/gfx-model-test.mjs).
+    #[test]
+    fn shared_validation_cases() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../tests/gfx-cases.json");
+        let doc: Value = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+        let shader = doc["shader"].as_str().unwrap();
+        for case in doc["cases"].as_array().unwrap() {
+            let name = case["name"].as_str().unwrap();
+            let mut g = Gfx::null();
+            let mut failed = None;
+            for (i, c) in case["calls"].as_array().unwrap().iter().enumerate() {
+                if let Err(e) = call(&mut g, c.as_array().unwrap(), shader) {
+                    failed = Some((i, e));
+                    break;
+                }
+            }
+            let want = case["fails"].as_u64().map(|i| i as usize);
+            assert_eq!(failed.as_ref().map(|f| f.0), want, "{name}: {failed:?}");
+        }
     }
 }

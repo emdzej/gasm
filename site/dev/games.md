@@ -1,8 +1,8 @@
 # Writing games
 
 A gasm game is a wasm32 module that exports three functions and imports what it
-needs from `gasm`, `gasm:gfx` and `gasm:net`. The recommended path is **Rust**
-with the `gasm` crate. C also works (see [C and other languages](#c-and-other-languages)).
+needs from `gasm`, `gasm:gfx`, `gasm:net` and `gasm:storage`. The recommended path
+is **Rust** with the `gasm-sdk` crate (library name `gasm`). C also works (see [C and other languages](#c-and-other-languages)).
 
 - Contract: [ABI v0](/docs/abi)
 - Examples: [`guests/triangle`](https://github.com/emdzej/gasm/tree/main/guests/triangle) (smallest GPU game),
@@ -24,7 +24,7 @@ edition = "2024"
 crate-type = ["cdylib"]
 
 [dependencies]
-gasm-sdk = "0.1"                   # crates.io; the library is named `gasm`
+gasm-sdk = "0.5"                   # crates.io; the library is named `gasm`
 
 [profile.release]
 lto = true
@@ -87,7 +87,7 @@ In this repo, add your crate to `guests/Cargo.toml` (`members`) and to the
 cargo line in the `Makefile`. `make guests` then copies it to `build/`.
 
 Check what you built. Every import should come from `gasm`, `gasm:gfx`,
-`gasm:net` or `wasi_snapshot_preview1`:
+`gasm:net`, `gasm:storage` or `wasi_snapshot_preview1`:
 
 ```sh
 node -e 'const m=new WebAssembly.Module(require("fs").readFileSync("hello.wasm"));
@@ -99,7 +99,7 @@ node -e 'const m=new WebAssembly.Module(require("fs").readFileSync("hello.wasm")
 ```sh
 R=runners/native/target/release/gasm-run
 $R hello.wasm --param name=Ada                          # window
-$R hello.wasm --headless 60 --screenshot a.png          # quick visual check
+$R hello.wasm --headless 60 --screenshot a.png          # quick visual check (GPU games too)
 node runners/web/headless.mjs hello.wasm --headless 60  # the browser's engine (V8)
 ```
 
@@ -118,7 +118,13 @@ let relay = gasm::param("relay");    // Option<String>: --param relay=… / ?rel
 let rom = gasm::asset("level1");     // Option<Vec<u8>>: --asset level1=path
 let all = gasm::asset_names();       // Vec<String>, sorted: discover a folder's contents
 gasm::exit(0);                       // end the game (WASI proc_exit)
+if gasm::has("gasm:gfx.destroy") { … }   // does this runner provide an import?
 ```
+
+`gasm::has` takes a module (`"gasm:net"`) or a function (`"gasm.asset_size64"`).
+Calling an import the runner lacks traps, so probe imports that are newer than
+the runners you want to support ([CHANGELOG](https://github.com/emdzej/gasm/blob/main/CHANGELOG.md) lists when each
+arrived).
 
 ### Input
 
@@ -217,7 +223,15 @@ Rules that matter (details in the [ABI spec](/docs/abi#gasm-gfx-optional-gpu-ren
   slot, and writes the whole buffer once per frame; with dynamic offsets it's one bind group).
 - Offsets and sizes are multiples of 4. Uniform slot offsets must be multiples
   of 256.
-- Validation errors trap with the wgpu/WebGPU message: check the runner log.
+- Set and draw calls only work between `begin_frame` and `end_frame`. Vertex
+  buffers need `gfx::VERTEX` usage and index buffers `gfx::INDEX`; draws must
+  stay within their buffers.
+- Invalid calls trap with a message, identically on every runner (also
+  headless, with the null GPU): check the runner log. The full list is in the
+  [ABI spec](/docs/abi#gasm-gfx-optional-gpu-rendering).
+- `gfx::destroy(handle)` frees an object you no longer need (a level's
+  textures). The handle is invalid afterwards and never reused; bind groups
+  and pipelines made from it keep working.
 
 [`guests/sumo/src/render.rs`](https://github.com/emdzej/gasm/blob/main/guests/sumo/src/render.rs)
 is a complete lit 3D renderer on this API: procedural meshes, two pipelines,
@@ -270,7 +284,12 @@ uses all of this in about 300 lines.
 use gasm::storage;
 
 let best = storage::get("best-score").map(|b| u32::from_le_bytes(b[..4].try_into().unwrap()));
-storage::set("best-score", &score.to_le_bytes());   // false: invalid key / too big / quota / I/O
+storage::set("best-score", &score.to_le_bytes());   // false if it failed
+match storage::try_set("slot-1", &save) {           // or: why it failed
+    Ok(()) => {}
+    Err(storage::Error::Quota) => gasm::log!("no room for saves"),
+    Err(e) => gasm::log!("save failed: {e:?}"),      // Key, Size, Io
+}
 storage::delete("best-score");
 ```
 
@@ -292,9 +311,11 @@ impl gasm::Game for MyGame {
 ```
 
 For large assets, `gasm::asset_read_at(name, offset, &mut buf)` reads a window
-instead of the whole file. Runners don't preload assets (native reads from
-disk on demand; the browser does too in Worker mode with OPFS or picked
-folders), so streaming a 200 MB soundtrack this way costs almost no memory.
+instead of the whole file (`offset` is a `u64`), and `gasm::asset_size(name)`
+gives the size as `Option<u64>`. Assets of any size work; only
+`gasm::asset(name)`, which reads everything into memory, needs them under
+2 GiB. Runners don't preload assets (native reads from disk on demand; the
+browser does too in Worker mode with OPFS or picked folders), so streaming a 200 MB soundtrack this way costs almost no memory.
 When a game ships data as a folder (a CD image, say), ask for names as you
 know them: folder assets match case-insensitively, so `Art/art.car` finds
 `ART/ART.CAR` on an upper-case CD.
@@ -354,7 +375,7 @@ is a template for any deterministic game:
    for `f + DELAY`, then step. Otherwise stall and just render.
 4. Every N frames, exchange a state hash to detect desyncs.
 
-Relay protocol: [`gasm-relay.rs`](https://github.com/emdzej/gasm/blob/main/runners/native/src/bin/gasm-relay.rs).
+Relay protocol: [`relay/src/main.rs`](https://github.com/emdzej/gasm/blob/main/runners/native/relay/src/main.rs).
 The relay never looks inside game messages.
 
 ## 7. Wrapping an existing Rust crate
@@ -421,6 +442,13 @@ with `GASM_EXPORT("gasm_init")` and friends; see
 With C++, add `-fno-exceptions`. Zig (`wasm32-freestanding`) should work the
 same way but hasn't been tried here.
 
+The header has the same features as the Rust crate: `gasm_has_str("gasm:gfx.destroy")`
+probes for an import, `gasm_gfx_destroy(handle)` frees a GPU object,
+`gasm_storage_set` returns `0` or a `GASM_STORAGE_ERR_*` code (`_KEY`, `_SIZE`,
+`_QUOTA`, `_IO`), and the `GASM_POINTER_OFF_*` and `GASM_GAMEPAD_OFF_*`
+constants give the field offsets in the bytes `gasm_pointer` and
+`gasm_gamepad` fill in.
+
 ### Porting an existing C game
 
 [`guests/doom`](https://github.com/emdzej/gasm/tree/main/guests/doom) runs
@@ -439,9 +467,15 @@ most old C codebases:
   every runner, and headless tests are reproducible.
 - **Files without a filesystem.** Force-include a header (`-include prelude.h`)
   that redirects `fopen`, `remove` and `rename`, and return real `FILE *`
-  streams with `fopencookie`: reads from assets (`asset_read_at`, so large
-  files stream) or `gasm:storage`, writes buffered and stored on `fclose`.
-  All of stdio (`fread`, `fscanf`, `fprintf`, `ftell`) then keeps working.
+  streams from the C SDK's
+  [`gasm_vfile.h`](https://github.com/emdzej/gasm/blob/main/sdk/c/include/gasm_vfile.h):
+  `gasm_vfile_open(GASM_VFILE_ASSET, name, "rb")` streams an asset
+  (`asset_read_at`), `gasm_vfile_open(GASM_VFILE_STORAGE, key, mode)` reads
+  a `gasm:storage` value and stores writes on `fclose`. All of stdio (`fread`,
+  `fscanf`, `fprintf`, `ftell`) then keeps working. Compile
+  `sdk/c/src/gasm_vfile.c` with the game (it needs `_GNU_SOURCE` for
+  `fopencookie`); with CMake, `target_sources(mygame PRIVATE ${GASM_VFILE_SOURCE})`.
+  DOOM and SDL 3 use it.
 - **Function pointer types must match.** Native C tolerates calling a
   function through a pointer of another type; wasm traps with *indirect call
   type mismatch*. The backtrace names the caller. Fix the cast, or add a
@@ -496,10 +530,12 @@ fn run() -> i32 {
         gasm::main_loop::wait_frame();
     }
 }
-gasm::main_loop!(run);
+gasm::main_loop!(run);              // or main_loop!(run, on_exit): also exports gasm_exit
 ```
 
 then `wasm-opt game.wasm --asyncify --pass-arg=asyncify-removelist@gasm_frame,gasm_loop_frame -O2 -o game.wasm`.
+Only `main_loop!` games carry the loop export (`gasm_loop_frame`) and the
+Asyncify imports; `game!` games don't.
 Examples: [`sdk/c/example-loop`](https://github.com/emdzej/gasm/tree/main/sdk/c/example-loop),
 [`guests/loopdemo`](https://github.com/emdzej/gasm/tree/main/guests/loopdemo).
 
@@ -537,7 +573,8 @@ threads (and `SDL_AddTimer`), OpenGL/Vulkan/`SDL_GPU`, audio recording, camera.
 
 - [ ] `crate-type = ["cdylib"]`, built for `wasm32-unknown-unknown` in release mode
 - [ ] `gasm::game!(YourGame)` (or the three exports in C)
-- [ ] Imports only `gasm`, `gasm:gfx`, `gasm:net`, WASI (or unused ones that trap harmlessly)
+- [ ] Imports only `gasm`, `gasm:gfx`, `gasm:net`, `gasm:storage`, WASI (or unused ones that trap harmlessly)
+- [ ] Imports newer than your target runners are probed with `gasm::has` first
 - [ ] Frame rate (and audio format) set in `init`
 - [ ] GPU: `"surface"` format, a bind group per pipeline, per-object uniform slots
 - [ ] Deterministic: same hashes on `gasm-run` and `headless.mjs`

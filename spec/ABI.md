@@ -4,12 +4,14 @@ Status: **experimental proof of concept**. Bindings: Rust crate
 [`guests/gasm`](https://github.com/emdzej/gasm/blob/main/guests/gasm/src/lib.rs),
 C header [`spec/gasm.h`](https://github.com/emdzej/gasm/blob/main/spec/gasm.h).
 
-A gasm game is a single WebAssembly module (wasm32, MVP + bulk-memory, sign-ext,
-mutable-globals: what rustc and clang emit by default). A runner is any host that
-implements the imports below. The ABI is intentionally core wasm (no Component
-Model), so it runs unmodified in browsers, wasmtime, WAMR, wasm2c, etc.
+A gasm game is a single WebAssembly module: wasm32 with the features current rustc
+and clang emit by default (bulk-memory, sign-ext, mutable-globals,
+nontrapping-float-to-int, multivalue, reference-types; clang also extended-const).
+No threads, SIMD or exception handling. A runner is any host that implements the
+imports below. The ABI is intentionally core wasm (no Component Model), so it runs
+unmodified in browsers, wasmtime, WAMR, wasm2c, etc.
 
-It has three import modules:
+It has four import modules:
 
 | Module | Status | Contents |
 |---|---|---|
@@ -25,9 +27,12 @@ still run games that don't import it.
 Additions (new imports, new descriptor fields) keep it: runners link unknown
 imports as traps, so an older runner still loads a newer guest and fails only
 if the guest calls something it lacks, and an older guest never calls the
-new imports. Textures, samplers, explicit layouts, viewport/scissor, text
-input, raw keyboard/pointer/gamepads and asset and storage enumeration were
-added this way; the version is still 0.
+new imports. A guest that can do without a newer import asks first with
+`has("module.function")`. Textures, samplers, explicit layouts, viewport/scissor,
+text input, raw keyboard/pointer/gamepads, asset and storage enumeration, `has`,
+64-bit assets and `gfx.destroy` were added this way; the version is still 0.
+[CHANGELOG.md](https://github.com/emdzej/gasm/blob/main/CHANGELOG.md) lists what
+each release added.
 
 ## Module shape
 
@@ -65,7 +70,25 @@ behind, e.g. wasm-bindgen glue in Rust crates that also target browsers.
    This is best effort (a crash or killed process skips it), so games should
    also save periodically.
 
-Runners must trap (not crash) on out-of-bounds pointers or invalid handles.
+Runners must trap (not crash) on out-of-bounds pointers, invalid handles and
+string arguments that aren't UTF-8.
+
+**Conventions.**
+
+- **Returning data of variable size** (`text_input`, `param`, `asset_name`,
+  `gamepad_name`, `key_events`, `storage.get`, `storage.key`, `net.recv`): the
+  call returns the full length and copies only if it fits in `cap`, so call once
+  with `cap = 0` (or a guess), then again with a buffer that size. Fixed-size
+  records (`pointer`, `gamepad`) are copied if `cap` is large enough;
+  `key_state` copies `min(len, 32)`. Streaming reads (`asset_read`,
+  `asset_read_at`) copy as much as fits and return that count.
+- **Errors:** `-1` means "not there" (missing asset, key, parameter or device,
+  index out of range). `storage.set` returns a `GASM_STORAGE_ERR_*` code.
+  Misuse traps: bad pointers, handles that were never valid or were destroyed,
+  invalid descriptors, arguments out of range where the ABI says so.
+- **Handles:** gfx handles are `u32` numbered from 1 in creation order and never
+  reused; net handles are positive `i32`s from `open`. Both trap when they were
+  never issued; a closed connection keeps answering `CLOSED`.
 
 ### Why the runner drives the frames
 
@@ -97,7 +120,8 @@ All pointers are `i32` offsets into guest memory. Strings are UTF-8 `(ptr, len)`
 | Import | Signature | Semantics |
 |--------|-----------|-----------|
 | `log` | `(ptr, len)` | Log a line. |
-| `time_ms` | `() -> f64` | Monotonic ms. Headless/deterministic runs return `frame_index * 1000 / frame_rate`. |
+| `has` | `(name_ptr, name_len) -> i32` | `1` if the runner provides an import module (`"gasm:gfx"`) or a function in one (`"gasm.asset_size64"`, `"gasm:gfx.destroy"`, `"wasi_snapshot_preview1.random_get"`), else `0`. Probe optional features before calling them: a missing import traps. |
+| `time_ms` | `() -> f64` | Monotonic ms. Headless runs use virtual time: the start of the frame on a clock that advances `1000 / frame_rate` per frame, at the rate in effect at that frame's start (so changing the rate never moves time backwards). The value is fixed for the whole frame. |
 | `set_frame_rate` | `(hz: f64)` | 1–1000 Hz, otherwise ignored. |
 | `video_present` | `(ptr, w, h, stride)` | RGBA8 pixels (byte order R,G,B,A), `stride` bytes per row, `w,h ≤ 4096`. The data is copied before the call returns. The runner letterboxes it into its output. Ignored for display when the guest renders with `gasm:gfx` in the same frame. |
 | `audio_config` | `(rate, channels)` | Format for `audio_push`: 8–192 kHz, 1 or 2 channels. Default 44100/2. |
@@ -110,9 +134,11 @@ All pointers are `i32` offsets into guest memory. Strings are UTF-8 `(ptr, len)`
 | `gamepad` | `(slot, dst, cap) -> i32` | Gamepad or joystick in slot 0–3 as 204 bytes, see [Raw input](#raw-input). Copied only if `cap` ≥ 204; returns 204, or `-1` if `slot` > 3 or the runner has no gamepad support. |
 | `gamepad_name` | `(slot, dst, cap) -> i32` | Device name: its length (copied only if ≤ `cap`), or `-1` if the slot is empty. |
 | `text_input` | `(dst, cap) -> i32` | UTF-8 text typed since the previous frame, stable within one `gasm_frame`: backspace is `\b` (0x08), enter is `\n`. Returns its length (copied only if length ≤ `cap`; `cap = 0` queries), or `-1` if the runner has no keyboard. Keys bound to pads still produce text; the guest decides what it wants. Headless: from the `--input` script (`FRAME:"text"`). |
-| `asset_size` | `(name_ptr, name_len) -> i32` | Byte size, or `-1` if missing. |
-| `asset_read` | `(name_ptr, name_len, dst, cap) -> i32` | Copy ≤ `cap` bytes, return count or `-1`. |
-| `asset_read_at` | `(name_ptr, name_len, offset, dst, len) -> i32` | Copy up to `len` bytes starting at byte `offset` (streaming large assets). Returns bytes copied (0 at or after the end), or `-1` if missing. |
+| `asset_size` | `(name_ptr, name_len) -> i32` | Byte size, `-1` if missing, or `-2` if it is 2 GiB or larger (use `asset_size64`). |
+| `asset_size64` | `(name_ptr, name_len) -> i64` | Byte size (any size), or `-1` if missing. |
+| `asset_read` | `(name_ptr, name_len, dst, cap) -> i32` | Copy ≤ `cap` bytes from the start, return count or `-1`. |
+| `asset_read_at` | `(name_ptr, name_len, offset: u32, dst, len) -> i32` | Copy up to `len` bytes starting at byte `offset` (streaming large assets). Returns bytes copied (0 at or after the end), or `-1` if missing. |
+| `asset_read_at64` | `(name_ptr, name_len, offset: u64, dst, len) -> i32` | `asset_read_at` with a 64-bit offset, for assets of 4 GiB and more. |
 | `asset_count` | `() -> u32` | Number of assets. |
 | `asset_name` | `(index, dst, cap) -> i32` | Name of asset `index` (0 … `asset_count`−1), sorted by UTF-8 bytes; folder entries as named on disk. Returns its length (copied only if length ≤ `cap`; `cap = 0` queries), or `-1` if `index` is out of range. |
 | `param` | `(name_ptr, name_len, dst, cap) -> i32` | Launch parameter value: returns its byte length, or `-1` if unset. Copied only if length ≤ `cap`; call with `cap = 0` to query the length. |
@@ -154,20 +180,22 @@ Per-frame calls take only scalars.
 | `create_pipeline` | `(ptr, len) -> u32` | `GPURenderPipelineDescriptor` JSON, see below. |
 | `create_bind_group` | `(ptr, len) -> u32` | `{"layout":L,"entries":[…]}` (explicit layout) or `{"pipeline":P,"group":G,"entries":[…]}` (that pipeline's automatic layout). Entries: `{"binding":B,"buffer":H,"offset":O,"size":S}`, `{"binding":B,"texture":T}` (all mip levels), `{"binding":B,"sampler":S}`. |
 | `begin_frame` | `(r, g, b, a: f32) -> u32` | Start the frame's render pass, clearing color and depth. Viewport and scissor are the whole drawable. Returns `1` if the frame will be shown, `0` if the runner will discard it (catch-up frame, headless); the guest may then skip its draw calls. |
-| `set_pipeline` | `(p)` | |
-| `set_bind_group` | `(index, bg)` | |
+| `set_pipeline` | `(p)` | The pipeline must have one color target (the pass has one). |
+| `set_bind_group` | `(index, bg)` | `index` 0–3. A bind group with dynamic offsets needs `set_bind_group_offsets`. |
 | `set_bind_group_offsets` | `(index, bg, ptr, count)` | Like `set_bind_group`, with `count` `u32` dynamic offsets read from guest memory: one per dynamic-offset entry of the bind group's layout, in binding order, each a multiple of 256, and the bound range must stay inside the buffer. |
 | `set_viewport` | `(x, y, w, h, min_depth, max_depth: f32)` | Viewport in drawable pixels, clamped to the drawable; depth range within 0–1. |
 | `set_scissor_rect` | `(x, y, w, h)` | Scissor rectangle in drawable pixels, clamped to the drawable. |
-| `set_vertex_buffer` | `(slot, buf, offset)` | |
-| `set_index_buffer` | `(buf, format, offset)` | `format`: 0 = uint16, 1 = uint32. |
-| `draw` | `(vertex_count, instance_count, first_vertex, first_instance)` | |
-| `draw_indexed` | `(index_count, instance_count, first_index, base_vertex: i32, first_instance)` | |
+| `set_vertex_buffer` | `(slot, buf, offset)` | `slot` 0–7; the buffer needs `VERTEX` usage; `offset` a multiple of 4, at most the buffer size. |
+| `set_index_buffer` | `(buf, format, offset)` | `format`: 0 = uint16, 1 = uint32 (anything else traps); the buffer needs `INDEX` usage; `offset` a multiple of the index size, at most the buffer size. |
+| `draw` | `(vertex_count, instance_count, first_vertex, first_instance)` | Needs a pipeline, the bind groups its explicit layout lists, and a vertex buffer in every slot it reads, large enough for the vertices (per-vertex buffers) and instances (per-instance buffers) drawn. |
+| `draw_indexed` | `(index_count, instance_count, first_index, base_vertex: i32, first_instance)` | Like `draw` (per-instance buffers checked), plus an index buffer holding `first_index + index_count` indices. |
 | `end_frame` | `()` | Submit and present. |
+| `destroy` | `(handle)` | Release an object of any kind. The handle becomes invalid (using it, or destroying it again, traps) and is never reused. Objects created from it stay valid: a bind group keeps its buffers and textures, a pipeline its shaders. GPU memory is freed once nothing in a submitted frame uses it. |
 
-Draw and set calls outside `begin_frame`/`end_frame`, or after `begin_frame`
-returned 0, are validated and then ignored. If a viewport or scissor
-rectangle is empty after clamping, draws are skipped until it is set again.
+Set and draw calls are only valid between `begin_frame` and `end_frame` (also
+when `begin_frame` returned 0: they are validated, then nothing is drawn).
+Outside a frame they trap. If a viewport or scissor rectangle is empty after
+clamping, draws are skipped until it is set again.
 
 **Pipeline descriptor.** It is WebGPU's, with these rules:
 
@@ -211,13 +239,18 @@ shader output is written as is, without gamma conversion. Sampling an
 up to 16 (the device may clamp it), dynamic offsets aligned to 256. These are
 WebGPU's default limits, so every WebGPU device provides them.
 
-**Validation.** Invalid descriptors, WGSL errors, out-of-range mip levels or
-regions, a `len` that doesn't match `w*h*4`, handles of the wrong kind,
-misaligned or out-of-bounds dynamic offsets, and bind groups that don't match
-their layout all trap the guest with a message. The runners check textures,
-samplers, layouts and offsets against their own record of every object, so
-this happens identically with the null GPU of headless runs. Not in this
-subset: render targets, cube maps, storage textures, compute, stencil.
+**Validation.** Invalid descriptors, out-of-range mip levels or regions, a
+`len` that doesn't match `w*h*4`, handles of the wrong kind (or destroyed),
+buffer ranges and usages, misaligned or out-of-bounds dynamic offsets, bind
+groups that don't match their layout or pipeline, and draws that read past
+their vertex or index buffers all trap the guest with a message. The runners
+check these against their own record of every object and of the render pass
+(same rules, same order), so they trap identically with the null GPU of
+headless runs and on every runner. What only a GPU can check (WGSL errors, a
+shader that doesn't match its pipeline or bind groups) traps on the GPU: at the
+call natively, at the next gfx call in browsers (WebGPU reports errors
+asynchronously). Not in this subset: render targets, cube maps, storage
+textures, compute, stencil.
 
 **Hashing.** Headless runners fold every `write_buffer` payload into the video
 hash, and for `write_texture` first a header (`tex, mip, x, y, w, h` as
@@ -236,11 +269,13 @@ frame.
 
 | Import | Signature | Semantics |
 |---|---|---|
-| `open` | `(url_ptr, len) -> i32` | Open a `ws://` or `wss://` URL. Handle > 0, or `-1` if denied or invalid. TLS uses the platform's trusted certificates. |
-| `state` | `(conn) -> u32` | `0` connecting, `1` open, `2` closed, `3` error. |
-| `send` | `(conn, ptr, len) -> i32` | One message (`len > 0`). `0` ok, `-1` not open. |
+| `open` | `(url_ptr, len) -> i32` | Open a `ws://` or `wss://` URL. Handle > 0, or `-1` if denied, invalid or too many are open (16). TLS uses the platform's trusted certificates. |
+| `state` | `(conn) -> u32` | `0` connecting, `1` open, `2` closed, `3` error. A closed handle reports `2`. |
+| `send` | `(conn, ptr, len) -> i32` | One message (`len > 0`). `0` ok, `-1` if not open or the send queue is full (4096 messages). |
 | `recv` | `(conn, dst, cap) -> i32` | Next message's length (copied only if ≤ `cap`; otherwise it stays queued), `0` if none waiting, `-1` if closed or failed and drained. |
-| `close` | `(conn)` | |
+| `close` | `(conn)` | Close, after flushing what was sent; closing again does nothing. |
+
+A handle `open` never returned traps (as gfx handles do).
 
 **Permission.** Networking is off by default natively (`gasm-run --allow-net`)
 and on in the browser runner, where the browser's own rules apply.
@@ -259,7 +294,7 @@ By default the namespace is the game file's name (`sumo.wasm` → `sumo`).
 | Import | Signature | Semantics |
 |---|---|---|
 | `get` | `(key_ptr, key_len, dst, cap) -> i32` | Value length, or `-1` if the key doesn't exist. Copied only if length ≤ `cap` (call with `cap = 0` to query the size). |
-| `set` | `(key_ptr, key_len, data_ptr, data_len) -> i32` | Store a value: `0`, or `-1` on an invalid key, size or quota violation, or I/O error. |
+| `set` | `(key_ptr, key_len, data_ptr, data_len) -> i32` | Store a value: `0`, or `GASM_STORAGE_ERR_KEY` (-1) invalid key, `_SIZE` (-2) value over 1 MiB, `_QUOTA` (-3) namespace full, `_IO` (-4) the runner couldn't write it. |
 | `delete` | `(key_ptr, key_len) -> i32` | `0` if deleted, `-1` if it didn't exist. |
 | `count` | `() -> u32` | Number of keys in the namespace. |
 | `key` | `(index, dst, cap) -> i32` | Key `index` (0 … `count`−1, sorted): its length (copied only if ≤ `cap`; `cap = 0` queries), or `-1` if out of range. Lets games list save slots. |
@@ -278,11 +313,26 @@ IndexedDB database `gasm`, keys `<namespace>/<key>`, per site origin.
 ## WASI subset
 
 Guests may import `wasi_snapshot_preview1` (C with wasi-libc does; Rust on
-`wasm32-unknown-unknown` only needs `proc_exit` via `gasm::exit`). Runners
-guarantee: `fd_write` (fd 1/2 → log), `fd_close`, `fd_seek` (ESPIPE),
-`fd_fdstat_get` (fds 0–2), `clock_time_get`, `random_get`, `args_*`,
-`environ_*` (empty), `proc_exit`. Other WASI functions may exist but may
-return `ENOSYS` (52). There is **no filesystem**; use assets.
+`wasm32-unknown-unknown` only needs `proc_exit` via `gasm::exit`). Every runner
+implements exactly this, with the same results:
+
+| Function | Result |
+|---|---|
+| `fd_write` | fd 1 and 2 go to the runner's **log** (never to its stdout, which carries the hash lines of headless runs); other fds `EBADF` (8) |
+| `fd_close` | success |
+| `fd_seek` | `ESPIPE` (70) |
+| `fd_fdstat_get` | fds 0–2: a character device; others `EBADF` |
+| `fd_prestat_get` | `EBADF`: no preopened directories (wasi-libc stops looking) |
+| `clock_time_get`, `clock_res_get` | clocks 0–3 (`EINVAL` beyond). Headless: **virtual time** (as `time_ms`; the realtime clock counts from 1970-01-01 00:00 UTC). Otherwise real time; resolution 1 µs |
+| `random_get` | OS randomness; headless: a **fixed sequence** (splitmix64 from 0, little-endian), so runs are reproducible |
+| `args_*`, `environ_*` | empty |
+| `sched_yield` | success |
+| `proc_exit` | ends the game |
+
+Anything else the guest imports from `wasi_snapshot_preview1` exists and
+returns `ENOSYS` (52), so wasi-libc functions that need more (files, sockets,
+`poll_oneoff` sleeps) fail without trapping. There is **no filesystem**; use
+assets and storage (the C SDK's `gasm_vfile.h` gives both a `FILE*`).
 
 ## Raw input
 
@@ -333,12 +383,16 @@ report their buttons and axes in device order, without the `STANDARD` flag;
 
 ## Determinism
 
-Given the same module, assets, params and per-frame input, a guest that only
-uses `gasm.*` (no WASI clocks or random) must produce bit-identical
-`video_present`/`audio_push`/`write_buffer`/`write_texture` streams on every runner. The
-runners verify this with FNV-1a-32 hashes (`make test`). One caveat: wasm NaN
-bit patterns are nondeterministic by spec. Guests that hash or store NaN
-payloads can diverge.
+Given the same module, assets, params and per-frame input, a guest must produce
+bit-identical `video_present`/`audio_push`/`write_buffer`/`write_texture`
+streams on every runner in headless runs (WASI clocks and `random_get` are
+virtual there too). The runners verify this with FNV-1a-32 hashes against golden
+values on Linux, macOS and Windows (`make test`, `tests/golden/determinism.txt`).
+Caveats: wasm NaN bit patterns are nondeterministic by spec (guests that hash
+or store NaN payloads can diverge), and a guest that reads uninitialized or
+freed memory gets the same bytes on every runner, but different ones when its
+own allocations change (the DOOM renderer reads past some lumps, so changes to
+its glue can change its hashes).
 
 ## Runner behaviour
 
@@ -349,15 +403,16 @@ same everywhere.
 ### Assets
 
 - **File-backed, never preloaded (native, Node folders):** assets given by path
-  are opened, not read. `asset_size` comes from file metadata; `asset_read`
-  and `asset_read_at` do positioned reads straight into guest memory. A
-  200 MB asset streamed at random offsets costs no extra RAM (measured:
-  23.8 MB max RSS vs 23.7 MB with a tiny asset). A file that shrinks or
-  disappears while running yields fewer bytes (possibly 0) or `-1`; runners
-  never crash.
-- **Size limit:** sizes are 32-bit (`asset_size -> i32`). Files over
-  2 GiB − 1 are refused at start-up with an error (folder entries that large
-  are skipped with a warning).
+  are not read up front. `asset_size` comes from file metadata (folder
+  entries: as found at start-up); `asset_read` and `asset_read_at` do
+  positioned reads straight into guest memory. Folder entries are opened on
+  first read and kept in a small cache (64 open files), so CD-sized trees
+  don't hit the open-file limit. A 200 MB asset streamed at random offsets
+  costs no extra RAM (measured: 24.9 MB max RSS vs 25.3 MB with a tiny
+  asset). A file that shrinks, disappears or is replaced by a symlink while
+  running yields fewer bytes (possibly 0); runners never crash.
+- **Sizes** are 64-bit (`asset_size64`, `asset_read_at64`): any file works.
+  `asset_size` reports assets of 2 GiB and more as `-2`.
 - **Folders:** a folder exposes every regular file under it, recursively.
   The asset name is the `/`-separated path relative to the folder, as stored
   (`ART/ART.CAR`), optionally with a prefix (`cd/ART/ART.CAR`). The set of
@@ -380,9 +435,9 @@ same everywhere.
 
 Games can run in a dedicated Worker (`@emdzej/gasm-host/worker`). The page
 keeps input, display and audio.
-- **Per frame:** input (pads and typed text) for each frame is sent before
-  it runs and is stable within it. The worker returns the latest RGBA frame
-  and the audio. Buffers are *transferred*, so there's no
+- **Per frame:** input (pads, typed text, raw keyboard/pointer/gamepads) for
+  each frame is sent before it runs and is stable within it. The worker
+  returns the latest RGBA frame and the audio. Buffers are *transferred*, so there's no
   `SharedArrayBuffer` and no COOP/COEP requirement (GitHub Pages works).
 - **Unchanged:** frame pacing, the catch-up rule (only the last frame of a
   batch is shown) and `begin_frame` semantics.
@@ -404,9 +459,9 @@ keeps input, display and audio.
   Main-thread mode remains the default.
 
 Measured (Chrome, macOS): streaming 10 GB of random 64 KB reads from a
-200 MB OPFS file in Worker mode, the renderer's resident memory grew about
-20 MB (about 40 MB with a 1 MB file: it doesn't grow with the data read),
-and the hashes matched the Node runner reading the same files from disk.
+200 MB OPFS file in Worker mode, the renderer's resident memory peaked 3 MB
+above where it started (11 MB with a 1 MB file: it doesn't grow with the data
+read), and the hashes matched the Node runner reading the same files from disk.
 
 ### Keyboard layouts
 
@@ -434,7 +489,8 @@ Closing the window or the page also quits.
 
 `--input` (both headless runners) takes comma-separated `FRAMES:ACTION` items;
 `FRAMES` is `N` or `FROM-TO` (inclusive). Commas inside quotes or parentheses
-don't split items.
+don't split items. Numbers are plain decimals (no hex, `inf` or `nan`); both
+runners accept and reject the same scripts.
 
 | Action | |
 |---|---|
@@ -456,9 +512,10 @@ imports never return `-1` there, and the cursor modes count as achieved.
 - Capabilities manifest (custom section `gasm.manifest`) that declares required
   and optional imports, network hosts, and platform extensions (`gasm:ext/*`).
 - Runner-level rollback netplay (snapshot/restore guest memory).
-- Optional `gasm_main` export with a blocking `wait_frame` import, for guests
+- Optional `gasm_run` export with a blocking `wait_frame` import, for guests
   with their own loop and no Asyncify (code size, speed): runners suspend the
   guest's stack instead (wasmtime async, JSPI in browsers). `gasm_frame` stays
   the default; the SDK loop helpers can switch over without changing games.
+- Batched gfx commands (one call per frame for draw-heavy guests).
 - `gasm:gl`: OpenGL ES 3.0 with WebGL 2 rules (see `design/gasm-gl.md`).
 - Move to WIT/Component Model once browser support doesn't need transpiling.

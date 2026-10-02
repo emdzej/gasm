@@ -11,6 +11,8 @@ rm -rf "$PKG"; mkdir -p "$PKG/games"
 cp "$BIN/gasm-run$EXE" "$BIN/gasm-relay$EXE" "$PKG/"
 cp build/sumo.wasm build/nes.wasm build/doom.wasm build/triangle.wasm build/test-pattern.wasm build/inputtest.wasm build/scummvm.wasm \
   build/sdl3-snake.wasm build/sdl3-woodeneye.wasm "$PKG/games/"
+# license notices of the third-party code in the games (scripts/third-party-notices.sh)
+[ -f build/THIRD-PARTY.txt ] && cp build/THIRD-PARTY.txt "$PKG/games/"
 cat > "$PKG/games/scummvm-LICENSE.txt" <<TXT
 scummvm.wasm is ScummVM for gasm, licensed under the GNU General Public License
 version 3. Its complete source code is gasm-$VERSION-scummvm-src.tar.gz,
@@ -78,7 +80,7 @@ else
   printf '@echo off\r\nrem run-nes.cmd path\\to\\game.nes\r\ncd /d "%%~dp0"\r\ngasm-run.exe games\\nes.wasm --rom %%1\r\n' > "$PKG/run-nes.cmd"
   printf '@echo off\r\ncd /d "%%~dp0"\r\ngasm-relay.exe 0.0.0.0:9000\r\n' > "$PKG/run-relay.cmd"
   printf '@echo off\r\nrem run-scummvm.cmd path\\to\\game-folder (detects the game and starts it)\r\ncd /d "%%~dp0"\r\ngasm-run.exe games\\scummvm.wasm --asset-dir %%1 --param "args=--auto-detect -p /"\r\n' > "$PKG/run-scummvm.cmd"
-  printf '@echo off\r\nrem run-doom.cmd path\\to\\doom1.wad (any IWAD: doom1.wad, doom.wad, doom2.wad, Freedoom)\r\ncd /d "%%~dp0"\r\ngasm-run.exe games\\doom.wasm --asset wad=%%1\r\n' > "$PKG/run-doom.cmd"
+  printf '@echo off\r\nrem run-doom.cmd path\\to\\doom1.wad [DOOM options, e.g. -warp 1 1 -skill 4] (any IWAD: doom1.wad, doom.wad, doom2.wad, Freedoom)\r\ncd /d "%%~dp0"\r\ngasm-run.exe games\\doom.wasm --asset wad=%%1 --param "args=%%2 %%3 %%4 %%5 %%6 %%7 %%8 %%9"\r\n' > "$PKG/run-doom.cmd"
 fi
 
 cat > "$PKG/README.txt" <<TXT

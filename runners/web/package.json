@@ -24,13 +24,15 @@
   "files": [
     "gasm-host.js",
     "gasm-host.d.ts",
+    "lib/",
     "webgpu-gfx.js",
     "webgpu-gfx.d.ts",
+    "gasm-worker.js",
+    "gasm-worker.d.ts",
     "headless.mjs",
     "input-script.mjs",
     "README.md",
-    "gasm-worker.js",
-    "gasm-worker.d.ts"
+    "LICENSE"
   ],
   "engines": {
     "node": ">=22"
@@ -52,9 +54,11 @@
     "directory": "runners/web"
   },
   "bugs": "https://github.com/emdzej/gasm/issues",
-  "author": "Micha\u0142 Jask\u00f3lski",
+  "author": "Michał Jaskólski",
   "license": "MIT",
-  "sideEffects": false,
+  "sideEffects": [
+    "./gasm-worker.js"
+  ],
   "publishConfig": {
     "access": "public"
   },

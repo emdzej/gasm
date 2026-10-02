@@ -14,7 +14,7 @@
 
 BUILD    := build
 
-# --- Rust guests (guests/: gasm crate, sumo, nes, triangle) -----------------------
+# --- Rust guests (guests/: the gasm SDK crate and the Rust games) -------------------
 # Rust guests need a rustup toolchain with the wasm32-unknown-unknown target
 # (Homebrew's rust has no wasm targets). Linking uses wasi-sdk's wasm-ld.
 RUSTUP   ?= $(shell command -v rustup 2>/dev/null || echo /opt/homebrew/opt/rustup/bin/rustup)
@@ -22,7 +22,9 @@ TOOLCHAIN ?= stable
 RUSTC_W  := $(shell $(RUSTUP) which --toolchain $(TOOLCHAIN) rustc 2>/dev/null)
 CARGO_W  := $(shell $(RUSTUP) which --toolchain $(TOOLCHAIN) cargo 2>/dev/null)
 RUST_OUT := guests/target/wasm32-unknown-unknown/release
-RUST_SRC := $(shell find guests/gasm guests/sumo guests/nes guests/triangle guests/textured guests/inputtest guests/loopdemo guests/assetcheck -name '*.rs' -o -name Cargo.toml) guests/Cargo.toml
+RUST_GAMES := sumo nes triangle textured inputtest loopdemo assetcheck
+RUST_SRC := $(shell find guests/gasm $(addprefix guests/,$(RUST_GAMES)) -name '*.rs' -o -name Cargo.toml 2>/dev/null) \
+  guests/Cargo.toml guests/Cargo.lock guests/.cargo/config.toml
 
 # --- C guest (guests/test-pattern) via wasi-sdk -------------------------------------
 WASI_SDK ?= $(CURDIR)/tools/wasi-sdk
@@ -30,17 +32,47 @@ CC       := $(WASI_SDK)/bin/clang
 TARGET   := --target=wasm32-wasip1
 REACTOR  := -mexec-model=reactor
 OPT      := -O2 -DNDEBUG
+# the compiler: a real prerequisite, so a toolchain update rebuilds what it compiled
+CLANG    := $(WASI_SDK)/bin/clang
+WASM_OPT ?= $(CURDIR)/tools/binaryen/bin/wasm-opt
+# Asyncify for games with their own main loop (sdk/c/src/gasm_loop.c): gasm_loop_frame
+# is the frame that must not unwind; --asyncify runs before -O2
+ASYNCIFY := --asyncify --pass-arg=asyncify-removelist@gasm_loop_frame
+# Every module gets a final wasm-opt -O2 (measured: DOOM 14%, NES 16%, sumo 31% smaller;
+# speed unchanged within noise; hashes unchanged). $(call wasm_opt,flags) turns $@.raw into $@.
+wasm_opt = $(WASM_OPT) $@.raw $(1) -O2 -o $@ && rm -f $@.raw
+
+# Flag stamps: $(call flags,<name>,<text>) is a file that changes only when <text> does,
+# so targets that depend on it rebuild when their flags change, not on every Makefile edit.
+FLAGS_DIR := $(BUILD)/.flags
+flags = $(FLAGS_DIR)/$(1)
+define flag_rule
+$(FLAGS_DIR)/$(1): FORCE
+	@mkdir -p $$(@D)
+	@echo '$(2)' | cmp -s - $$@ || echo '$(2)' > $$@
+endef
 
 GUESTS   := $(BUILD)/test-pattern.wasm $(BUILD)/nes.wasm $(BUILD)/sumo.wasm $(BUILD)/triangle.wasm $(BUILD)/textured.wasm $(BUILD)/inputtest.wasm $(BUILD)/loopdemo.wasm $(BUILD)/loopdemo-c.wasm $(BUILD)/assetcheck.wasm $(BUILD)/doom.wasm $(BUILD)/scummvm.wasm \
   $(BUILD)/sdl3-snake.wasm $(BUILD)/sdl3-woodeneye.wasm $(BUILD)/sdl3-callbacks.wasm $(BUILD)/sdl3-classic.wasm
 
-.PHONY: all guests native test web relay roms parity clean rust-toolchain doom scummvm sdl3
+.PHONY: all guests native test web relay roms parity clean rust-toolchain doom scummvm sdl3 FORCE
 all: guests native
 
 guests: $(GUESTS)
 
-$(WASI_SDK)/bin/clang:
+FORCE:
+
+# fetched toolchains (only when using the default locations under tools/)
+ifeq ($(WASI_SDK),$(CURDIR)/tools/wasi-sdk)
+$(CLANG): scripts/fetch-wasi-sdk.sh scripts/lib.sh
 	scripts/fetch-wasi-sdk.sh
+	@touch $@
+endif
+ifeq ($(WASM_OPT),$(CURDIR)/tools/binaryen/bin/wasm-opt)
+$(WASM_OPT): scripts/fetch-binaryen.sh scripts/lib.sh
+	scripts/fetch-binaryen.sh
+	@touch $@
+endif
 
 rust-toolchain:
 	@test -n "$(CARGO_W)" || { echo "rustup toolchain '$(TOOLCHAIN)' not found; install rustup, then: rustup toolchain install $(TOOLCHAIN) --target wasm32-unknown-unknown"; exit 1; }
@@ -63,21 +95,27 @@ DOOM_WARN := -Wno-implicit-function-declaration -Wno-int-conversion -Wno-incompa
   -Wno-pointer-sign -Wno-dangling-else -Wno-parentheses -Wno-format -Wno-unused-value \
   -Wno-return-type -Wno-deprecated-non-prototype -Wno-string-concatenation -Wno-absolute-value
 
+DOOM_FLAGS := $(TARGET) $(REACTOR) $(OPT) $(DOOM_DEFS) $(DOOM_WARN) -Wl,-z,stack-size=1048576
+
 doom: $(BUILD)/doom.wasm
 
-$(DOOM_SRC)/.version: scripts/fetch-doom.sh guests/doom/engine.patch
+$(DOOM_SRC)/.version: scripts/fetch-doom.sh scripts/lib.sh guests/doom/engine.patch
 	scripts/fetch-doom.sh
+	@touch $@
 
-$(BUILD)/doom.wasm: $(DOOM_GLUE) guests/doom/gasm_doom.h guests/doom/prelude.h spec/gasm.h $(DOOM_SRC)/.version | $(WASI_SDK)/bin/clang
+$(eval $(call flag_rule,doom,$(DOOM_FLAGS) $(DOOM_ENGINE)))
+
+$(BUILD)/doom.wasm: $(DOOM_GLUE) $(wildcard guests/doom/*.h guests/doom/shim/*) sdk/c/src/gasm_vfile.c sdk/c/include/gasm_vfile.h \
+    spec/gasm.h $(DOOM_SRC)/.version $(call flags,doom) $(CLANG) $(WASM_OPT)
 	@mkdir -p $(@D)
-	$(CC) $(TARGET) $(REACTOR) $(OPT) $(DOOM_DEFS) $(DOOM_WARN) -include guests/doom/prelude.h \
-	  -Iguests/doom/shim -Iguests/doom -I$(DOOM_SRC) -Ispec \
-	  $(DOOM_GLUE) $(addprefix $(DOOM_SRC)/,$(addsuffix .c,$(DOOM_ENGINE))) \
-	  -Wl,-z,stack-size=1048576 -o $@ -lm
+	$(CC) $(DOOM_FLAGS) -include guests/doom/prelude.h \
+	  -Iguests/doom/shim -Iguests/doom -I$(DOOM_SRC) -Ispec -Isdk/c/include \
+	  $(DOOM_GLUE) sdk/c/src/gasm_vfile.c $(addprefix $(DOOM_SRC)/,$(addsuffix .c,$(DOOM_ENGINE))) \
+	  -o $@.raw -lm
+	$(call wasm_opt)
 
 # --- ScummVM (guests/scummvm): GPL-3.0 sources fetched at build, gasm backend + Asyncify ---
 SCUMMVM_SRC     := tools/scummvm-src
-WASM_OPT        ?= $(CURDIR)/tools/binaryen/bin/wasm-opt
 SCUMMVM_ENGINES ?= sky scumm scumm_7_8 he drascula
 # __DATE__/__TIME__ in ScummVM's version string: the release date, so builds are
 # reproducible (and the in-game menu, which shows it, hashes the same everywhere)
@@ -95,35 +133,45 @@ SCUMMVM_CONFIG  := --host=wasm32-gasm --backend=gasm --disable-all-engines \
   --disable-lua --disable-tinygl --disable-opengl-game --disable-system-dialogs \
   --disable-eventrecorder --disable-translation \
   $(foreach l,zlib mad vorbis ogg flac,--enable-$(l) --with-$(l)-prefix=$(SCUMMVM_LIBS))
-SCUMMVM_SRCS := $(wildcard guests/scummvm/backend/*) guests/scummvm/configure.patch sdk/c/src/gasm_loop.c sdk/c/include/gasm_loop.h
+SCUMMVM_SRCS := $(wildcard guests/scummvm/backend/*) sdk/c/src/gasm_loop.c sdk/c/include/gasm_loop.h
+SCUMMVM_ENV  := CXX="$(WASI_SDK)/bin/clang++ --target=wasm32-wasip1 --sysroot=$(WASI_SDK)/share/wasi-sysroot" \
+  CC="$(WASI_SDK)/bin/clang --target=wasm32-wasip1 --sysroot=$(WASI_SDK)/share/wasi-sysroot" \
+  AR="$(WASI_SDK)/bin/llvm-ar" RANLIB="$(WASI_SDK)/bin/llvm-ranlib" STRIP="$(WASI_SDK)/bin/llvm-strip" \
+  CXXFLAGS="-I$(CURDIR)/spec -fno-exceptions -DGASM_LOOP_STACK_SIZE=4194304" LDFLAGS="-mexec-model=reactor -Wl,-z,stack-size=8388608 -Wl,--wrap=exit"
 
 scummvm: $(BUILD)/scummvm.wasm
 
-$(WASM_OPT):
-	scripts/fetch-binaryen.sh
-
-$(SCUMMVM_SRC)/.gasm-version: scripts/fetch-scummvm.sh $(SCUMMVM_SRCS)
+# pristine sources + patched configure; the backend is synced by the scummvm.wasm recipe
+# (the scripts leave unchanged stamps alone, so recipes touch their target: make
+# then sees it as up to date)
+$(SCUMMVM_SRC)/.gasm-configure: scripts/fetch-scummvm.sh scripts/lib.sh guests/scummvm/configure.patch
 	scripts/fetch-scummvm.sh
+	@touch $@
 
-# configure again only when the patch, the engines or the flags change
-$(SCUMMVM_LIBS)/.gasm-libs: scripts/build-scummvm-libs.sh | $(WASI_SDK)/bin/clang
+$(SCUMMVM_LIBS)/.gasm-libs: scripts/build-scummvm-libs.sh scripts/lib.sh $(CLANG)
 	scripts/build-scummvm-libs.sh
+	@touch $@
 
-$(SCUMMVM_SRC)/config.mk: $(SCUMMVM_SRC)/.gasm-version $(SCUMMVM_LIBS)/.gasm-libs Makefile | $(WASI_SDK)/bin/clang
-	cd $(SCUMMVM_SRC) && CXX="$(WASI_SDK)/bin/clang++ --target=wasm32-wasip1 --sysroot=$(WASI_SDK)/share/wasi-sysroot" \
-	  CC="$(WASI_SDK)/bin/clang --target=wasm32-wasip1 --sysroot=$(WASI_SDK)/share/wasi-sysroot" \
-	  AR="$(WASI_SDK)/bin/llvm-ar" RANLIB="$(WASI_SDK)/bin/llvm-ranlib" STRIP="$(WASI_SDK)/bin/llvm-strip" \
-	  CXXFLAGS="-I$(CURDIR)/spec -fno-exceptions -DGASM_LOOP_STACK_SIZE=4194304" LDFLAGS="-mexec-model=reactor -Wl,-z,stack-size=8388608 -Wl,--wrap=exit" \
-	  ./configure $(SCUMMVM_CONFIG)
+# configure again only when the patch, the libraries, the compiler or the flags change
+$(eval $(call flag_rule,scummvm-configure,$(SCUMMVM_ENV) $(SCUMMVM_CONFIG)))
+$(eval $(call flag_rule,scummvm-data,$(SCUMMVM_DATA)))
 
-# Asyncify after linking: gasm_loop_frame is the frame that must not unwind (sdk/c/src/gasm_loop.c)
-$(SCUMMVM_SRC)/backends/platform/gasm/gasm-data.cpp: $(SCUMMVM_SRC)/.gasm-version scripts/embed-files.mjs Makefile
+$(SCUMMVM_SRC)/config.mk: $(SCUMMVM_SRC)/.gasm-configure $(SCUMMVM_LIBS)/.gasm-libs $(call flags,scummvm-configure) $(CLANG)
+	scripts/fetch-scummvm.sh
+	cd $(SCUMMVM_SRC) && $(SCUMMVM_ENV) ./configure $(SCUMMVM_CONFIG)
+	@touch $@   # configure keeps an unchanged config.mk as it was
+
+$(SCUMMVM_SRC)/backends/platform/gasm/gasm-data.cpp: $(SCUMMVM_SRC)/.gasm-configure scripts/embed-files.mjs $(call flags,scummvm-data)
+	@mkdir -p $(@D)
 	node scripts/embed-files.mjs $@ $(foreach f,$(SCUMMVM_DATA),$(f)=$(SCUMMVM_SRC)/dists/engine-data/$(f))
 
-$(BUILD)/scummvm.wasm: $(SCUMMVM_SRC)/config.mk $(SCUMMVM_SRCS) $(SCUMMVM_SRC)/backends/platform/gasm/gasm-data.cpp | $(WASM_OPT)
+# ScummVM's own make recompiles what changed (fetch-scummvm.sh copies only changed
+# backend files); Asyncify after linking
+$(BUILD)/scummvm.wasm: $(SCUMMVM_SRC)/config.mk $(SCUMMVM_SRCS) $(SCUMMVM_SRC)/backends/platform/gasm/gasm-data.cpp $(WASM_OPT)
+	scripts/fetch-scummvm.sh
 	SOURCE_DATE_EPOCH=$(SCUMMVM_DATE) $(MAKE) -C $(SCUMMVM_SRC) -j$$(getconf _NPROCESSORS_ONLN) scummvm
 	@mkdir -p $(@D)
-	$(WASM_OPT) $(SCUMMVM_SRC)/scummvm --asyncify --pass-arg=asyncify-removelist@gasm_loop_frame -O2 -o $@
+	$(WASM_OPT) $(SCUMMVM_SRC)/scummvm $(ASYNCIFY) -O2 -o $@
 
 # --- SDL3 (sdk/sdl3): SDL as a "private platform" with gasm drivers ------------------
 # SDL (zlib) is fetched into tools/SDL3-src; sdk/sdl3 has the config and the drivers.
@@ -142,7 +190,7 @@ SDL_DIRS  := src src/atomic src/audio src/camera src/camera/dummy src/core src/c
 SDL_SKIP  := src/audio/SDL_audiodev.c src/io/generic/SDL_asyncio_generic.c
 SDL_GLUE  := $(wildcard sdk/sdl3/src/*.c)
 SDL_OBJS   = $(patsubst $(SDL_SRC)/%.c,$(SDL_OBJ)/%.o,$(SDL_CSRC)) \
-  $(patsubst sdk/sdl3/src/%.c,$(SDL_OBJ)/gasm/%.o,$(SDL_GLUE)) $(SDL_OBJ)/gasm/gasm_loop.o
+  $(patsubst sdk/sdl3/src/%.c,$(SDL_OBJ)/gasm/%.o,$(SDL_GLUE)) $(SDL_OBJ)/gasm/gasm_loop.o $(SDL_OBJ)/gasm/gasm_vfile.o
 SDL_CFLAGS := $(TARGET) $(OPT) -DSDL_PLATFORM_PRIVATE -D_GNU_SOURCE -Isdk/sdl3/include \
   -I$(SDL_SRC)/include -I$(SDL_SRC)/include/build_config -I$(SDL_SRC)/src -Ispec -Isdk/c/include \
   -Wno-deprecated-declarations
@@ -151,11 +199,15 @@ SDL_LIB   := $(SDL_OUT)/lib/libSDL3.a
 
 sdl3: $(SDL_LIB)
 
-$(SDL_SRC)/.gasm-3.4.16: scripts/fetch-sdl3.sh
+$(SDL_SRC)/.version: scripts/fetch-sdl3.sh scripts/lib.sh
 	scripts/fetch-sdl3.sh
+	@touch $@
+
+$(eval $(call flag_rule,sdl3-sources,$(SDL_DIRS) $(SDL_SKIP)))
+$(eval $(call flag_rule,sdl3-cflags,$(SDL_CFLAGS)))
 
 # The SDL files that are compiled (make reads this list, generated after the fetch)
-$(SDL_OUT)/sources.mk: $(SDL_SRC)/.gasm-3.4.16 Makefile
+$(SDL_OUT)/sources.mk: $(SDL_SRC)/.version $(call flags,sdl3-sources)
 	@mkdir -p $(@D)
 	@echo "SDL_CSRC := $$(ls $(foreach d,$(SDL_DIRS),$(SDL_SRC)/$(d)/*.c) | grep -v -F $(foreach f,$(SDL_SKIP),-e $(f)) | tr '\n' ' ')" > $@
 # (only for goals that build guests: `make clean`, `make native` etc. don't fetch SDL)
@@ -166,17 +218,21 @@ endif
 # SDL's files can't open anything by path on gasm: fopen goes to assets and storage
 $(SDL_OBJ)/src/io/SDL_iostream.o: SDL_EXTRA := -Dfopen=SDL_GASM_fopen
 
-$(SDL_OBJ)/%.o: $(SDL_SRC)/%.c $(SDL_HDRS) | $(WASI_SDK)/bin/clang
+$(SDL_OBJ)/%.o: $(SDL_SRC)/%.c $(SDL_HDRS) $(call flags,sdl3-cflags) $(CLANG)
 	@mkdir -p $(@D)
 	@$(CC) $(SDL_CFLAGS) $(SDL_EXTRA) -c $< -o $@
 
-$(SDL_OBJ)/gasm/%.o: sdk/sdl3/src/%.c $(SDL_HDRS) | $(WASI_SDK)/bin/clang
+$(SDL_OBJ)/gasm/%.o: sdk/sdl3/src/%.c $(SDL_HDRS) $(call flags,sdl3-cflags) $(CLANG)
 	@mkdir -p $(@D)
 	$(CC) $(SDL_CFLAGS) -c $< -o $@
 
-$(SDL_OBJ)/gasm/gasm_loop.o: sdk/c/src/gasm_loop.c sdk/c/include/gasm_loop.h | $(WASI_SDK)/bin/clang
+$(SDL_OBJ)/gasm/gasm_loop.o: sdk/c/src/gasm_loop.c sdk/c/include/gasm_loop.h $(CLANG)
 	@mkdir -p $(@D)
 	$(CC) $(TARGET) $(OPT) -Ispec -Isdk/c/include -c $< -o $@
+
+$(SDL_OBJ)/gasm/gasm_vfile.o: sdk/c/src/gasm_vfile.c sdk/c/include/gasm_vfile.h spec/gasm.h $(CLANG)
+	@mkdir -p $(@D)
+	$(CC) $(TARGET) $(OPT) -D_GNU_SOURCE -Ispec -Isdk/c/include -c $< -o $@
 
 $(SDL_LIB): $(SDL_OBJS) $(wildcard sdk/sdl3/cmake/*.cmake)
 	@mkdir -p $(@D) $(SDL_OUT)/include/SDL3
@@ -186,48 +242,53 @@ $(SDL_LIB): $(SDL_OBJS) $(wildcard sdk/sdl3/cmake/*.cmake)
 	@mkdir -p $(SDL_OUT)/lib/cmake/SDL3 && cp sdk/sdl3/cmake/*.cmake $(SDL_OUT)/lib/cmake/SDL3/
 
 # SDL3 games: SDL's own demos (public domain) and sdk/sdl3/examples, unchanged
-SDL_LINK = $(CC) $(TARGET) $(REACTOR) $(OPT) -Wl,--strip-debug -I$(SDL_OUT)/include $(1) $(SDL_LIB) -lm -o $@
+SDL_LINK = $(CC) $(TARGET) $(REACTOR) $(OPT) -Wl,--strip-debug -I$(SDL_OUT)/include $(1) $(SDL_LIB) -lm -o $@.raw
 
-$(BUILD)/sdl3-snake.wasm: $(SDL_SRC)/examples/demo/01-snake/snake.c $(SDL_LIB)
+$(BUILD)/sdl3-snake.wasm: $(SDL_SRC)/examples/demo/01-snake/snake.c $(SDL_LIB) $(WASM_OPT)
 	$(call SDL_LINK,$<)
+	$(call wasm_opt)
 
-$(BUILD)/sdl3-woodeneye.wasm: $(SDL_SRC)/examples/demo/02-woodeneye-008/woodeneye-008.c $(SDL_LIB)
+$(BUILD)/sdl3-woodeneye.wasm: $(SDL_SRC)/examples/demo/02-woodeneye-008/woodeneye-008.c $(SDL_LIB) $(WASM_OPT)
 	$(call SDL_LINK,$<)
+	$(call wasm_opt)
 
-$(BUILD)/sdl3-callbacks.wasm: sdk/sdl3/examples/callbacks/main.c $(SDL_LIB)
+$(BUILD)/sdl3-callbacks.wasm: sdk/sdl3/examples/callbacks/main.c $(SDL_LIB) $(WASM_OPT)
 	$(call SDL_LINK,$<)
+	$(call wasm_opt)
 
 # a classic main() loop: Asyncify, like any gasm_loop game
-$(BUILD)/sdl3-classic.wasm: sdk/sdl3/examples/classic/main.c $(SDL_LIB) | $(WASM_OPT)
-	$(call SDL_LINK,$<).raw
-	$(WASM_OPT) $@.raw --asyncify --pass-arg=asyncify-removelist@gasm_loop_frame -O2 -o $@ && rm -f $@.raw
+$(BUILD)/sdl3-classic.wasm: sdk/sdl3/examples/classic/main.c $(SDL_LIB) $(WASM_OPT)
+	$(call SDL_LINK,$<)
+	$(call wasm_opt,$(ASYNCIFY))
 
-$(BUILD)/test-pattern.wasm: guests/test-pattern/main.c spec/gasm.h | $(WASI_SDK)/bin/clang
+$(BUILD)/test-pattern.wasm: guests/test-pattern/main.c spec/gasm.h $(CLANG) $(WASM_OPT)
 	@mkdir -p $(@D)
-	$(CC) $(TARGET) $(REACTOR) $(OPT) -Ispec $< -o $@ -lm
+	$(CC) $(TARGET) $(REACTOR) $(OPT) -Ispec $< -o $@.raw -lm
+	$(call wasm_opt)
 
 # One cargo invocation builds all Rust games (stamp file: portable to make 3.81).
-$(BUILD)/.rust-guests: $(RUST_SRC) | rust-toolchain $(WASI_SDK)/bin/clang
+$(BUILD)/.rust-guests: $(RUST_SRC) $(CLANG) | rust-toolchain
 	@mkdir -p $(@D)
 	cd guests && RUSTC=$(RUSTC_W) CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_LINKER=$(WASI_SDK)/bin/wasm-ld \
-	  $(CARGO_W) build --release --target wasm32-unknown-unknown -p sumo -p nes -p triangle -p textured -p inputtest -p loopdemo -p assetcheck
+	  $(CARGO_W) build --release --target wasm32-unknown-unknown $(addprefix -p ,$(RUST_GAMES))
 	@touch $@
 
 $(RUST_OUT)/%.wasm: $(BUILD)/.rust-guests ;
 
 # own main loop (gasm::main_loop / gasm_loop.h): Asyncify after linking
-$(BUILD)/loopdemo.wasm: $(RUST_OUT)/loopdemo.wasm | $(WASM_OPT)
+$(BUILD)/loopdemo.wasm: $(RUST_OUT)/loopdemo.wasm $(WASM_OPT)
 	@mkdir -p $(@D)
 	$(WASM_OPT) $< --asyncify --pass-arg=asyncify-removelist@gasm_frame,gasm_loop_frame -O2 -o $@
 
-$(BUILD)/loopdemo-c.wasm: sdk/c/example-loop/main.c sdk/c/src/gasm_loop.c sdk/c/include/gasm_loop.h spec/gasm.h | $(WASI_SDK)/bin/clang $(WASM_OPT)
+$(BUILD)/loopdemo-c.wasm: sdk/c/example-loop/main.c sdk/c/src/gasm_loop.c sdk/c/include/gasm_loop.h spec/gasm.h $(CLANG) $(WASM_OPT)
 	@mkdir -p $(@D)
 	$(CC) $(TARGET) $(REACTOR) $(OPT) -Ispec -Isdk/c/include sdk/c/example-loop/main.c sdk/c/src/gasm_loop.c -Wl,--wrap=exit -o $@.raw -lm
-	$(WASM_OPT) $@.raw --asyncify --pass-arg=asyncify-removelist@gasm_loop_frame -O2 -o $@ && rm -f $@.raw
+	$(call wasm_opt,$(ASYNCIFY))
 
-$(BUILD)/%.wasm: $(RUST_OUT)/%.wasm
+$(BUILD)/%.wasm: $(RUST_OUT)/%.wasm $(WASM_OPT)
 	@mkdir -p $(@D)
-	cp $< $@
+	cp $< $@.raw
+	$(call wasm_opt)
 
 native:
 	cd runners/native && cargo build --release

@@ -287,11 +287,11 @@ void OSystem_Gasm::collectPointer() {
 		return;
 	float fx, fy, wheel;
 	uint32 pressed, released;
-	memcpy(&fx, p + 8, 4);
-	memcpy(&fy, p + 12, 4);
-	memcpy(&wheel, p + 28, 4);
-	memcpy(&pressed, p + 36, 4);
-	memcpy(&released, p + 40, 4);
+	memcpy(&fx, p + GASM_POINTER_OFF_FX, 4);
+	memcpy(&fy, p + GASM_POINTER_OFF_FY, 4);
+	memcpy(&wheel, p + GASM_POINTER_OFF_WHEEL_Y, 4);
+	memcpy(&pressed, p + GASM_POINTER_OFF_PRESSED, 4);
+	memcpy(&released, p + GASM_POINTER_OFF_RELEASED, 4);
 	GasmGraphicsManager *gfx = (GasmGraphicsManager *)_graphicsManager;
 	Common::Point pos = gfx->frameToScreen(fx, fy);
 	Common::Event e;
@@ -339,8 +339,8 @@ void OSystem_Gasm::collectGamepads() {
 		return;
 	uint32 flags, nb, na;
 	memcpy(&flags, g, 4);
-	memcpy(&nb, g + 4, 4);
-	memcpy(&na, g + 8, 4);
+	memcpy(&nb, g + GASM_GAMEPAD_OFF_BUTTON_COUNT, 4);
+	memcpy(&na, g + GASM_GAMEPAD_OFF_AXIS_COUNT, 4);
 	if (!(flags & GASM_GAMEPAD_CONNECTED) || !(flags & GASM_GAMEPAD_STANDARD))
 		return;
 	// W3C standard mapping -> ScummVM joystick buttons
@@ -354,7 +354,7 @@ void OSystem_Gasm::collectGamepads() {
 	uint32 buttons = 0;
 	for (uint32 i = 0; i < nb && i < 17; i++) {
 		float v;
-		memcpy(&v, g + 12 + i * 4, 4);
+		memcpy(&v, g + GASM_GAMEPAD_OFF_BUTTONS + i * 4, 4);
 		if (v > 0.5f)
 			buttons |= 1u << i;
 	}
@@ -371,7 +371,7 @@ void OSystem_Gasm::collectGamepads() {
 	                               Common::JOYSTICK_AXIS_RIGHT_STICK_X, Common::JOYSTICK_AXIS_RIGHT_STICK_Y };
 	for (uint32 i = 0; i < 4 && i < na; i++) {
 		float v;
-		memcpy(&v, g + 140 + i * 4, 4);
+		memcpy(&v, g + GASM_GAMEPAD_OFF_AXES + i * 4, 4);
 		if (v == _gamepadAxes[i])
 			continue;
 		_gamepadAxes[i] = v;

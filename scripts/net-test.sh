@@ -10,8 +10,14 @@ QUIT=${QUIT:-1800}
 TMP=$(mktemp -d)
 "$RELAY" 127.0.0.1:$PORT 2>"$TMP/relay.log" &
 RELAY_PID=$!
-trap 'kill $RELAY_PID 2>/dev/null; rm -rf "$TMP"' EXIT
-sleep 0.3
+trap 'kill $RELAY_PID 2>/dev/null; wait 2>/dev/null; rm -rf "$TMP"' EXIT
+# wait (up to 10 s) until a relay says it is listening
+wait_listening() { # <log>
+  local i
+  for i in $(seq 100); do grep -q listening "$1" 2>/dev/null && return 0; sleep 0.1; done
+  echo "relay did not start: $(cat "$1")" >&2; exit 1
+}
+wait_listening "$TMP/relay.log"
 
 # Each peer gets a hard time limit so a lockstep stall fails the test instead of hanging it.
 LIMIT=${LIMIT:-60}
@@ -83,8 +89,8 @@ CNF
   if [ -s "$TMP/relay.pem" ]; then
     "$RELAY" 127.0.0.1:$TLS_PORT --tls-cert "$TMP/relay.pem" --tls-key "$TMP/relay.key" 2>"$TMP/relay-tls.log" &
     TLS_PID=$!
-    trap 'kill $RELAY_PID $TLS_PID 2>/dev/null; rm -rf "$TMP"' EXIT
-    sleep 0.3
+    trap 'kill $RELAY_PID $TLS_PID 2>/dev/null; wait 2>/dev/null; rm -rf "$TMP"' EXIT
+    wait_listening "$TMP/relay-tls.log"
     CA="$TMP/ca.pem"
     command -v cygpath >/dev/null && CA=$(cygpath -m "$CA") # native Windows programs need C:/... paths
     export SSL_CERT_FILE="$CA" NODE_EXTRA_CA_CERTS="$CA"

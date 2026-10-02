@@ -2,62 +2,92 @@
 // Headless Node runner: same host code as the browser runner, no canvas/audio.
 // Output format matches `gasm-run --headless` so results can be diffed.
 //
-//   node runners/web/headless.mjs <game.wasm> [--rom p] [--asset n=p] [--asset-dir [prefix=]dir]
-//        [--param k=v] [--allow-net]
-//        [--realtime] --headless N [--input script] [--screenshot out.png] [--no-hash]
+//   node runners/web/headless.mjs <game.wasm> --headless N [--rom p] [--asset n=p]
+//        [--asset-dir [prefix=]dir] [--param k=v] [--allow-net] [--storage-dir dir]
+//        [--storage-id id] [--input script] [--screenshot out.png] [--realtime] [--no-hash]
 //
-// A guest calling proc_exit (e.g. sumo's quit_at) ends the run early, cleanly.
+// The options mean what they mean for gasm-run. --screenshot writes the last
+// video_present frame: there is no GPU here, so gasm:gfx games can't be captured
+// (use gasm-run --screenshot). A guest calling proc_exit ends the run early, cleanly.
 
-import { closeSync, fstatSync, openSync, readFileSync, readSync, readdirSync, writeFileSync } from 'node:fs';
+import { closeSync, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { deflateSync } from 'node:zlib';
-import { AssetTable, GasmHost, ProcExit, bytesSource } from './gasm-host.js';
+import { AssetTable, GasmHost, MemoryStorage, ProcExit, bytesSource, validKey } from './gasm-host.js';
 import { InputScript } from './input-script.mjs';
 
+const USAGE = 'usage: headless.mjs <game.wasm> --headless N [--rom path] [--asset name=path] [--asset-dir [prefix=]dir] ' +
+  '[--param k=v] [--allow-net] [--storage-dir dir] [--storage-id id] [--input script] [--screenshot out.png] [--realtime] [--no-hash]';
+const fail = (msg) => { console.error(`error: ${msg}\n\n${USAGE}`); process.exit(2); };
 const argv = process.argv.slice(2);
-let wasm, frames = 600, screenshot, noHash = false, allowNet = false, realtime = false;
+let wasm, frames = 600, screenshot, noHash = false, allowNet = false, realtime = false, storageDir = null, storageId = null;
 // --input: see input-script.mjs (same syntax as gasm-run --input)
 let script = new InputScript();
 const assets = {}, params = {}, assetDirs = [];
+const pair = (v, what) => { const k = v.indexOf('='); if (k <= 0) fail(`${what} expects name=value`); return [v.slice(0, k), v.slice(k + 1)]; };
 for (let i = 0; i < argv.length; i++) {
   const a = argv[i];
-  if (a === '--rom') assets.rom = new Uint8Array(readFileSync(argv[++i]));
-  else if (a === '--asset') { const [k, p] = argv[++i].split('='); assets[k] = new Uint8Array(readFileSync(p)); }
-  else if (a === '--headless') frames = Number(argv[++i]);
-  else if (a === '--screenshot') screenshot = argv[++i];
-  else if (a === '--input') script = new InputScript(argv[++i]);
+  const val = () => { if (i + 1 >= argv.length) fail(`${a} needs a value`); return argv[++i]; };
+  if (a === '--rom') assets.rom = new Uint8Array(readFileSync(val()));
+  else if (a === '--asset') { const [k, p] = pair(val(), '--asset'); assets[k] = new Uint8Array(readFileSync(p)); }
+  else if (a === '--headless') { frames = Number(val()); if (!Number.isInteger(frames) || frames < 0) fail('--headless expects a number'); }
+  else if (a === '--screenshot') screenshot = val();
+  else if (a === '--input') { try { script = new InputScript(val()); } catch (e) { fail(e.message); } }
   else if (a === '--no-hash') noHash = true;
   else if (a === '--asset-dir') {
-    const v = argv[++i], k = v.indexOf('=');
+    const v = val(), k = v.indexOf('=');
     const p = k > 0 ? v.slice(0, k) : '';
     if (p && !/[\\/]/.test(p)) assetDirs.push([p, v.slice(k + 1)]); else assetDirs.push(['', v]);
   }
-  else if (a === '--param') { const v = argv[++i], k = v.indexOf('='); params[v.slice(0, k)] = v.slice(k + 1); }
+  else if (a === '--param') { const [k, v] = pair(val(), '--param'); params[k] = v; }
   else if (a === '--allow-net') allowNet = true;
   else if (a === '--realtime') realtime = true;
+  else if (a === '--storage-dir') storageDir = val();
+  else if (a === '--storage-id') storageId = val();
+  else if (a === '-h' || a === '--help') { console.error(USAGE); process.exit(0); }
+  else if (a.startsWith('--')) fail(`unknown option ${a}`);
   else wasm = a;
 }
-if (!wasm) { console.error('usage: headless.mjs <game.wasm> [--rom path] --headless N [--screenshot out.png]'); process.exit(2); }
+if (!wasm) fail('missing <game.wasm>');
+if (storageId !== null && !validKey(storageId)) fail(`invalid storage id ${JSON.stringify(storageId)} (use [A-Za-z0-9._-])`);
 
 // Explicit assets stay in memory; --asset-dir folders are read lazily from disk
-// (same naming/precedence/case rules as gasm-run, via AssetTable).
+// (same naming/precedence/case rules as gasm-run, via AssetTable). Files are opened
+// on first read and kept in a small cache, like gasm-run, so big trees don't run
+// out of file descriptors.
 const table = new AssetTable((m) => console.error(m));
 for (const [name, bytes] of Object.entries(assets)) table.add(name, bytesSource(bytes));
-const fds = [];
+const open = new Map();   // path -> fd, oldest first
+const OPEN_FILES = 64;
+const fdFor = (path) => {
+  let fd = open.get(path);
+  if (fd !== undefined) { open.delete(path); open.set(path, fd); return fd; }
+  if (!lstatSync(path).isFile()) throw new Error(`${path}: no longer a regular file`);
+  fd = openSync(path, 'r');
+  if (open.size >= OPEN_FILES) { const [p, old] = open.entries().next().value; open.delete(p); closeSync(old); }
+  open.set(path, fd);
+  return fd;
+};
 for (const [prefix, dir] of assetDirs) {
   let n = 0;
   const walk = (abs, segs) => {
     for (const d of readdirSync(abs, { withFileTypes: true }).sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))) {
       if (d.name.startsWith('.') || d.isSymbolicLink()) continue;
-      const s = [...segs, d.name];
-      if (d.isDirectory()) walk(join(abs, d.name), s);
+      const s = [...segs, d.name], path = join(abs, d.name);
+      if (d.isDirectory()) walk(path, s);
       else if (d.isFile()) {
-        const fd = openSync(join(abs, d.name), 'r');
-        fds.push(fd);
         const name = prefix ? `${prefix.replace(/\/+$/, '')}/${s.join('/')}` : s.join('/');
+        const size = lstatSync(path).size;   // as found at start-up (like gasm-run)
         const added = table.add(name, {
-          size: () => { try { return Math.min(fstatSync(fd).size, 0x7fffffff); } catch { return 0; } },
-          readAt: (offset, dst) => { let done = 0; try { while (done < dst.length) { const k = readSync(fd, dst, done, dst.length - done, offset + done); if (!k) break; done += k; } } catch {} return done; },
+          size: () => size,
+          readAt: (offset, dst) => {
+            let done = 0;
+            try {
+              const fd = fdFor(path);
+              while (done < dst.length) { const k = readSync(fd, dst, done, dst.length - done, offset + done); if (!k) break; done += k; }
+            } catch (e) { console.error(`[gasm-node] assets: ${e.message}`); }
+            return done;
+          },
         }, { fromDir: true });
         if (added) n++;
       }
@@ -68,13 +98,36 @@ for (const [prefix, dir] of assetDirs) {
 }
 table.finish();
 
+// --storage-dir: one file per key, written through a temp file (as gasm-run does).
+function dirStorage(dir) {
+  mkdirSync(dir, { recursive: true });
+  const entries = [];
+  for (const d of readdirSync(dir, { withFileTypes: true })) {
+    if (d.name.endsWith('~tmp')) rmSync(join(dir, d.name), { force: true });
+    else if (validKey(d.name) && d.isFile()) entries.push([d.name, new Uint8Array(readFileSync(join(dir, d.name)))]);
+  }
+  const s = new MemoryStorage(entries);
+  s.persist = (op, k, v) => {
+    if (op === 'put') { const tmp = join(dir, `.${k}~tmp`); writeFileSync(tmp, v); renameSync(tmp, join(dir, k)); }
+    else rmSync(join(dir, k), { force: true });
+  };
+  return s;
+}
+const storage = storageDir ? dirStorage(storageDir) : new MemoryStorage();
+console.error(`[gasm-node] storage: ${storageDir ?? 'memory'}`);
+
 const host = new GasmHost({
-  assets: table, params, allowNet, virtualTime: true, onLog: (m) => console.error(m),
+  assets: table, params, allowNet, storage, virtualTime: true, onLog: (m) => console.error(m),
   getPad: (p) => (p !== 0 ? 0 : script.pad(host.frameIndex)),
 });
 host.hashing = !noHash;
 const t0 = performance.now();
-await host.load(readFileSync(wasm));
+try {
+  await host.load(readFileSync(wasm));
+} catch (e) {
+  if (e instanceof ProcExit) process.exit(e.code);   // exited during init
+  throw e;
+}
 console.error(`[gasm-node] loaded ${wasm} in ${(performance.now() - t0).toFixed(0)} ms`);
 
 // Yield to the event loop between frames when networking (WebSocket events are
@@ -107,11 +160,15 @@ console.log(`frames=${frames} presented=${host.framesPresented} size=${host.widt
 console.log(`video_fnv32=${hex(host.videoHash)} audio_fnv32=${hex(host.audioHash)} audio_frames=${host.audioFrames}`);
 console.error(`[gasm-node] ${(frames / secs).toFixed(1)} guest frames/s (${(frames / secs / host.frameRate).toFixed(1)}x realtime at ${host.frameRate.toFixed(2)} Hz)`);
 
-if (screenshot && host.width) {
-  writeFileSync(screenshot, encodePng(host.rgba, host.width, host.height));
-  console.error(`[gasm-node] wrote ${screenshot}`);
+if (screenshot) {
+  if (host.gfx.used) console.error('[gasm-node] no GPU in Node: gasm:gfx output is not captured (use gasm-run --screenshot)');
+  if (host.width) {
+    writeFileSync(screenshot, encodePng(host.rgba, host.width, host.height));
+    console.error(`[gasm-node] wrote ${screenshot}`);
+  }
 }
 await host.net.closeAll(); // deliver queued messages before exiting
+for (const fd of open.values()) closeSync(fd);
 if (exitCode !== null) {
   console.error(`[gasm-node] guest exited with code ${exitCode}`);
   process.exit(exitCode);

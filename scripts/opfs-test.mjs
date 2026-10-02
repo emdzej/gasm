@@ -112,7 +112,7 @@ async function scenario(page, name, mb) {
   closeSync(fd);
   mkdirSync(join(dir, 'ART'));
   writeFileSync(join(dir, 'ART/ART.CAR'), 'ART CAR FILE v1\n');
-  writeFileSync(join(dir, 'README.TXT'), 'RETURN FIRE TEST DISC\n');
+  writeFileSync(join(dir, 'README.TXT'), 'GASM TEST DISC\n');
   const node = nodeRun(dir);
   rmSync(dir, { recursive: true, force: true });
   return { imported, browser, node, before, peak, secs, growth };

@@ -4,12 +4,13 @@
 
 | Command | What it proves | Time |
 |---|---|---|
-| `scripts/determinism-test.sh` | Every case gives identical video, audio and GPU-upload hashes on **wasmtime JIT**, **wasmtime AOT** and **V8 (Node)** | ~105 s |
-| `scripts/net-test.sh` | Full online sumo matches through `gasm-relay` for native↔native, native↔Node, Node↔native, and native↔Node over **TLS** (`wss://`, throwaway CA) end in the **identical game state**, with no desync | ~15 s |
+| `scripts/determinism-test.sh` | Every case gives identical video, audio and GPU-upload hashes on **wasmtime JIT**, **wasmtime AOT** and **V8 (Node)**, equal to the golden hashes in `tests/golden/determinism.txt` | ~3.5 min |
+| `scripts/net-test.sh` | Full online sumo matches through `gasm-relay` for native↔native, native↔Node, Node↔native, and native↔Node over **TLS** (`wss://`, throwaway CA) end in the **identical game state**, with no desync | ~7 s |
 | `make test` | Both of the above | |
 | `make parity ROM=… FRAMES=…` | The NES game built **natively** (Rust, stub host) matches the wasm build | ~1 min first build |
 | `scripts/asset-test.sh` | File-backed assets and folders: `--asset-dir` == `--asset` list == Node (lazy and in-memory); prefix form, hidden files, precedence; a 200 MB asset streamed at random offsets has the in-memory hash, with max RSS measured against a tiny asset (`LARGE_MB=0` skips) | ~10 s |
 | `node scripts/opfs-test.mjs [MB]` | Headless Chrome: csfs imports a data set into OPFS, `assetcheck` runs from it in **Worker mode** with lazy OPFS reads; hash == Node `--asset-dir`; renderer memory sampled while streaming 10 GB of random reads | ~60 s |
+| `node scripts/gfx-model-test.mjs` | gasm:gfx validation on the JS runner: the cases in `tests/gfx-cases.json`, which `cargo test --lib gfx` replays natively (both must accept and reject the same calls) | < 1 s |
 | `node scripts/web-smoke.mjs <url> <out.png> [secs]` | The browser runner loads and runs in headless Chrome (including WebGPU); prints status, fps and console, saves a screenshot | ~10 s |
 
 ### Linux locally (Apple `container`)
@@ -22,15 +23,26 @@ macOS `target/` dirs are untouched.
 scripts/linux-container.sh            # build + all tests (NET_REPEAT=5 to stress the network test)
 scripts/linux-container.sh build      # just build; binaries land in dist/linux-arm64/
 scripts/linux-container.sh shell      # interactive shell in the synced tree
+scripts/linux-container.sh clean      # remove the volumes, image and builder (several GB)
 CPUS=8 MEMORY=12g scripts/linux-container.sh
 ```
 
 The image (`container/linux.Containerfile`: Debian + Node 22 + rustup) holds only
 toolchains. It also works with Docker/Podman
 (`docker build -f container/linux.Containerfile container/`). Headless tests
-need no display or GPU. CI runs the same suites on Linux x86_64, **Windows**
-and **macOS** runners (`.github/workflows/ci.yml`, job `platforms`), so the
-Windows runner is verified bit-identical too.
+need no display or GPU.
+
+### CI
+
+[`ci.yml`](https://github.com/emdzej/gasm/blob/main/.github/workflows/ci.yml)
+runs every suite above (plus `gen-abi.mjs --check`, the `gasm-host` unit tests
+and a build without the `window` feature) on `ubuntu-24.04`. The job
+`platforms` then takes the games built there and runs the determinism, network
+and asset tests on `windows-2022`, `macos-14` and `ubuntu-24.04-arm`. Every
+platform must match the same golden hashes, so the runners on Linux (x86_64,
+arm64), macOS and Windows are verified bit-identical. Every download the
+scripts make (toolchains, engine sources, ROMs) is pinned by SHA-256
+([`scripts/lib.sh`](https://github.com/emdzej/gasm/blob/main/scripts/lib.sh)).
 
 ### Browser checks by hand
 
@@ -44,23 +56,36 @@ set up here. Open the same URLs there to check by hand.
 
 ### Determinism test
 
-Cases: the C test pattern, sumo vs. the bot with scripted input (GPU uploads
-are hashed, covering the whole scene), the blargg CPU instruction, CPU timing
-and APU tests, spritecans, Quantum Disco Brothers, 2,400 frames of Blade
-Buster gameplay with scripted input, the attract-mode demos of shareware DOOM
-and Freedoom (video, sound effects and OPL music), and a scripted Freedoom
-game that saves to `gasm:storage`, plays on and loads the save, and ScummVM
-playing Beneath a Steel Sky: intro skipped, a click to walk, a save through
-ScummVM's menu with a typed name, then a restore, and the SCUMM engine on the Day
-of the Tentacle demo, and Drascula's opening with its CD music as Ogg Vorbis, MP3
-and FLAC. Games with their own main loop (the Rust and C loop
-helpers) and four SDL 3 programs (snake and woodeneye-008 from SDL, a callbacks
-app with audio and gamepad events, a classic `main()` loop with text input and a
-save file) are cases too. It fetches
-ROMs and WADs if missing and AOT-compiles the games first.
+26 cases:
+
+- **Test guests:** the C test pattern (pad, keys, pointer); `textured` with
+  texture uploads, dynamic offsets, a storage buffer and scripted text input;
+  `inputtest` with keys and modifiers, pointer, wheel, motion and two gamepads.
+- **Own main loops:** the Rust (`loopdemo`) and C (`loopdemo-c`) loop helpers,
+  playing until START is held, then returning from `main`.
+- **SDL 3:** snake and woodeneye-008 from SDL, a callbacks app with audio and
+  gamepad events, a classic `main()` loop with text input and a save file.
+- **GPU guests:** `triangle` (one buffer, one pipeline) and sumo vs. the bot
+  with scripted input (GPU uploads are hashed, covering the whole scene).
+- **NES:** the blargg CPU instruction, CPU timing and APU tests, spritecans,
+  Quantum Disco Brothers, and 2,400 frames of Blade Buster gameplay.
+- **DOOM:** the attract-mode demos of shareware DOOM and Freedoom (video, sound
+  effects and OPL music), Freedoom on the raw keyboard and mouse, and a scripted
+  Freedoom game that saves to `gasm:storage`, plays on and loads the save.
+- **ScummVM:** Beneath a Steel Sky (intro skipped, a click to walk, a save
+  through ScummVM's menu with a typed name, then a restore), the SCUMM engine on
+  the Day of the Tentacle demo, and Drascula's opening with its CD music as Ogg
+  Vorbis, MP3 and FLAC.
+
+It fetches ROMs and WADs if missing and AOT-compiles the games first. Each case
+must also match its line in
+[`tests/golden/determinism.txt`](https://github.com/emdzej/gasm/blob/main/tests/golden/determinism.txt),
+the same file on every platform. After a change that is meant to alter output,
+record new hashes with `UPDATE_GOLDEN=1 scripts/determinism-test.sh` and commit
+the file with the change.
 
 ```sh
-check <name> <game> <frames> [runner args...]
+check <name> <game> <frames> [runner args...]      # in scripts/determinism-test.sh
 check my_game nes 1800 --rom roms/my_game.nes --input "60-65:START,120-900:RIGHT"
 ```
 
@@ -104,8 +129,10 @@ vs the libm compiled into the module).
 
 ### Visual checks
 
-Every headless run can take `--screenshot out.png`. GPU games render the last
-frame on a real GPU offscreen. Useful ROMs from `make roms`:
+Headless runs can take `--screenshot out.png`. `gasm-run` renders GPU games'
+last frame on a real GPU offscreen. The Node runner has no GPU: it only
+captures `video_present` frames, and warns for `gasm:gfx` games. Useful ROMs
+from `make roms`:
 
 | ROM | Expected screen |
 |---|---|
@@ -121,7 +148,7 @@ R=runners/native/target/release/gasm-run
 $R build/nes.wasm --compile build/nes.cwasm
 (cd guests && cargo build --release -p parity)
 time guests/target/release/parity roms/bladebuster.nes 6000 --no-hash
-time $R build/nes.cwasm --rom roms/bladebuster.nes --headless 6000 --no-hash
+time $R build/nes.cwasm --allow-precompiled --rom roms/bladebuster.nes --headless 6000 --no-hash
 time node runners/web/headless.mjs build/nes.wasm --rom roms/bladebuster.nes --headless 6000 --no-hash
 ```
 
@@ -130,8 +157,9 @@ lot of time.
 
 ## Repository conventions
 
-- **ABI changes** go into `spec/ABI.md`, `spec/gasm.h`, the `gasm` crate *and*
-  both runners in the same change. Breaking changes bump `GASM_ABI_VERSION`.
+- **ABI changes** start in `spec/abi.json` (see **ABI** below) and update
+  `spec/ABI.md`, the `gasm` crate, both runners and the site docs in the same
+  change. Breaking changes bump `GASM_ABI_VERSION`.
 - **Hash format** (`frames=… / video_fnv32=… audio_fnv32=…`) is an interface
   between runners and scripts; keep it stable.
 - **Game logic** that must be deterministic lives apart from rendering
@@ -143,6 +171,7 @@ lot of time.
   Never commit ROMs.
 - **Releases:** push a version tag without a `v` prefix (`git tag 0.2.0 && git push origin 0.2.0`).
   See [Releases and trusted publishing](#releases-and-trusted-publishing).
+  Note what changed in [`CHANGELOG.md`](https://github.com/emdzej/gasm/blob/main/CHANGELOG.md).
 - **ABI:** edit `spec/abi.json`, run `node scripts/gen-abi.mjs` (regenerates `spec/gasm.h`
   and `guests/gasm/src/sys.rs`), then implement it in both runners and the native stub.
   CI runs `--check`.
@@ -153,8 +182,12 @@ lot of time.
 
 ## Releases and trusted publishing
 
-`release.yml` runs on a version tag (`0.2.0`). It builds everything, creates
-the GitHub Release, and publishes `gasm-sdk` + `gasm-host` to crates.io,
+`release.yml` runs on a version tag (`0.2.0`). It runs CI first, builds
+everything, and checks that `doom.wasm` and `scummvm.wasm` rebuild byte for byte
+from the source archives it ships (GPL: the source must produce the binary).
+The games carry their license notices (`THIRD-PARTY.txt`, from
+`scripts/third-party-notices.sh`). Then it creates the GitHub Release and
+publishes `gasm-sdk` + `gasm-host` to crates.io,
 `@emdzej/gasm-host` to npm, and `ghcr.io/emdzej/gasm-relay`. Versions come
 from the tag, and versions that are already published are skipped, so re-running
 a release is safe.
@@ -188,10 +221,13 @@ One-time setup, because both registries attach trusted publishers to a
 
 ## Updating dependencies
 
-- **wasi-sdk:** `WASI_SDK_VERSION=NN scripts/fetch-wasi-sdk.sh`, then `make clean test`.
+- **wasi-sdk:** `WASI_SDK_VERSION=NN WASI_SDK_SHA256=<archive checksum> scripts/fetch-wasi-sdk.sh`,
+  then `make clean test`. To make it the default, update `PINNED` and the
+  per-platform checksums in the script.
 - **tetanes-core:** bump in `guests/nes/Cargo.toml`. Hashes may change if the core
-  changed behaviour; the suite only requires runners to agree. Re-check the
-  test ROM screens.
-- **wasmtime, wgpu, winit:** bump in `runners/native/Cargo.toml`; wasmtime and
-  wasmtime-wasi together. Old `.cwasm` files become invalid; the test script
-  regenerates them.
+  changed behaviour: check that the runners still agree, then record the new
+  golden hashes (`UPDATE_GOLDEN=1`). Re-check the test ROM screens.
+- **wasmtime, wgpu, winit:** bump in `runners/native/Cargo.toml`. The runners
+  implement WASI themselves (`runners/native/src/wasi.rs`,
+  `runners/web/lib/wasi.js`), so there's no WASI crate to keep in step. Old
+  `.cwasm` files become invalid; the test script regenerates them.

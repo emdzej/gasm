@@ -14,7 +14,9 @@ cp -R tools/doom-src "$STAGE/tools/"
 cp -R guests/doom "$STAGE/guests/"
 cp spec/gasm.h "$STAGE/spec/"
 cp Makefile "$STAGE/"
-cp scripts/fetch-doom.sh scripts/fetch-wasi-sdk.sh "$STAGE/scripts/"
+cp scripts/fetch-doom.sh scripts/fetch-wasi-sdk.sh scripts/fetch-binaryen.sh scripts/lib.sh "$STAGE/scripts/"
+mkdir -p "$STAGE/sdk/c/src" "$STAGE/sdk/c/include"
+cp sdk/c/src/gasm_vfile.c "$STAGE/sdk/c/src/" && cp sdk/c/include/gasm_vfile.h "$STAGE/sdk/c/include/"
 cp tools/doom-src/LICENSE "$STAGE/COPYING"
 cat > "$STAGE/README.txt" <<TXT
 Complete corresponding source for doom.wasm in gasm $VERSION.
@@ -25,9 +27,10 @@ for the gasm ABI. As a whole it is licensed under the GNU GPL version 2 (COPYING
   tools/doom-src/   engine sources, as fetched by scripts/fetch-doom.sh and
                     patched with guests/doom/engine.patch
   guests/doom/      gasm platform layer (MIT, GPL-compatible)
+  sdk/c/            gasm's stdio-over-assets/storage helper (MIT)
   spec/gasm.h       gasm ABI header (MIT)
 
-Build: scripts/fetch-wasi-sdk.sh && make doom   (output: build/doom.wasm)
+Build: scripts/fetch-wasi-sdk.sh && scripts/fetch-binaryen.sh && make doom   (output: build/doom.wasm)
 Project: https://github.com/emdzej/gasm
 TXT
 tar czf "dist/$NAME.tar.gz" -C dist "$NAME"

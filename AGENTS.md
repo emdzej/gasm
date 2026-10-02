@@ -18,17 +18,19 @@ property: most tests assert bit-identical hashes.
 |---|---|
 | `spec/abi.json` | **Machine-readable ABI, source of truth.** `node scripts/gen-abi.mjs` regenerates `spec/gasm.h` + `guests/gasm/src/sys.rs`; `--check` verifies runners |
 | `spec/ABI.md`, `spec/gasm.h` | Normative prose + generated C header (don't edit `gasm.h` or `sys.rs` by hand) |
-| `sdk/c/` | C/C++ SDK: CMake toolchain (wraps wasi-sdk) + `Gasm.cmake` + example |
-| `guests/` | Rust workspace (`wasm32-unknown-unknown`): `gasm` (SDK + native stub host), `sumo`, `nes` (tetanes-core), `triangle`, `textured` (textures/layouts/offsets test), `inputtest` (raw input tester), `assetcheck`, `parity` (native harness) |
+| `CHANGELOG.md` | What each release added (guest authors: which runner a feature needs). Add to "Unreleased" with every ABI or behaviour change |
+| `sdk/c/` | C/C++ SDK: CMake toolchain (wraps wasi-sdk) + `Gasm.cmake` + examples; `gasm_vfile.h` (`FILE*` over assets and storage, used by DOOM and SDL 3) |
+| `guests/` | Rust workspace (`wasm32-unknown-unknown`): `gasm` (SDK + native stub host), `sumo`, `nes` (tetanes-core), `triangle`, `textured` (textures/layouts/offsets test), `inputtest` (raw input tester), `loopdemo` (`gasm::main_loop!`), `assetcheck`, `parity` (native harness) |
 | `guests/test-pattern/` | C guest (wasi-sdk) |
 | `sdk/c/src/gasm_loop.c`, `sdk/c/include/gasm_loop.h` | loop helper for games with their own main loop (`gasm_main` + `gasm_wait_frame`, Asyncify inside the guest); Rust: `gasm::main_loop!`. Used by ScummVM and SDL3 classic `main()` |
 | `sdk/sdl3/` | SDL 3 for gasm: SDL as a "private platform" (`SDL_PLATFORM_PRIVATE`), config + drivers (zlib). `scripts/fetch-sdl3.sh` puts SDL in `tools/SDL3-src`; `make sdl3` builds `build/sdl3/` (lib, headers, `find_package` config); `scripts/package-sdl3.sh` bundles it |
 | `guests/scummvm/` | ScummVM: gasm backend (MIT, `backend/` -> `backends/platform/gasm`) + `configure.patch` (`wasm32-gasm` host). `scripts/fetch-scummvm.sh` puts ScummVM (GPL-3.0) in `tools/scummvm-src`; `scripts/build-scummvm-libs.sh` builds zlib, libmad, libogg/libvorbis, libFLAC (pinned release tarballs) into `tools/scummvm-libs`; `make scummvm` builds with wasi-sdk and runs `wasm-opt --asyncify` (`scripts/fetch-binaryen.sh`); `scripts/package-scummvm-src.sh` packs exactly the files the build used plus the library sources (verify: a clean `make scummvm` from the tarball is byte-identical) |
 | `guests/doom/` | DOOM: gasm platform layer (MIT) for doomgeneric. `scripts/fetch-doom.sh` puts the GPL-2.0 engine (+ chocolate-doom OPL music) in `tools/doom-src` and applies `engine.patch`; `scripts/package-doom-src.sh` packs the complete source shipped with releases and the site |
-| `runners/native/` | crate `gasm-host`: library (`src/lib.rs`) + bins `gasm-run` (`src/main.rs`) and `gasm-relay` (`src/bin/`); `relay.Dockerfile` |
-| `runners/web/` | npm package `@emdzej/gasm-host` (`gasm-host.js` + `.d.ts`: host, asset providers, keymap; `gasm-worker.js`: Worker mode; `webgpu-gfx.js`; `headless.mjs` = `gasm-headless`). Not published: `app.js`/`index.html` (the player), `opfs.html`/`opfs.js` (csfs OPFS import; csfs is a devDependency vendored by `scripts/vendor-web.sh`), `testdata.js` |
+| `runners/native/` | crate `gasm-host` (workspace root; one `target/`): the library has the host (`host.rs`, `wasi.rs` WASI subset, `gfx.rs`, `net.rs`, `storage.rs`, `assets.rs`) and both runners (`headless.rs`, `window.rs` + `keymap.rs` behind the default `window` feature); `src/main.rs` (`gasm-run`) only parses arguments. `relay/`: crate `gasm-relay` (no runtime deps, not on crates.io); `relay.Dockerfile` |
+| `runners/web/` | npm package `@emdzej/gasm-host`: `gasm-host.js` re-exports `lib/` (`host.js`, `wasi.js`, `gfx.js` GfxModel + NullGfx, `net.js`, `storage.js`, `assets.js`, `input.js` keys/keymap/BrowserInput, `audio.js`) + `.d.ts`; `gasm-worker.js`: Worker mode; `webgpu-gfx.js`; `headless.mjs` = `gasm-headless`. Not published: `app.js`/`index.html` (the player), `opfs.html`/`opfs.js` (csfs OPFS import; csfs is a devDependency vendored by `scripts/vendor-web.sh`), `testdata.js` |
 | `runners/native/src/assets.rs`, `keymap.rs` | file-backed assets, `--asset-dir`, case-insensitive lookup; keyboard layouts (`default-keymap.txt` must equal the JS `DEFAULT_KEYMAP`, checked by `gen-abi.mjs --check`) |
-| `scripts/` | toolchain/ROM fetchers, test suites, packaging, site build, Linux container |
+| `tests/golden/determinism.txt` | golden hashes of every determinism case; the same on every platform |
+| `scripts/` | toolchain/ROM fetchers (`lib.sh`: shared checksum helpers), test suites, packaging (`third-party-notices.sh`: license notices shipped with the games), site build, Linux container |
 | `site/` | VitePress website (docs live here; `site/docs/abi.md` includes `spec/ABI.md`) |
 | `.github/workflows/` | `ci.yml`, `pages.yml`, `release.yml` |
 
@@ -37,20 +39,30 @@ property: most tests assert bit-identical hashes.
 ```sh
 make                          # games -> build/*.wasm, native runner + relay
 make roms                     # test ROMs, Freedoom, shareware doom1.wad into roms/ (needed by the determinism test)
-scripts/determinism-test.sh   # 25 cases: wasmtime JIT == AOT == V8 (must pass)
+scripts/determinism-test.sh   # 26 cases: wasmtime JIT == AOT == V8 == golden hashes (must pass)
+                              # UPDATE_GOLDEN=1 re-records after a change meant to alter output
 scripts/net-test.sh           # lockstep sumo via gasm-relay, 3 runner pairs + TLS (must pass)
 scripts/asset-test.sh         # folders, case-insensitive names, 200 MB streaming + RSS (must pass)
 node scripts/opfs-test.mjs    # Chrome: OPFS + Worker mode == Node, memory flat
 make parity                   # NES native Rust build == wasm build
 scripts/build-site.sh         # website into site/.vitepress/dist (needs build/*.wasm)
 scripts/linux-container.sh    # everything above on Linux arm64 (Apple `container`)
+scripts/linux-container.sh clean   # remove its volumes, image and builder (several GB)
 ```
+
+**Clean up containers when you're done.** The Linux container workflow leaves
+gigabytes behind (the `gasm-linux-work` and `gasm-linux-cargo` volumes, the
+`gasm-linux:dev` image, the `buildkit` builder container). Run
+`scripts/linux-container.sh clean` (or remove them by hand, `container ls -a`,
+`container volume ls`, `container image ls`) before you finish. Leave other
+projects' containers and volumes alone.
 
 Before claiming a change works, run the determinism and network suites. For
 runner or ABI changes, also check the browser: `python3 -m http.server 8765`
 from the repo root, then
 `node scripts/web-smoke.mjs "http://localhost:8765/runners/web/?game=sumo.wasm&autostart" out.png 5`.
-Headless runs with `--screenshot` render GPU games offscreen: look at the PNG.
+`gasm-run --headless --screenshot` renders GPU games offscreen: look at the PNG
+(the Node runner has no GPU and only captures `video_present` frames).
 
 ## Toolchain traps (already solved: don't reintroduce)
 
@@ -62,6 +74,15 @@ Headless runs with `--screenshot` render GPU games offscreen: look at the PNG.
   (`CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_LINKER`).
 - **macOS make is 3.81.** No grouped targets (`&:`); the Rust build uses a stamp
   file (`build/.rust-guests`). Keep the Makefile 3.81-compatible.
+- **Incremental builds depend on stamps, not on the Makefile.** Flags go through
+  flag stamps (`$(call flags,name)` under `build/.flags`, rewritten only when the
+  text changes); fetched toolchains and sources have version stamps
+  (`tools/*/.version`, `.gasm-configure`, `.gasm-libs`); the compiler (`$(CLANG)`)
+  is a real prerequisite. Don't make targets depend on `Makefile` (one edit would
+  rebuild ScummVM), and copy into `tools/scummvm-src` only what changed
+  (`fetch-scummvm.sh` uses `cmp`).
+- **Every download is pinned:** `download`/`sha256_ok` from `scripts/lib.sh` with
+  a SHA-256 (GitHub release assets list theirs: `gh api …/releases/tags/<tag>`).
 - **`-mexec-model=reactor` is link-only** for clang; passing it with `-c` errors.
 - **`getrandom` on wasm32-unknown-unknown** needs a backend: `guests/.cargo/config.toml`
   selects `unsupported`. The NES guest uses `RamState::AllZeros`, so rand is never
@@ -97,7 +118,19 @@ Headless runs with `--screenshot` render GPU games offscreen: look at the PNG.
   `SDL_iostream.c` is redirected to assets/storage. SDL time is virtual and
   per frame; callback apps need no Asyncify, classic `main()` apps do.
 - **Runners never call a guest after it exited or trapped** (the windowed
-  runner drops the game in `stop()`; the event loop can tick once more).
+  runner drops the game in `stop()`; the event loop can tick once more;
+  `GasmHost.dead` makes `frame()` throw without calling the guest).
+- **DOOM's rendering depends on heap layout:** the renderer reads past the end
+  of some lumps, as the original did. Output stays identical on every runner,
+  but changing allocations in the glue (`gasm_doom.c`, `gasm_vfile.c`) changes
+  DOOM's video hashes. That is expected: check the frames look right, then
+  `UPDATE_GOLDEN=1 scripts/determinism-test.sh`.
+- **The WASI subset is ours** (`runners/native/src/wasi.rs`, `runners/web/lib/wasi.js`,
+  no `wasmtime-wasi`): keep both identical. Guest stdout goes to the log (stderr),
+  never to the runner's stdout, which carries the hash lines.
+- **`.cwasm` files are native code:** `gasm-run` loads them only with
+  `--allow-precompiled`, and they must come from the same `host::engine()`
+  configuration (epoch interruption on).
 - **wasm checks indirect call signatures.** C that calls through a mismatched
   function pointer traps with "indirect call type mismatch"; fix it with a
   typed wrapper (see `engine.patch`).
@@ -106,8 +139,11 @@ Headless runs with `--screenshot` render GPU games offscreen: look at the PNG.
 
 - **ABI changes** start in `spec/abi.json` (then regenerate) and update `spec/ABI.md`, the `gasm` crate
   (`guests/gasm/src/{sys,lib,native}.rs`), both runners (`runners/native/src/host.rs`
-  and friends, `runners/web/gasm-host.js`) and the site docs, in one change.
-  Breaking changes bump `GASM_ABI_VERSION`.
+  and friends, `runners/web/lib/host.js`), `CHANGELOG.md` and the site docs, in one
+  change. Breaking changes bump `GASM_ABI_VERSION`. `gen-abi.mjs --check` compares
+  every runner's and the stub's signatures (natively by type, in JS by arity), the
+  size constants and `ABI_VERSION` with `abi.json`; annotate native closure return
+  types so it can.
 - **Hash output format** (`frames=… presented=… size=…` / `video_fnv32=… audio_fnv32=… audio_frames=…`)
   is a contract between runners and scripts. FNV-1a 32 over tightly packed RGBA
   rows, `audio_push` bytes and `gfx.write_buffer` payloads. Native, JS and the
@@ -115,29 +151,40 @@ Headless runs with `--screenshot` render GPU games offscreen: look at the PNG.
 - **Determinism rules for game simulations:** only `+ - * / sqrt` on floats (no
   transcendental functions in `sim.rs`), no clocks, no OS randomness, no
   `HashMap` iteration. Rendering may use anything.
-- **Headless = reproducible:** virtual time, null GPU (unless `--screenshot`),
-  in-memory empty storage (unless `--storage-dir`).
+- **Headless = reproducible:** virtual time (`VirtualClock`: monotonic across
+  frame rate changes, fixed within a frame; also the WASI clocks), a fixed
+  `random_get` sequence, null GPU (unless `--screenshot`), in-memory empty storage
+  (unless `--storage-dir`; both headless runners). Golden hashes in
+  `tests/golden/determinism.txt` are the same on every platform.
 - **Security:** guests get no filesystem, env or args. Network is opt-in natively
   (`--allow-net`). Storage namespaces are chosen by the runner, never the guest.
-  Every guest pointer and handle is validated; violations trap, never panic.
+  Every guest pointer, handle and string argument is validated; violations trap,
+  never panic (a guest call that never returns traps after `--call-timeout`).
+  Resource limits: 16 net connections with bounded queues; the relay caps clients
+  and per-peer queues.
 - **gfx:** "auto" layouts are pipeline-exclusive (one bind group per pipeline);
   explicit layouts (`create_bind_group_layout`) are shared across pipelines.
-  Both runners keep a per-object record (`Meta` in `gfx.rs`, `GfxModel` in
-  `gasm-host.js`) and validate textures, samplers, layouts and dynamic offsets
-  against it, so the null GPU traps exactly like the real one. Runners never
-  decode images or generate mipmaps. `write_texture` hashes a header
-  (`tex, mip, x, y, w, h`) before the payload; handles are numbered in
-  creation order on every runner (hashes depend on it).
-  The render pass always has depth24plus + 4× MSAA; pipelines without
-  `depthStencil` get a no-op one. Validation errors become traps via error
-  scopes.
+  Both runners keep a per-object record and the render pass state (`Meta`/`Pass`
+  in `gfx.rs`, `GfxModel` in `lib/gfx.js`) and validate every call against it
+  with the same rules in the same order (handle kinds, destroyed handles, ranges,
+  usages, layouts, dynamic offsets, draw ranges), so the null GPU traps exactly
+  like the real one; JS backends only execute. Runners never decode images or
+  generate mipmaps. `write_texture` hashes a header (`tex, mip, x, y, w, h`)
+  before the payload; handles are numbered in creation order on every runner and
+  never reused (`destroy` leaves a tombstone; hashes depend on it). The render
+  pass always has depth24plus + 4× MSAA; pipelines without `depthStencil` get a
+  no-op one. What only the GPU can check becomes a trap via error scopes
+  (natively at the call, in browsers at the next gfx call). `tests/gfx-cases.json`
+  is replayed by both (`cargo test --lib gfx`, `node scripts/gfx-model-test.mjs`):
+  add a case with every new rule.
 - **Assets:** never preload on native (positioned reads); same naming rules in
   `assets.rs` and `AssetTable` (exact first, explicit over folder, ASCII
   case-insensitive among folder entries, first sorted on collisions, hidden
-  and symlinks skipped, 2 GiB limit). `@emdzej/gasm-host` stays
-  dependency-free: csfs belongs to pages (e.g. `opfs.html`), not the host.
+  and symlinks skipped, 64-bit sizes; folder files opened lazily, 64 at most).
+  `@emdzej/gasm-host` stays dependency-free: csfs belongs to pages (e.g.
+  `opfs.html`), not the host.
 - **Raw input:** keys are W3C `KeyboardEvent.code` names numbered in
-  `abi.json` (`GASM_KEY_*`); `KEY_CODES` in `gasm-host.js` and `keymap.rs` must
+  `abi.json` (`GASM_KEY_*`); `KEY_CODES` in `lib/input.js` and `keys.rs` must
   match it (`gen-abi.mjs --check`). Escape: a tap goes to the guest, holding it
   ~1 s quits (natively) / stops (browser); it can't be bound to a pad.
   `KEYS_RAW` turns the keymap off for that guest. Headless scripted input
@@ -157,11 +204,14 @@ Headless runs with `--screenshot` render GPU games offscreen: look at the PNG.
 ## Conventions
 
 - **Version tags have no `v` prefix:** `0.1.0`. Pushing one runs `release.yml`:
-  macOS universal + `.app` bundles, Linux x86_64/arm64, Windows, games zip, C SDK,
+  the whole CI suite and a rebuild of doom.wasm/scummvm.wasm from their source
+  archives (must be byte-identical) first, then macOS universal + `.app`
+  bundles, Linux x86_64/arm64, Windows, games zip (with `THIRD-PARTY.txt`), C SDK,
   then publishes `gasm-sdk` + `gasm-host` (crates.io), `@emdzej/gasm-host` (npm),
-  `ghcr.io/emdzej/gasm-relay`. Registries use trusted publishing (OIDC, environment
+  `ghcr.io/emdzej/gasm-relay`. Workflow actions are pinned to commit SHAs. Registries use trusted publishing (OIDC, environment
   `release`); never add registry tokens as secrets.
-- **Package names:** crates `gasm-sdk` (lib name `gasm`) and `gasm-host`; npm scope
+- **Package names:** crates `gasm-sdk` (lib name `gasm`), `gasm-host` and
+  `gasm-relay` (`publish = false` until its trusted publisher is set up); npm scope
   `@emdzej/*` (the unscoped `gasm` is taken on both registries). Demo game crates are
   `publish = false` and depend on the SDK by path only.
 - **No emojis on the website** (`site/`), including feature tiles and cards.

@@ -10,23 +10,23 @@ Games in this repo (Rust, C and C++):
 
 | Game | Shows | Size |
 |---|---|---|
-| `sumo.wasm` | 3D (`gasm:gfx`, WebGPU/WGSL) + online 2-player lockstep (`gasm:net`), with cross-play between native and browser | 70 KB |
-| `nes.wasm` | NES emulator on [tetanes-core](https://crates.io/crates/tetanes-core): 2D video, audio, input, assets | 1.5 MB |
-| `scummvm.wasm` | [ScummVM](https://www.scummvm.org/) with a gasm backend (Asyncify inside the guest): the LucasArts SCUMM games (Monkey Island, Day of the Tentacle, Sam & Max, Full Throttle, ...), Humongous games, the freeware Beneath a Steel Sky and Drascula, MP3/Ogg Vorbis/FLAC audio, saves in `gasm:storage` ([guests/scummvm](guests/scummvm/README.md), with its porting status) | 16 MB |
-| `doom.wasm` | DOOM ([doomgeneric](https://github.com/ozkl/doomgeneric), C) with OPL music, saves in `gasm:storage`, any IWAD as an asset ([guests/doom](guests/doom/README.md)) | 750 KB |
-| `sdl3-snake.wasm`, `sdl3-woodeneye.wasm` | SDL 3's own demos, source unchanged, on [SDL 3 for gasm](sdk/sdl3/README.md) (SDL as a private platform: video, input, audio, gamepads, files) | 0.9 MB |
-| `triangle.wasm` | Smallest `gasm:gfx` program (about 50 lines of Rust) | 25 KB |
-| `inputtest.wasm` | Shows every raw input: keyboard (with modifiers), mouse, gamepads and joysticks | 75 KB |
-| `textured.wasm` | Textures with mipmaps, two samplers, explicit layouts, dynamic offsets, a storage buffer, 4:3 viewport and text input | 57 KB |
-| `test-pattern.wasm` | Minimal C guest (proves the ABI is language-agnostic) | 87 KB |
-| `assetcheck.wasm` | Test guest for asset providers (folders, streaming, OPFS) | 34 KB |
+| `sumo.wasm` | 3D (`gasm:gfx`, WebGPU/WGSL) + online 2-player lockstep (`gasm:net`), with cross-play between native and browser | 57 KB |
+| `nes.wasm` | NES emulator on [tetanes-core](https://crates.io/crates/tetanes-core): 2D video, audio, input, assets | 1.3 MB |
+| `scummvm.wasm` | [ScummVM](https://www.scummvm.org/) with a gasm backend (Asyncify inside the guest): the LucasArts SCUMM games (Monkey Island, Day of the Tentacle, Sam & Max, Full Throttle, ...), Humongous games, the freeware Beneath a Steel Sky and Drascula, MP3/Ogg Vorbis/FLAC audio, saves in `gasm:storage` ([guests/scummvm](guests/scummvm/README.md), with its porting status) | 16.1 MB |
+| `doom.wasm` | DOOM ([doomgeneric](https://github.com/ozkl/doomgeneric), C) with OPL music, saves in `gasm:storage`, any IWAD as an asset ([guests/doom](guests/doom/README.md)) | 656 KB |
+| `sdl3-snake.wasm`, `sdl3-woodeneye.wasm` | SDL 3's own demos, source unchanged, on [SDL 3 for gasm](sdk/sdl3/README.md) (SDL as a private platform: video, input, audio, gamepads, files) | 817 KB |
+| `triangle.wasm` | Smallest `gasm:gfx` program (about 50 lines of Rust) | 17 KB |
+| `inputtest.wasm` | Shows every raw input: keyboard (with modifiers), mouse, gamepads and joysticks | 61 KB |
+| `textured.wasm` | Textures with mipmaps, two samplers, explicit layouts, dynamic offsets, a storage buffer, 4:3 viewport and text input | 43 KB |
+| `test-pattern.wasm` | Minimal C guest (proves the ABI is language-agnostic) | 76 KB |
+| `assetcheck.wasm` | Test guest for asset providers (folders, streaming, OPFS) | 27 KB |
 
 ```
                 ┌────────── game.wasm (one artifact) ──────────┐
                 │ Rust/C game ── gasm crate / gasm.h bindings  │
                 └───────────────────────┬──────────────────────┘
        gasm ABI v0: gasm.* (video, audio, input, assets, params)
-                    gasm:gfx (WebGPU subset)   gasm:net (messages)
+         gasm:gfx (WebGPU subset)   gasm:net (messages)   gasm:storage (saves)
       ┌───────────────────┬─────────────┴────────┬──────────────────────┐
   gasm-run (Rust)     gasm-run --compile     browser runner         Node headless
   wasmtime + wgpu     AOT .cwasm (no JIT)    WebGPU + canvas +      (CI, hashing,
@@ -47,8 +47,8 @@ Games in this repo (Rust, C and C++):
 | Writing games in Rust | [`gasm-sdk`](https://crates.io/crates/gasm-sdk) on crates.io |
 | Writing games in C/C++ | `gasm-c-sdk-<version>.zip` on Releases (`gasm.h` + CMake toolchain) |
 | Embedding in a web page / Node | [`@emdzej/gasm-host`](https://www.npmjs.com/package/@emdzej/gasm-host) on npm |
-| Embedding natively / `cargo install` | [`gasm-host`](https://crates.io/crates/gasm-host) on crates.io (`gasm-run`, `gasm-relay`) |
-| Hosting a relay | `ghcr.io/emdzej/gasm-relay` |
+| Embedding natively / `cargo install` | [`gasm-host`](https://crates.io/crates/gasm-host) on crates.io (library + `gasm-run`) |
+| Hosting a relay | `ghcr.io/emdzej/gasm-relay`, or `gasm-relay` from the release bundles |
 
 The ABI itself is machine-readable ([`spec/abi.json`](spec/abi.json)); the C header
 and Rust bindings are generated from it. See [Packages](site/dev/packages.md).
@@ -56,9 +56,12 @@ and Rust bindings are generated from it. See [Packages](site/dev/packages.md).
 ## Download
 
 [Releases](https://github.com/emdzej/gasm/releases) have ready-to-run builds:
-**macOS apps** (Sumo.app, NES.app, Triangle.app; unsigned, so right-click →
-Open the first time) and `gasm-run` + `gasm-relay` + games for macOS
-(universal), Linux and Windows. Or just [play in the browser](https://gasm.emdzej.pl/demos/).
+**macOS apps** (Sumo.app, NES.app, Triangle.app, Test Pattern.app; unsigned, so
+right-click → Open the first time) and `gasm-run` + `gasm-relay` + games for macOS
+(universal), Linux (x86_64, arm64) and Windows. Also there: the games alone (with
+their license notices, `THIRD-PARTY.txt`), the complete source of `doom.wasm` and
+`scummvm.wasm`, the C/C++ SDK and SDL 3 for gasm (`gasm-sdl3-<version>.zip`).
+Or just [play in the browser](https://gasm.emdzej.pl/demos/).
 
 ## Quick start
 
@@ -109,7 +112,8 @@ DOOM on keyboard and mouse, ScummVM
 playing, saving and loading Beneath a Steel Sky, the Day of the Tentacle demo, Drascula with Ogg, MP3 and FLAC music, sumo vs. bot, 5 NES test ROMs/demos, scripted Blade Buster gameplay, the DOOM and
 Freedoom attract-mode demos, and a scripted DOOM game that saves and loads). Each produces
 **bit-identical video, audio and GPU-upload streams** on wasmtime JIT,
-wasmtime AOT and V8. It also plays 3,600-frame online sumo matches through
+wasmtime AOT and V8, equal to golden hashes (`tests/golden/determinism.txt`) that CI
+checks on Linux (x86_64, arm64), macOS and Windows. It also plays 3,600-frame online sumo matches through
 `gasm-relay` for native↔native, native↔Node and Node↔native, all ending in the
 identical game state. A headless-Chrome (WebGPU) player against a native
 player was also verified (`fa43844c` on both sides after 1,200 frames).
@@ -135,7 +139,8 @@ headless; with the GPU, both runners hold 60 fps. DOOM (shareware demos,
 ## Layout
 
 ```
-spec/gasm.h, spec/ABI.md     the ABI (normative doc + C header)
+spec/abi.json                the ABI, machine-readable: source of truth (gen-abi.mjs makes gasm.h, sys.rs)
+spec/ABI.md, spec/gasm.h     the normative doc + the generated C header
 guests/                      Rust workspace (wasm32-unknown-unknown)
   gasm/                        Rust bindings + game! macro + native stub host
   sumo/                        3D 2-player game: sim.rs (deterministic), render.rs, lib.rs (lockstep)
@@ -146,17 +151,21 @@ guests/                      Rust workspace (wasm32-unknown-unknown)
   textured/                    textures, samplers, explicit layouts, dynamic offsets
   inputtest/                   raw keyboard, pointer, gamepads (input tester)
   loopdemo/                    a game with its own main loop (gasm::main_loop, Asyncify)
+  assetcheck/                  test guest for asset providers
   parity/                      runs the NES game natively (parity + benchmarks)
   test-pattern/                C guest (wasi-sdk)
-sdk/c/                       C/C++ SDK: CMake toolchain, gasm_loop (own main loop), examples
+sdk/c/                       C/C++ SDK: CMake toolchain, gasm_loop (own main loop), gasm_vfile (FILE*), examples
 sdk/sdl3/                    SDL 3 for gasm: config + drivers (SDL fetched at build, unpatched)
-runners/native/              Rust: wasmtime + wasmtime-wasi, wgpu, winit, cpal, gilrs, tungstenite
-  src/bin/gasm-relay.rs        WebSocket room relay
-runners/web/                 gasm-host.js (browser + Node), webgpu-gfx.js, index.html, app.js, headless.mjs
-scripts/                     fetch-wasi-sdk, fetch-roms, fetch-doom, determinism-test, net-test,
-                             web-smoke, build-site, package-cli, package-macos, package-doom-src
+runners/native/              crate gasm-host: library (headless and windowed runners) + gasm-run;
+                             wasmtime, wgpu, winit, cpal, gilrs, tungstenite; own WASI subset (src/wasi.rs)
+  relay/                       crate gasm-relay: WebSocket room relay
+runners/web/                 @emdzej/gasm-host: gasm-host.js + lib/ (host, WASI, gfx model, assets, input,
+                             net, storage), webgpu-gfx.js, gasm-worker.js, headless.mjs; the player (index.html, app.js)
+tests/golden/                golden hashes for the determinism suite
+scripts/                     toolchain/ROM fetchers (SHA-256 pinned), test suites, packaging, site build
 site/                        website (VitePress): docs, dev guides, demos → gasm.emdzej.pl
-.github/workflows/           CI (tests), Pages (site), Release (macOS apps + CLI builds)
+.github/workflows/           CI (tests on Linux, macOS, Windows), Pages (site), Release (bundles + packages)
+CHANGELOG.md                 what each release added
 ```
 
 ## Licensing
@@ -177,9 +186,7 @@ site/                        website (VitePress): docs, dev guides, demos → ga
 
 ## Next steps
 
-1. Runner-level **rollback netplay**: snapshot and restore guest memory, which
-   makes online play feel lag-free and works for NES too.
-2. `gasm:storage` for saves; a manifest custom section for capabilities and
-   network hosts.
-3. `gasm:gfx`: render targets, cube maps, render bundles.
-4. A **wasm2c** runner, to show the no-runtime/no-JIT path (iOS, consoles).
+Rollback netplay, `.gasm` packages, render targets and the rest are on the
+[ABI roadmap](spec/ABI.md#roadmap-not-in-v0). Design proposals (not implemented):
+[`gasm:gl`](design/gasm-gl.md), [threads](design/threads.md),
+[presentation](design/presentation.md).

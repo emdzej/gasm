@@ -21,21 +21,21 @@ are. For the normative interface, see the [ABI spec](/docs/abi).
 A **guest** (game) is a single WebAssembly module. A **runner** (host) is a
 native or web program that loads the module, provides the functions the guest
 imports, and drives it frame by frame. The **ABI** is the contract between them.
-Its core is small (20 imports, 3 exports), and GPU, network and storage are
+Its core is small (23 imports, 3 exports), and GPU, network and storage are
 optional modules on top.
 
 ## Components in this repository
 
 | Component | Path | Role |
 |---|---|---|
-| ABI | `spec/ABI.md`, `spec/gasm.h` | Import/export contract, v0 |
-| gasm crate | `guests/gasm/` | Rust bindings, `game!` macro, native stub host |
+| ABI | `spec/abi.json`, `spec/ABI.md`, `spec/gasm.h` | Import/export contract, v0 (`abi.json` is the source; `gasm.h` is generated) |
+| gasm-sdk crate | `guests/gasm/` | Rust bindings (library `gasm`), `game!` macro, native stub host |
 | sumo | `guests/sumo/` | 3D two-player game: deterministic sim, WebGPU rendering, lockstep netcode |
 | nes | `guests/nes/` | NES emulator on tetanes-core |
 | test-pattern | `guests/test-pattern/` | Minimal C guest |
-| gasm-run | `runners/native/` | Native runner: wasmtime, wgpu, winit, cpal, gilrs, tungstenite |
-| gasm-relay | `runners/native/src/bin/gasm-relay.rs` | WebSocket room relay for online play |
-| gasm-host.js | `runners/web/gasm-host.js` | JS runner core, shared by browser and Node |
+| gasm-run | `runners/native/` | Native runner (crate `gasm-host`, library + binary): wasmtime, wgpu, winit, cpal, gilrs, tungstenite, its own WASI subset |
+| gasm-relay | `runners/native/relay/` | WebSocket room relay for online play |
+| gasm-host.js | `runners/web/gasm-host.js`, `runners/web/lib/` | JS runner core, shared by browser and Node |
 | webgpu-gfx.js | `runners/web/webgpu-gfx.js` | `gasm:gfx` on the browser's WebGPU |
 | web runner | `runners/web/index.html`, `app.js` | Canvas, AudioWorklet, keyboard/Gamepad API, WebSocket |
 | headless Node | `runners/web/headless.mjs` | CI/hash/network runner using the same JS core |
@@ -47,9 +47,10 @@ exports                          imports
 ─────────────────────            ──────────────────────────────────────────────
 memory                           gasm.log / time_ms / set_frame_rate / param
 gasm_abi_version() -> 0          gasm.video_present / audio_config / audio_push
-gasm_init() -> 0 = ok            gasm.input_pad / text_input / asset_size / asset_read
+gasm_init() -> 0 = ok            gasm.input_pad / text_input / asset_size / asset_read / has
 gasm_frame()                     gasm:gfx.*   (optional: WebGPU subset)
 _initialize()  (optional)        gasm:net.*   (optional: message connections)
+gasm_exit()    (optional)        gasm:storage.* (optional: saves)
                                  wasi_snapshot_preview1.proc_exit (and libc subset)
 ```
 
@@ -156,9 +157,12 @@ Design choices:
 - **The runner owns the swapchain, depth buffer and MSAA.** Guests say
   `"surface"` / `"depth24plus"` and never manage resize or multisample
   resolve, so they're simpler and portable.
-- **Errors trap.** wgpu validation errors are captured with error scopes and
-  turned into a trap carrying the message. The browser reports them through
-  `uncapturederror`.
+- **Errors trap, the same way everywhere.** Both runners keep their own record
+  of every object and of the render pass, and check each call against it
+  (handle kinds, buffer ranges and usages, draws within their buffers, calls
+  outside a frame), so a mistake traps identically natively, in the browser and
+  headless. What only a GPU can check (WGSL errors) comes from wgpu error
+  scopes natively and WebGPU's error reports in the browser.
 - **Colors match.** The native runner prefers a non-sRGB swapchain
   (`Bgra8Unorm`), as browsers do, so a guest's shader output looks the same
   on both.
@@ -168,7 +172,8 @@ calls, but draws nothing, and every `write_buffer` payload is hashed. For
 sumo, the uniform buffer holds all object transforms and colors, so the hash
 covers the whole visible scene without comparing GPU pixels (which differ
 slightly across vendors). With `--screenshot`, the native runner renders the
-last frame on a real GPU into an offscreen texture instead.
+last frame on a real GPU into an offscreen texture instead. The Node runner has
+no GPU, so its screenshots only show `video_present` frames.
 
 ## Audio path
 
@@ -257,7 +262,7 @@ A per-game key/value store for saves, settings and scores:
 - **The runner picks the namespace** (default: the game file's name), so a
   game can only see its own saves.
 - **Synchronous API, asynchronous persistence where needed.** Native: one
-  file per key in `<data dir>/gasm/<game>/`, written atomically (temp file +
+  file per key in `<data dir>/gasm/<game>/`, written atomically (temp file, synced, then
   rename) before `set` returns. Browser: the whole namespace is loaded from
   IndexedDB before `gasm_init`, reads come from memory, and writes go to
   IndexedDB in the background.
@@ -304,13 +309,15 @@ reads.
 | Mode | How | When |
 |---|---|---|
 | JIT | `gasm-run game.wasm` (Cranelift) | Desktop default |
-| AOT | `gasm-run game.wasm --compile game.cwasm`, then run the `.cwasm` | Platforms that forbid JIT (iOS, consoles), faster startup |
+| AOT | `gasm-run game.wasm --compile game.cwasm`, then `gasm-run game.cwasm --allow-precompiled` | Platforms that forbid JIT (iOS, consoles), faster startup |
 | Browser | `WebAssembly.instantiate` in V8/SpiderMonkey/JSC | Web |
 | Native stub | `cargo build` the game for the host (`guests/parity`) | Debugging, parity checks |
-| Future: wasm2c | Translate to C and compile with the platform toolchain | No runtime at all |
 
 A `.cwasm` is native code for one wasmtime version and one CPU. Unlike a
-`.wasm`, it's **trusted input**, so only load artifacts you built yourself.
+`.wasm`, it's **trusted input**: `gasm-run` refuses one unless given
+`--allow-precompiled`, so only load artifacts you built yourself. Another
+engine could also run the same `.wasm` without a runtime, for example wasm2c,
+which translates it to C (see [engines](/dev/runners#_1-choose-an-engine)).
 
 ## Security model
 
@@ -325,9 +332,12 @@ A `.cwasm` is native code for one wasmtime version and one CPU. Unlike a
   (same-origin, mixed content).
 - Imports a runner doesn't implement link as traps, so they can't be used to
   reach anything.
-- Resource limits (memory caps, per-frame fuel/epoch timeouts) aren't
-  enforced yet. A malicious guest could spin forever or grow memory to the
-  engine maximum. This is a TODO before running untrusted content.
+- Calls are bounded natively: a guest call (init, a frame) that runs longer
+  than `--call-timeout` (30 s by default) traps. Network connections (16) and
+  their queues are bounded too.
+- Memory isn't capped yet: a malicious guest could grow its memory to the
+  engine maximum (4 GiB for wasm32). This is a TODO before running untrusted
+  content.
 
 ## Measured costs (Apple M1 Pro)
 

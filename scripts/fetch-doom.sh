@@ -5,8 +5,11 @@
 #   chocolate-doom - OPL music player (i_oplmusic.c, midifile.c) and the DOSBox OPL emulator (dbopl.c)
 set -euo pipefail
 cd "$(dirname "$0")/.."
+. scripts/lib.sh
 DOOMGENERIC=dcb7a8dbc7a16ce3dda29382ac9aae9d77d21284
+DOOMGENERIC_SHA256=1bd3f7f26220494159a38d71f2847ec81b58d6bbd7c7c8d81b08993018001148
 CHOCOLATE=chocolate-doom-2.2.1
+CHOCOLATE_SHA256=aa924052f3cadc4f0a8b8b92c69d134f9ca4d35add1b0a86bf9e04b6c1b71d90
 OUT=tools/doom-src
 STAMP="$OUT/.version"
 PATCH=guests/doom/engine.patch
@@ -15,9 +18,11 @@ VERSION="$DOOMGENERIC $CHOCOLATE $(cksum < "$PATCH" | cut -d' ' -f1)"
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 echo "fetching doomgeneric $DOOMGENERIC"
-curl -fsSL "https://github.com/ozkl/doomgeneric/archive/$DOOMGENERIC.tar.gz" | tar xz -C "$TMP"
+download "https://github.com/ozkl/doomgeneric/archive/$DOOMGENERIC.tar.gz" "$TMP/dg.tar.gz" "$DOOMGENERIC_SHA256"
+tar xzf "$TMP/dg.tar.gz" -C "$TMP"
 echo "fetching $CHOCOLATE"
-curl -fsSL "https://github.com/chocolate-doom/chocolate-doom/archive/refs/tags/$CHOCOLATE.tar.gz" | tar xz -C "$TMP"
+download "https://github.com/chocolate-doom/chocolate-doom/archive/refs/tags/$CHOCOLATE.tar.gz" "$TMP/cd.tar.gz" "$CHOCOLATE_SHA256"
+tar xzf "$TMP/cd.tar.gz" -C "$TMP"
 DG="$TMP/doomgeneric-$DOOMGENERIC"
 CD="$TMP/chocolate-doom-$CHOCOLATE"
 rm -rf "$OUT" && mkdir -p "$OUT"

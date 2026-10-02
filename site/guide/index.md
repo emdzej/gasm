@@ -11,9 +11,11 @@ everything from source.
     **Test Pattern.app**. They're unsigned: right-click → **Open** the first
     time, or run `xattr -dr com.apple.quarantine Sumo.app`. Logs go to
     `~/Library/Logs/gasm/`.
-  - `gasm-<version>-<platform>` archives (macOS universal, Linux, Windows):
-    `gasm-run`, `gasm-relay`, the games, and `run-sumo` / `run-nes` /
-    `run-doom` / `run-scummvm` / `run-relay` / `run-triangle` scripts.
+  - `gasm-<version>-<platform>` archives (macOS universal, Linux x86_64 and
+    arm64, Windows): `gasm-run`, `gasm-relay`, the games, and `run-sumo` /
+    `run-nes` / `run-doom` / `run-scummvm` / `run-relay` / `run-triangle` scripts.
+  - `gasm-<version>-games-wasm.zip`: just the games, with their license notices
+    (`THIRD-PARTY.txt`). The DOOM and ScummVM source archives are next to them.
 
 The rest of this guide builds from source.
 
@@ -222,6 +224,8 @@ gasm-run <game.wasm|game.cwasm> [options]
 --window <W>x<H>         initial window size (default 960x720)
 --mute                   no audio output
 --compile <out.cwasm>    ahead-of-time compile to native code and exit
+--allow-precompiled      accept a .cwasm (native code: only files you compiled yourself)
+--call-timeout <secs>    trap a game call (init, a frame) that runs longer (default 30, 0 = never)
 --headless <N>           run N frames with no window or audio; print hashes
 --screenshot <out.png>   (headless) save the last frame (GPU games render offscreen)
 --input <script>         (headless) scripted input, see below
@@ -238,6 +242,8 @@ Game parameters:
 | sumo | `mode=local2` | offline two-player on one machine (default: vs. bot) |
 | sumo, nes | `quit_at=N` | exit after N frames (tests) |
 | nes | `filter=ntsc` | NTSC composite filter (default: sharp pixels) |
+| doom | `args=...` | a DOOM command line (`-warp 1 3 -skill 4`, `-playdemo demo2`, ...) |
+| scummvm | `args=...` | a ScummVM command line; game files are at `/` (`-p / sky`, `--auto-detect -p /`) |
 
 ### Saves
 
@@ -261,12 +267,13 @@ window or hold Esc).
 
 ```sh
 $R build/nes.wasm --compile build/nes.cwasm
-$R build/nes.cwasm --rom roms/bladebuster.nes
+$R build/nes.cwasm --allow-precompiled --rom roms/bladebuster.nes
 ```
 
 A `.cwasm` starts faster and needs no JIT. It only works with the same
-`gasm-run` build on the same CPU architecture. **Only run `.cwasm` files you
-compiled yourself**, because they contain native code and aren't sandboxed.
+`gasm-run` build on the same CPU architecture. It contains native code that
+isn't sandboxed, so `gasm-run` loads one only with `--allow-precompiled`.
+**Only run `.cwasm` files you compiled yourself.**
 
 ### Headless runs and input scripts
 
@@ -295,8 +302,11 @@ $R build/doom.wasm --asset wad=roms/freedoom2.wad --param "args=-warp 1" --headl
    --input '40-200:KEY(ControlLeft+ArrowUp),300-400:MOVE(12,0),470:KEY(Escape)'
 ```
 
-The Node runner accepts the same headless options (plus `--param`,
-`--allow-net`, `--realtime`):
+The Node runner takes the same headless options: `--headless`, `--rom`,
+`--asset`, `--asset-dir`, `--param`, `--allow-net`, `--storage-dir`,
+`--storage-id`, `--input`, `--screenshot`, `--realtime` and `--no-hash`
+(unknown options are an error). Node has no GPU, so its `--screenshot` only
+captures `video_present` frames; use `gasm-run` for GPU games.
 
 ```sh
 node runners/web/headless.mjs build/sumo.wasm --headless 100000 --param quit_at=3000
@@ -305,9 +315,12 @@ node runners/web/headless.mjs build/sumo.wasm --headless 100000 --param quit_at=
 ### `gasm-relay`
 
 ```
-gasm-relay [addr:port] [--max-peers N]     (default 0.0.0.0:9000, 2 peers per room)
+gasm-relay [addr:port] [--max-peers N] [--max-clients N]   (default 0.0.0.0:9000, 2 peers per room, 256 clients)
 gasm-relay 0.0.0.0:9443 --tls-cert fullchain.pem --tls-key privkey.pem   # serve wss:// directly
 ```
+
+`gasm-relay` comes with the release bundles and as the container image
+`ghcr.io/emdzej/gasm-relay` (`docker run -p 9000:9000 ghcr.io/emdzej/gasm-relay`).
 
 For a public relay, use a real certificate, e.g. from Let's Encrypt
 (`certbot certonly --standalone -d relay.example.com`, then point `--tls-cert`
@@ -317,7 +330,8 @@ at `fullchain.pem` and `--tls-key` at `privkey.pem`). Players then use
 
 Clients connect to `ws://host:port/<room>`. The relay forwards messages
 between the peers in a room and announces joins and leaves. It knows nothing
-about the games.
+about the games. Handshakes time out after 10 s, and a peer that stops reading
+is disconnected instead of buffering everyone's traffic.
 
 ## 8. Which ROMs work
 
@@ -350,5 +364,7 @@ your own copies.
 | Web: `HTTP 404` for `build/*.wasm` | Serve the **repo root** (`make web`), not `runners/web/`. Build the games first. |
 | No sound (native) | Check `[gasm] audio:` on stderr; `audio disabled: …` explains why. |
 | No sound (web) | Click the page / **start** button; autoplay policies block audio before interaction. |
+| `.cwasm` is refused | Add `--allow-precompiled` (only for files you compiled yourself). |
 | `.cwasm` fails to load | It was built by a different `gasm-run` version; recompile it. |
+| A game stops with a timeout | One call ran longer than `--call-timeout` (30 s); raise it, or `0` to turn it off. |
 | macOS: "developer cannot be verified" for wasi-sdk | `xattr -dr com.apple.quarantine tools/wasi-sdk` (the fetch script does this). |

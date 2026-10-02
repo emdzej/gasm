@@ -73,8 +73,8 @@ static void GASM_JoystickDetect(void)
         } else if (!s->id && connected) {
             SDL_zerop(s);
             s->standard = (U32(raw) & GASM_GAMEPAD_STANDARD) != 0;
-            s->nbuttons = (int)SDL_min(U32(raw + 4), GASM_GAMEPAD_BUTTONS);
-            s->naxes = (int)SDL_min(U32(raw + 8), GASM_GAMEPAD_AXES);
+            s->nbuttons = (int)SDL_min(U32(raw + GASM_GAMEPAD_OFF_BUTTON_COUNT), GASM_GAMEPAD_BUTTONS);
+            s->naxes = (int)SDL_min(U32(raw + GASM_GAMEPAD_OFF_AXIS_COUNT), GASM_GAMEPAD_AXES);
             if (s->standard) {
                 s->naxes = 6;   /* sticks + analog triggers */
             }
@@ -189,7 +189,7 @@ static void GASM_JoystickUpdate(SDL_Joystick *joystick)
     }
     const Uint64 ts = SDL_GetTicksNS();
     for (int i = 0; i < s->nbuttons; i++) {
-        const float v = F32(raw + 12 + 4 * i);
+        const float v = F32(raw + GASM_GAMEPAD_OFF_BUTTONS + 4 * i);
         if ((v > 0.5f) != (s->buttons[i] > 0.5f)) {
             SDL_SendJoystickButton(ts, joystick, (Uint8)i, v > 0.5f);
         }
@@ -197,11 +197,11 @@ static void GASM_JoystickUpdate(SDL_Joystick *joystick)
     }
     float axes[GASM_GAMEPAD_AXES + 2];
     for (int i = 0; i < s->naxes; i++) {
-        axes[i] = F32(raw + 140 + 4 * i);
+        axes[i] = F32(raw + GASM_GAMEPAD_OFF_AXES + 4 * i);
     }
     if (s->standard) {   /* triggers 0..1 -> -1..1 */
-        axes[4] = F32(raw + 12 + 4 * 6) * 2.0f - 1.0f;
-        axes[5] = F32(raw + 12 + 4 * 7) * 2.0f - 1.0f;
+        axes[4] = F32(raw + GASM_GAMEPAD_OFF_BUTTONS + 4 * 6) * 2.0f - 1.0f;
+        axes[5] = F32(raw + GASM_GAMEPAD_OFF_BUTTONS + 4 * 7) * 2.0f - 1.0f;
     }
     for (int i = 0; i < s->naxes; i++) {
         if (axes[i] != s->axes[i]) {

@@ -12,7 +12,7 @@ gasm has two sides, and you can work on either one alone:
 ## Repository layout
 
 ```
-spec/                ABI.md (normative) + gasm.h (C header)
+spec/                abi.json (source of truth), ABI.md (normative), gasm.h (generated C header)
 guests/              Rust workspace, target wasm32-unknown-unknown
   gasm/                bindings, game! macro, native stub host
   sumo/                3D two-player game (sim.rs, render.rs, lib.rs)
@@ -25,11 +25,13 @@ guests/              Rust workspace, target wasm32-unknown-unknown
   parity/              runs the NES game natively (parity + benchmarks)
   test-pattern/        C example (wasi-sdk)
   loopdemo/            a game with its own main loop (Rust)
-sdk/c/               C/C++ SDK: CMake toolchain, gasm_loop, examples
+  assetcheck/          test guest for asset providers
+sdk/c/               C/C++ SDK: CMake toolchain, gasm_loop, gasm_vfile, examples
 sdk/sdl3/            SDL 3 for gasm (config + drivers; SDL fetched at build)
-runners/native/      gasm-run + gasm-relay (Rust)
-runners/web/         browser runner + headless Node runner (JS)
-scripts/             toolchain/ROM fetchers, test suites, site build
+runners/native/      crate gasm-host: library + gasm-run (Rust); relay/: gasm-relay
+runners/web/         @emdzej/gasm-host (gasm-host.js + lib/), browser player, headless Node runner (JS)
+tests/golden/        golden hashes of the determinism suite
+scripts/             toolchain/ROM fetchers, test suites, packaging, site build
 site/                this website (VitePress)
 ```
 
@@ -53,18 +55,30 @@ exports: memory, gasm_abi_version() -> 0, gasm_init() -> 0, gasm_frame()
 
 exports (optional): gasm_exit()   player is quitting: flush saves
 
-gasm        log · time_ms · set_frame_rate · param · video_present
+gasm        log · has · time_ms · set_frame_rate · param · video_present
             audio_config · audio_push · input_pad · text_input · input_mode
             key_state · key_events · pointer · gamepad · gamepad_name
-            asset_size · asset_read · asset_read_at · asset_count · asset_name
+            asset_size · asset_size64 · asset_read · asset_read_at
+            asset_read_at64 · asset_count · asset_name
 gasm:gfx    width · height · create_shader · create_buffer · write_buffer
             create_texture · write_texture · create_sampler
             create_bind_group_layout · create_pipeline · create_bind_group
             begin_frame · set_pipeline · set_bind_group · set_bind_group_offsets
             set_viewport · set_scissor_rect · set_vertex_buffer
-            set_index_buffer · draw · draw_indexed · end_frame
+            set_index_buffer · draw · draw_indexed · end_frame · destroy
 gasm:net    open · state · send · recv · close
 gasm:storage get · set · delete · count · key
 ```
 
-Full details: [ABI v0 specification](/docs/abi).
+Full details: [ABI v0 specification](/docs/abi). What each release added:
+[CHANGELOG](https://github.com/emdzej/gasm/blob/main/CHANGELOG.md).
+
+## Design proposals
+
+Not implemented yet; each describes a feature and a plan:
+
+- [`gasm:gl`](https://github.com/emdzej/gasm/blob/main/design/gasm-gl.md): OpenGL ES 3.0 with WebGL 2 rules
+- [Threads](https://github.com/emdzej/gasm/blob/main/design/threads.md): cooperative threads inside the guest, real wasm threads later
+- [Presentation](https://github.com/emdzej/gasm/blob/main/design/presentation.md): upscaling filters, display aspect, window title
+
+The rest of the plan is the [ABI roadmap](/docs/abi#roadmap-not-in-v0).

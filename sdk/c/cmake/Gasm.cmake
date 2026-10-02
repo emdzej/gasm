@@ -8,7 +8,10 @@
 # LOOP: the game keeps its own main loop instead (gasm_loop.h): define gasm_main()
 # and call gasm_wait_frame() once per frame. gasm_loop.c provides the exports, and
 # the module is post-processed with Binaryen's wasm-opt --asyncify (set GASM_WASM_OPT,
-# or have wasm-opt on PATH; GASM_LOOP_STACK_SIZE sets the suspended-stack buffer).
+# or have wasm-opt on PATH; GASM_LOOP_STACK_SIZE sets the suspended-stack buffer, per
+# target). wasm-opt optimizes (-O2) except in Debug builds, which keep names (-g).
+#
+# stdio over assets and storage (gasm_vfile.h): target_sources(<target> PRIVATE ${GASM_VFILE_SOURCE}).
 
 if(NOT GASM_INCLUDE_DIR)
   if(EXISTS "${CMAKE_CURRENT_LIST_DIR}/../include/gasm.h")        # release bundle layout
@@ -27,6 +30,9 @@ if(NOT GASM_LOOP_SOURCE)
   if(EXISTS "${CMAKE_CURRENT_LIST_DIR}/../src/gasm_loop.c")
     get_filename_component(GASM_LOOP_SOURCE "${CMAKE_CURRENT_LIST_DIR}/../src/gasm_loop.c" ABSOLUTE)
   endif()
+endif()
+if(NOT GASM_VFILE_SOURCE AND EXISTS "${CMAKE_CURRENT_LIST_DIR}/../src/gasm_vfile.c")
+  get_filename_component(GASM_VFILE_SOURCE "${CMAKE_CURRENT_LIST_DIR}/../src/gasm_vfile.c" ABSOLUTE)
 endif()
 
 function(gasm_add_game target)
@@ -50,7 +56,8 @@ function(gasm_add_game target)
   target_link_libraries(${target} PRIVATE m)
   if(loop)
     if(GASM_LOOP_STACK_SIZE)
-      set_source_files_properties("${GASM_LOOP_SOURCE}" PROPERTIES COMPILE_DEFINITIONS "GASM_LOOP_STACK_SIZE=${GASM_LOOP_STACK_SIZE}")
+      # per target (the source is shared between targets)
+      target_compile_definitions(${target} PRIVATE "GASM_LOOP_STACK_SIZE=${GASM_LOOP_STACK_SIZE}")
     endif()
     target_link_options(${target} PRIVATE -Wl,--wrap=exit)
     if(NOT GASM_WASM_OPT)
@@ -62,7 +69,7 @@ function(gasm_add_game target)
     # Asyncify before optimizing; the frame export must not be instrumented (gasm_loop.c)
     add_custom_command(TARGET ${target} POST_BUILD
       COMMAND "${GASM_WASM_OPT}" "$<TARGET_FILE:${target}>" --asyncify
-              --pass-arg=asyncify-removelist@gasm_loop_frame -O2 -o "$<TARGET_FILE:${target}>"
+              --pass-arg=asyncify-removelist@gasm_loop_frame "$<IF:$<CONFIG:Debug>,-g,-O2>" -o "$<TARGET_FILE:${target}>"
       VERBATIM)
   endif()
 endfunction()

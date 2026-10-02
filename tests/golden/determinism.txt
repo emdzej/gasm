@@ -1,0 +1,28 @@
+# golden hashes: <case> frames=… presented=… size=… video_fnv32=… audio_fnv32=… audio_frames=…
+# from scripts/determinism-test.sh; regenerate with UPDATE_GOLDEN=1 after an intended output change
+test-pattern frames=300 presented=300 size=256x240 video_fnv32=965b2f26 audio_fnv32=bc02d445 audio_frames=220500 
+textured-text frames=600 presented=600 size=0x0 video_fnv32=30bb1c03 audio_fnv32=811c9dc5 audio_frames=0 
+inputtest frames=200 presented=200 size=320x240 video_fnv32=7b055572 audio_fnv32=811c9dc5 audio_frames=0 
+loopdemo-rust frames=311 presented=299 size=160x120 video_fnv32=76c9eb45 audio_fnv32=811c9dc5 audio_frames=0 
+loopdemo-c frames=261 presented=260 size=160x120 video_fnv32=f49f9dc5 audio_fnv32=811c9dc5 audio_frames=0 
+sdl3-snake frames=900 presented=900 size=576x432 video_fnv32=d81113c5 audio_fnv32=811c9dc5 audio_frames=0 
+sdl3-woodeneye frames=400 presented=400 size=640x480 video_fnv32=8dab25b4 audio_fnv32=811c9dc5 audio_frames=0 
+sdl3-callbacks frames=281 presented=280 size=320x240 video_fnv32=8debd2d5 audio_fnv32=28c224f5 audio_frames=224800 
+sdl3-classic frames=252 presented=251 size=320x240 video_fnv32=c2b2a39d audio_fnv32=811c9dc5 audio_frames=0 
+triangle frames=300 presented=300 size=0x0 video_fnv32=bebe0fed audio_fnv32=811c9dc5 audio_frames=0 
+sumo-vs-bot frames=3000 presented=3000 size=0x0 video_fnv32=c456b030 audio_fnv32=811c9dc5 audio_frames=0 
+cpu_instr_test frames=3000 presented=3000 size=256x240 video_fnv32=5fe26da1 audio_fnv32=dcbe01e0 audio_frames=2395923 
+cpu_timing_test frames=1200 presented=1200 size=256x240 video_fnv32=a49d1c1d audio_fnv32=97a74519 audio_frames=958327 
+apu_test frames=1200 presented=1200 size=256x240 video_fnv32=c2ee15c5 audio_fnv32=985cc0f8 audio_frames=958328 
+spritecans frames=600 presented=600 size=256x240 video_fnv32=4cde0fe1 audio_fnv32=39dc28b4 audio_frames=479129 
+quantum_disco frames=1800 presented=1800 size=256x240 video_fnv32=4254bda6 audio_fnv32=7c6f0a56 audio_frames=1437523 
+bladebuster-play frames=2400 presented=2400 size=256x240 video_fnv32=fd15bbc8 audio_fnv32=56acada3 audio_frames=1916721 
+doom1-demos frames=2100 presented=2100 size=640x480 video_fnv32=61238105 audio_fnv32=a1788d32 audio_frames=2646000 
+freedoom1-demos frames=2100 presented=2100 size=640x480 video_fnv32=cf4d32bd audio_fnv32=fcafdb6e audio_frames=2646000 
+freedoom2-keyboard frames=520 presented=520 size=640x480 video_fnv32=9bb98569 audio_fnv32=8fa65efe audio_frames=655200 
+scummvm-sky frames=2400 presented=3429 size=320x240 video_fnv32=72109fe7 audio_fnv32=95dfc1f9 audio_frames=1764000 
+scumm-dott-demo frames=1800 presented=3510 size=320x240 video_fnv32=6cbb1d2d audio_fnv32=9a3003e9 audio_frames=1323000 
+drascula-ogg frames=900 presented=394 size=320x240 video_fnv32=771fe96e audio_fnv32=5f3cba95 audio_frames=661500 
+drascula-mp3 frames=900 presented=394 size=320x240 video_fnv32=771fe96e audio_fnv32=a08ee398 audio_frames=661500 
+drascula-flac frames=900 presented=394 size=320x240 video_fnv32=771fe96e audio_fnv32=af4d6fbd audio_frames=661500 
+freedoom2-save-load frames=1100 presented=1100 size=640x480 video_fnv32=a840e051 audio_fnv32=7a6ba57f audio_frames=1386000 

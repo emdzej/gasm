@@ -2,7 +2,7 @@
 name = "gasm-host"
 version = "0.5.0"
 edition = "2024"
-description = "Native host for gasm games (a portable game runtime on WebAssembly): wasmtime, WebGPU via wgpu, audio, gamepads, WebSocket networking and storage. Includes the gasm-run runner and gasm-relay"
+description = "Native host for gasm games (a portable game runtime on WebAssembly): wasmtime, WebGPU via wgpu, audio, gamepads, WebSocket networking and storage. Includes the gasm-run runner"
 license = "MIT"
 repository = "https://github.com/emdzej/gasm"
 homepage = "https://gasm.emdzej.pl"
@@ -20,14 +20,21 @@ path = "src/lib.rs"
 name = "gasm-run"
 path = "src/main.rs"
 
-[[bin]]
-name = "gasm-relay"
-path = "src/bin/gasm-relay.rs"
+# gasm-relay is its own crate (relay/): it needs none of the runtime
+[workspace]
+members = ["relay"]
+default-members = [".", "relay"]
+
+[features]
+default = ["window"]
+# the windowed runner: winit window, cpal audio, gilrs gamepads, keyboard layouts.
+# Without it the library (and gasm-run) are headless only.
+window = ["dep:winit", "dep:cpal", "dep:gilrs"]
 
 [dependencies]
 wasmtime = "49"
-wasmtime-wasi = "49"
-winit = "0.30"
+getrandom = "0.3"
+winit = { version = "0.30", optional = true }
 wgpu = "30"
 pollster = "1"
 serde_json = "1"
@@ -35,8 +42,8 @@ tungstenite = { version = "0.30", features = ["rustls-tls-native-roots"] }
 # TLS for wss:// (client) and gasm-relay --tls-cert (server); ring = no cmake/NASM needed
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
 rustls-pki-types = { version = "1", features = ["std"] }
-cpal = "0.18"
-gilrs = "0.11"
+cpal = { version = "0.18", optional = true }
+gilrs = { version = "0.11", optional = true }
 png = "0.18"
 
 [profile.release]

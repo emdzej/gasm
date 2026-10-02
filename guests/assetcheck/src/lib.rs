@@ -81,7 +81,7 @@ impl gasm::Game for Check {
                 self.rng ^= self.rng >> 7;
                 self.rng ^= self.rng << 17;
                 let span = size.saturating_sub(self.chunk.len() as u64).max(1);
-                let offset = (self.rng % span) as u32;
+                let offset = self.rng % span;
                 let n = gasm::asset_read_at(name, offset, &mut self.chunk).unwrap_or(0);
                 self.hash = fnv(self.hash, &self.chunk[..n]);
                 self.bytes += n as u64;

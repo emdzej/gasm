@@ -12,6 +12,7 @@
 #   scripts/build-scummvm-libs.sh
 set -euo pipefail
 cd "$(dirname "$0")/.."
+. scripts/lib.sh
 OUT=tools/scummvm-libs
 SRC=$OUT/src
 WASI_SDK=${WASI_SDK:-$PWD/tools/wasi-sdk}
@@ -19,7 +20,8 @@ CC="$WASI_SDK/bin/clang --target=wasm32-wasip1 --sysroot=$WASI_SDK/share/wasi-sy
 AR="$WASI_SDK/bin/llvm-ar"
 CFLAGS="-O2 -DNDEBUG -w"
 STAMP="$OUT/.gasm-libs"
-SIG=$(cksum < "$0" | cut -d' ' -f1)
+# rebuild when this script or the compiler changes
+SIG="$(cksum < "$0" | cut -d' ' -f1) $(cat "$WASI_SDK/.version" 2>/dev/null || "$WASI_SDK/bin/clang" --version | head -1)"
 [ -f "$STAMP" ] && [ "$(cat "$STAMP")" = "$SIG" ] && exit 0
 
 # name|url|sha256 (libmad: SourceForge, Debian's identical orig tarball as a fallback)
@@ -33,14 +35,18 @@ mkdir -p "$SRC"
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 echo "$LIBS" | while IFS='|' read -r name urls sha; do
-  [ -d "$SRC/$name" ] && continue
+  [ -f "$SRC/$name/.complete" ] && continue
   echo "fetching $name"
   ok=
   for url in $urls; do
-    if curl -fsSL "$url" -o "$TMP/$name.tar" && echo "$sha  $TMP/$name.tar" | shasum -a 256 -c - >/dev/null 2>&1; then ok=1; break; fi
+    if curl -fsSL "$url" -o "$TMP/$name.tar" && [ "$(sha256_of "$TMP/$name.tar")" = "$sha" ]; then ok=1; break; fi
   done
   [ -n "$ok" ] || { echo "$name: download failed or checksum mismatch" >&2; exit 1; }
-  tar xf "$TMP/$name.tar" -C "$SRC"
+  # extract next to the final place, then move: an interrupted run never leaves a partial tree
+  rm -rf "$SRC/$name" "$TMP/x" && mkdir -p "$TMP/x"
+  tar xf "$TMP/$name.tar" -C "$TMP/x"
+  mv "$TMP/x/$name" "$SRC/$name"
+  touch "$SRC/$name/.complete"
 done
 
 rm -rf "$OUT/include" "$OUT/lib" "$OUT/obj"
