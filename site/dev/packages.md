@@ -11,7 +11,8 @@ when a version tag (like `0.2.0`, no `v`) is pushed. Registries use
 | Language | Package | Install |
 |---|---|---|
 | Rust | [`gasm-sdk`](https://crates.io/crates/gasm-sdk) (library name `gasm`) | `gasm-sdk = "0.1"`, `crate-type = ["cdylib"]` |
-| C / C++ | `gasm-c-sdk-<version>.zip` on [Releases](https://github.com/emdzej/gasm/releases) | `gasm.h` + CMake toolchain (wasi-sdk) + example |
+| C / C++ | `gasm-c-sdk-<version>.zip` on [Releases](https://github.com/emdzej/gasm/releases) | `gasm.h` + CMake toolchain (wasi-sdk) + examples, `gasm_loop.h` for an own main loop |
+| SDL 3 | `gasm-sdl3-<version>.zip` on [Releases](https://github.com/emdzej/gasm/releases) | `libSDL3.a`, headers, `find_package(SDL3)` config, examples ([details](https://github.com/emdzej/gasm/blob/main/sdk/sdl3/README.md)) |
 | anything else | `gasm.h` / `abi.json` on Releases | bind the imports yourself; see below |
 
 **Rust:**

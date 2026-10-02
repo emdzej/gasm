@@ -1,7 +1,7 @@
 # Rust guests (games) for gasm. Build: make guests  (wasm32-unknown-unknown)
 [workspace]
 resolver = "3"
-members = ["gasm", "sumo", "nes", "triangle", "textured", "inputtest", "assetcheck", "parity"]
+members = ["gasm", "sumo", "nes", "triangle", "textured", "inputtest", "loopdemo", "assetcheck", "parity"]
 
 [workspace.package]
 edition = "2024"

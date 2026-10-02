@@ -43,4 +43,33 @@ if [ ! -f roms/doom1.wad ]; then
   mv "$tmp/usr/share/games/doom/doom1.wad" roms/doom1.wad
   rm -rf "$tmp"
 fi
+# Beneath a Steel Sky, floppy version (freeware, Revolution Software; free to
+# redistribute with its readme, which stays next to the game in roms/bass/).
+if [ ! -f roms/bass/sky.dnr ] || [ ! -f roms/bass/sky.dsk ]; then
+  echo "fetching Beneath a Steel Sky (floppy, freeware)"
+  tmp=$(mktemp -d)
+  curl -fsSL "https://downloads.scummvm.org/frs/extras/Beneath%20a%20Steel%20Sky/BASS-Floppy-1.3.zip" -o "$tmp/bass.zip"
+  mkdir -p roms/bass && unzip -q -o "$tmp/bass.zip" -d roms/bass
+  chmod 644 roms/bass/*   # the zip stores them owner-only
+  rm -rf "$tmp"
+  sum() { shasum -a 256 "$1" 2>/dev/null || sha256sum "$1"; }
+  for f in sky.dnr:e1ea726858bfa024b9696856c32cd2f525d0e33b5fb0e0284ad2e6ce943115c8 \
+           sky.dsk:355a6782b9741d0e9eb5e202343c944577e7d78ad36b4c8c7b83965526b1d2aa; do
+    s=$(sum "roms/bass/${f%%:*}"); [ "${s%% *}" = "${f#*:}" ] || { echo "roms/bass/${f%%:*}: checksum mismatch" >&2; exit 1; }
+  done
+fi
+# LucasArts SCUMM demos hosted by ScummVM, for testing the SCUMM engine (not
+# redistributed by gasm: they stay in roms/, which is never committed or published).
+scumm_demo() { # <name> <sha256 of the zip>
+  [ -d "roms/scumm/$1" ] && return
+  echo "fetching SCUMM demo $1"
+  tmp=$(mktemp -d)
+  curl -fsSL "https://downloads.scummvm.org/frs/demos/scumm/$1.zip" -o "$tmp/d.zip"
+  s=$(shasum -a 256 "$tmp/d.zip" 2>/dev/null || sha256sum "$tmp/d.zip")
+  [ "${s%% *}" = "$2" ] || { echo "$1.zip: checksum mismatch" >&2; exit 1; }
+  mkdir -p "roms/scumm/$1" && unzip -q -o "$tmp/d.zip" -d "roms/scumm/$1" && chmod -R u+rwX,go+rX "roms/scumm/$1"
+  rm -rf "$tmp"
+}
+scumm_demo monkey1-dos-ega-demo-en 1cb530fc4ab1d1f005e6630de31fe1a4186a7ad5d1a2b73e126e898e5e9039d0
+scumm_demo dott-dos-ni-demo-en b77f03981da3815a352330f39f54d46e187bb05503cf1c832bb0d14539f15964
 ls -la roms

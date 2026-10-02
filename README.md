@@ -6,13 +6,15 @@ interface** (video, audio, input, assets, GPU, network). The same `.wasm` runs
 natively (wasmtime + wgpu), in the browser (WebAssembly + WebGPU), and headless
 in Node, with bit-identical game state.
 
-Games in this repo (Rust, plus two in C):
+Games in this repo (Rust, C and C++):
 
 | Game | Shows | Size |
 |---|---|---|
 | `sumo.wasm` | 3D (`gasm:gfx`, WebGPU/WGSL) + online 2-player lockstep (`gasm:net`), with cross-play between native and browser | 70 KB |
 | `nes.wasm` | NES emulator on [tetanes-core](https://crates.io/crates/tetanes-core): 2D video, audio, input, assets | 1.5 MB |
+| `scummvm.wasm` | [ScummVM](https://www.scummvm.org/) with a gasm backend (Asyncify inside the guest): the LucasArts SCUMM games (Monkey Island, Day of the Tentacle, Sam & Max, Full Throttle, ...), Humongous games and the freeware Beneath a Steel Sky, saves in `gasm:storage` ([guests/scummvm](guests/scummvm/README.md)) | 15 MB |
 | `doom.wasm` | DOOM ([doomgeneric](https://github.com/ozkl/doomgeneric), C) with OPL music, saves in `gasm:storage`, any IWAD as an asset ([guests/doom](guests/doom/README.md)) | 750 KB |
+| `sdl3-snake.wasm`, `sdl3-woodeneye.wasm` | SDL 3's own demos, source unchanged, on [SDL 3 for gasm](sdk/sdl3/README.md) (SDL as a private platform: video, input, audio, gamepads, files) | 0.9 MB |
 | `triangle.wasm` | Smallest `gasm:gfx` program (about 50 lines of Rust) | 25 KB |
 | `inputtest.wasm` | Shows every raw input: keyboard (with modifiers), mouse, gamepads and joysticks | 75 KB |
 | `textured.wasm` | Textures with mipmaps, two samplers, explicit layouts, dynamic offsets, a storage buffer, 4:3 viewport and text input | 57 KB |
@@ -87,6 +89,9 @@ $R build/nes.wasm --rom roms/bladebuster.nes
 
 # DOOM (any IWAD: doom1.wad, doom2.wad, Freedoom, ...)
 $R build/doom.wasm --asset wad=roms/doom1.wad
+
+# ScummVM (Beneath a Steel Sky, freeware; or --asset-dir <your game> --param "args=--auto-detect -p /")
+$R build/scummvm.wasm --asset-dir roms/bass --param "args=-p / sky"
 ```
 
 Controls: arrows = D-pad, **X** = A, **Z** = B, **Enter** = Start,
@@ -97,8 +102,11 @@ ball off the platform. First to 5 wins.
 
 ## Results (Apple M1 Pro, this commit)
 
-**Portability.** `make test` checks 14 single-player cases (test pattern, the
-textured GPU test, the input tester, DOOM on keyboard and mouse, sumo vs. bot, 5 NES test ROMs/demos, scripted Blade Buster gameplay, the DOOM and
+**Portability.** `make test` checks 22 single-player cases (test pattern, the
+textured GPU test, the input tester, games with their own main loop in Rust and C,
+four SDL 3 programs (snake, woodeneye, callbacks with audio, a classic main loop),
+DOOM on keyboard and mouse, ScummVM
+playing, saving and loading Beneath a Steel Sky, the Day of the Tentacle demo, sumo vs. bot, 5 NES test ROMs/demos, scripted Blade Buster gameplay, the DOOM and
 Freedoom attract-mode demos, and a scripted DOOM game that saves and loads). Each produces
 **bit-identical video, audio and GPU-upload streams** on wasmtime JIT,
 wasmtime AOT and V8. It also plays 3,600-frame online sumo matches through
@@ -133,11 +141,15 @@ guests/                      Rust workspace (wasm32-unknown-unknown)
   sumo/                        3D 2-player game: sim.rs (deterministic), render.rs, lib.rs (lockstep)
   nes/                         NES emulator on tetanes-core
   doom/                        DOOM: gasm platform layer for doomgeneric (engine fetched at build)
+  scummvm/                     ScummVM: gasm backend + configure patch (engine fetched at build)
   triangle/                    smallest GPU example
   textured/                    textures, samplers, explicit layouts, dynamic offsets
   inputtest/                   raw keyboard, pointer, gamepads (input tester)
+  loopdemo/                    a game with its own main loop (gasm::main_loop, Asyncify)
   parity/                      runs the NES game natively (parity + benchmarks)
   test-pattern/                C guest (wasi-sdk)
+sdk/c/                       C/C++ SDK: CMake toolchain, gasm_loop (own main loop), examples
+sdk/sdl3/                    SDL 3 for gasm: config + drivers (SDL fetched at build, unpatched)
 runners/native/              Rust: wasmtime + wasmtime-wasi, wgpu, winit, cpal, gilrs, tungstenite
   src/bin/gasm-relay.rs        WebSocket room relay
 runners/web/                 gasm-host.js (browser + Node), webgpu-gfx.js, index.html, app.js, headless.mjs
@@ -151,13 +163,17 @@ site/                        website (VitePress): docs, dev guides, demos → ga
 
 - gasm (spec, runners, relay, bindings, games): MIT.
 - `nes.wasm` statically contains tetanes-core (MIT OR Apache-2.0).
+- SDL 3 (`sdk/sdl3`, `sdl3-*.wasm`) is zlib-licensed; gasm's drivers for it are zlib too.
+- `scummvm.wasm` is **GPL-3.0** as a whole (ScummVM). The repo holds gasm's MIT
+  backend and a small `configure` patch; releases and the website ship the
+  complete source (the files the build uses) next to the binary.
 - `doom.wasm` is **GPL-2.0** as a whole (the DOOM source code). The repo holds
   only gasm's MIT glue and a small engine patch; `make doom` fetches the engine.
   Releases and the website ship the complete source next to the binary.
 - ROMs and WADs are not part of the repo. `make roms` downloads test ROMs and homebrew
   demos from the [nes-test-roms](https://github.com/christopherpow/nes-test-roms)
   collection, [Freedoom](https://freedoom.github.io/) (BSD-3-Clause) and the
-  freely distributable DOOM shareware `doom1.wad`.
+  freely distributable DOOM shareware `doom1.wad`, and Beneath a Steel Sky (freeware, Revolution Software).
 
 ## Next steps
 

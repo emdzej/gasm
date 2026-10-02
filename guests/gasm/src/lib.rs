@@ -637,3 +637,166 @@ macro_rules! game {
         }
     };
 }
+
+// ---- own main loop -------------------------------------------------------------------
+
+/// Games that keep their own main loop (`loop { update(); draw(); wait_frame(); }`)
+/// instead of implementing [`Game`]. Same mechanism as the C SDK's `gasm_loop.h`:
+/// [`main_loop!`] exports the entry points and runs your function on the first frame;
+/// [`main_loop::wait_frame`] suspends it until the next frame with Binaryen's Asyncify,
+/// inside the module. Build, then post-process the `.wasm`:
+///
+/// ```text
+/// wasm-opt game.wasm --asyncify --pass-arg=asyncify-removelist@gasm_frame,gasm_loop_frame -O2 -o game.wasm
+/// ```
+///
+/// ```ignore
+/// fn run() -> i32 {
+///     loop {
+///         if gasm::pad(0).held(gasm::Buttons::START) { return 0; }
+///         draw();
+///         gasm::main_loop::wait_frame();
+///     }
+/// }
+/// gasm::main_loop!(run);
+/// ```
+///
+/// wasm32 only: native builds of such a game run `run` straight through.
+pub mod main_loop {
+    // the suspend/resume state only exists on wasm32
+    #![cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+
+    #[cfg(target_arch = "wasm32")]
+    mod asyncify {
+        #[link(wasm_import_module = "asyncify")]
+        unsafe extern "C" {
+            pub fn start_unwind(data: *mut u8);
+            pub fn stop_unwind();
+            pub fn start_rewind(data: *mut u8);
+            pub fn stop_rewind();
+        }
+    }
+
+    const STACK: usize = 1024 * 1024;
+
+    #[repr(C)]
+    struct Data {
+        cur: *mut u8,
+        end: *mut u8,
+    }
+
+    // One thread; these are only touched from the frame loop below.
+    static mut DATA: Data = Data { cur: std::ptr::null_mut(), end: std::ptr::null_mut() };
+    static mut STACK_BUF: [u8; STACK] = [0; STACK];
+    static mut REWINDING: bool = false;
+    static mut UNWINDING: bool = false;
+    static mut STARTED: bool = false;
+    static mut FINISHED: bool = false;
+    static mut EXIT_CODE: i32 = 0;
+    static mut MAIN: Option<fn() -> i32> = None;
+    static mut FRAMES: u32 = 0;
+
+    fn wait_impl() {
+        #[cfg(target_arch = "wasm32")]
+        unsafe {
+            if REWINDING {
+                asyncify::stop_rewind();
+                REWINDING = false;
+                FRAMES += 1;
+                return;
+            }
+            DATA.cur = (&raw mut STACK_BUF).cast::<u8>();
+            DATA.end = DATA.cur.add(STACK);
+            UNWINDING = true;
+            asyncify::start_unwind((&raw mut DATA).cast::<u8>());
+        }
+    }
+
+    // Reached through a pointer: Asyncify instruments the callers of indirect calls,
+    // while wait_impl itself stays plain (like an import).
+    static mut WAIT: fn() = wait_impl;
+
+    /// Return to the runner; continues in the next frame (input and time are per frame).
+    pub fn wait_frame() {
+        let f = unsafe { std::ptr::read_volatile(&raw const WAIT) };
+        f()
+    }
+
+    /// Frames waited so far.
+    pub fn frames() -> u32 {
+        unsafe { FRAMES }
+    }
+
+    #[doc(hidden)]
+    pub fn set_main(f: fn() -> i32) {
+        unsafe { MAIN = Some(f) }
+    }
+
+    // Must be instrumented (and not inlined into the frame export): an unwind returns
+    // from here at once instead of looking like the game's function ended.
+    #[inline(never)]
+    fn run_main() {
+        unsafe {
+            let rc = MAIN.map_or(0, |f| f());
+            if !UNWINDING {
+                EXIT_CODE = rc;
+                FINISHED = true;
+            }
+        }
+    }
+
+    /// The frame driver; on Asyncify's remove list (it is the one frame that must not unwind).
+    #[doc(hidden)]
+    #[unsafe(no_mangle)]
+    #[inline(never)]
+    pub extern "C" fn gasm_loop_frame() {
+        unsafe {
+            if FINISHED {
+                return;
+            }
+            #[cfg(target_arch = "wasm32")]
+            {
+                if !STARTED {
+                    STARTED = true;
+                } else {
+                    REWINDING = true;
+                    asyncify::start_rewind((&raw mut DATA).cast::<u8>());
+                }
+                run_main();
+                if UNWINDING {
+                    asyncify::stop_unwind();
+                    UNWINDING = false;
+                    return;
+                }
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                STARTED = true;
+                run_main();
+            }
+            if FINISHED {
+                crate::exit(EXIT_CODE);
+            }
+        }
+    }
+}
+
+/// Export the gasm entry points for a game with its own main loop (see [`main_loop`]).
+#[macro_export]
+macro_rules! main_loop {
+    ($main:path) => {
+        #[unsafe(no_mangle)]
+        pub extern "C" fn gasm_abi_version() -> i32 {
+            $crate::ABI_VERSION
+        }
+        #[unsafe(no_mangle)]
+        pub extern "C" fn gasm_init() -> i32 {
+            $crate::main_loop::set_main($main);
+            0
+        }
+        #[unsafe(no_mangle)]
+        pub extern "C" fn gasm_frame() {
+            $crate::main_loop::gasm_loop_frame()
+        }
+    };
+}

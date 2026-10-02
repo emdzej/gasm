@@ -13,7 +13,7 @@ everything from source.
     `~/Library/Logs/gasm/`.
   - `gasm-<version>-<platform>` archives (macOS universal, Linux, Windows):
     `gasm-run`, `gasm-relay`, the games, and `run-sumo` / `run-nes` /
-    `run-doom` / `run-relay` / `run-triangle` scripts.
+    `run-doom` / `run-scummvm` / `run-relay` / `run-triangle` scripts.
 
 The rest of this guide builds from source.
 
@@ -69,6 +69,11 @@ $R build/nes.wasm --rom ~/path/to/your-game.nes --param filter=ntsc
 $R build/doom.wasm --asset wad=roms/doom1.wad
 $R build/doom.wasm --asset wad=~/Games/DOOM2.WAD --param "args=-warp 7 -skill 4"
 ```
+
+ScummVM takes a game folder: `$R build/scummvm.wasm --asset-dir ~/Games/MI1 --param "args=--auto-detect -p /"`
+(`make roms` fetches the freeware Beneath a Steel Sky to `roms/bass/`: `--param "args=-p / sky"`).
+Hold **Esc** to quit; **Ctrl+F5** is ScummVM's menu. See
+[guests/scummvm](https://github.com/emdzej/gasm/blob/main/guests/scummvm/README.md).
 
 DOOM takes any IWAD as the asset `wad` (shareware `doom1.wad`, `doom.wad`,
 `doom2.wad`, Freedoom, ...). `args` is a DOOM command line. See

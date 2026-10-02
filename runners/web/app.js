@@ -13,6 +13,9 @@ import { WebGpuGfx } from './webgpu-gfx.js';
 const ROOT = new URL(document.querySelector('meta[name=gasm-root]')?.content ?? '../../', import.meta.url);
 const GAMES = {
   'sumo.wasm': '3D sumo (2 players)', 'nes.wasm': 'NES (tetanes-core)', 'doom.wasm': 'DOOM (doomgeneric)',
+  'scummvm.wasm': 'ScummVM',
+  'sdl3-snake.wasm': 'SDL3: snake', 'sdl3-woodeneye.wasm': 'SDL3: woodeneye-008', 'sdl3-callbacks.wasm': 'SDL3: callbacks + audio',
+  'sdl3-classic.wasm': 'SDL3: classic main loop',
   'triangle.wasm': 'GPU triangle', 'textured.wasm': 'GPU textures (test)', 'inputtest.wasm': 'input tester', 'test-pattern.wasm': 'test pattern (C)',
   'assetcheck.wasm': 'asset check (test)',
 };
@@ -21,6 +24,11 @@ const GAMES = {
 const CONTENT = {
   'nes.wasm': { ext: '.nes', asset: 'rom', preferred: 'bladebuster', known: [] },
   'doom.wasm': { ext: '.wad', asset: 'wad', preferred: 'doom1.wad', known: ['doom1.wad'] },
+};
+// Games that take a folder of files: without "open folder..." they get a default set
+// from roms/ (the freeware Beneath a Steel Sky for ScummVM) and launch args.
+const FOLDER_GAMES = {
+  'scummvm.wasm': { dir: 'bass/', files: ['sky.dnr', 'sky.dsk', 'readme.txt'], args: '-p / sky', folderArgs: '--auto-detect -p /' },
 };
 const contentGame = (name) => Object.keys(CONTENT).find((g) => name.toLowerCase().endsWith(CONTENT[g].ext));
 
@@ -272,9 +280,16 @@ async function start({ romBytes } = {}) {
     } catch (e) { return log(`${e.message}: open a ${CONTENT[game].ext} file instead`); }
     record[CONTENT[game].asset] = romBytes;
   }
+  const fg = FOLDER_GAMES[game];
+  if (fg && !folder && !url.has('opfs')) {
+    try {
+      for (const f of fg.files) record[f] = await fetchBytes(new URL(`roms/${fg.dir}${f}`, ROOT));
+    } catch (e) { return log(`${e.message}: open a folder with a game instead`); }
+  }
   // Launch parameters: URL query plus the relay/room fields.
   const skip = ['game', 'autostart', 'wasm', 'worker', 'opfs', 'prefix', 'hashframes', 'rom'];
   const params = Object.fromEntries([...url].filter(([k]) => !skip.includes(k)));
+  if (fg && params.args === undefined) params.args = folder || url.has('opfs') ? fg.folderArgs : fg.args;
   if ($('relay').value.trim()) { params.relay = $('relay').value.trim(); params.room = $('room').value.trim() || 'sumo'; }
   try {
     const bytes = await fetchBytes(game.includes('/') ? new URL(game, location.href) : new URL(`build/${game}`, ROOT));

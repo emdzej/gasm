@@ -471,6 +471,9 @@ struct App {
 impl App {
     fn stop(&mut self, el: &ActiveEventLoop, result: Result<i32, String>) {
         self.result = result;
+        // the event loop can tick again before it ends: never call into a guest
+        // that has exited or trapped
+        self.game = None;
         el.exit();
     }
 

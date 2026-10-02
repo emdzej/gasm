@@ -67,6 +67,29 @@ behind, e.g. wasm-bindgen glue in Rust crates that also target browsers.
 
 Runners must trap (not crash) on out-of-bounds pointers or invalid handles.
 
+### Why the runner drives the frames
+
+Desktop engines own their main loop; a gasm guest gets called once per frame
+instead. That is deliberate:
+
+- **Browsers require it.** A page can't block: frames come from
+  `requestAnimationFrame`, and a guest that never returns freezes the tab. A
+  callback per frame works on every runner without stack switching (JSPI is
+  not available everywhere yet).
+- **Determinism and tests.** Input is sampled *between* calls, so a frame is a
+  pure step: `--headless N` runs exactly N of them on virtual time, and
+  scripted input lands on exact frame numbers. Lockstep netplay needs the same
+  boundaries on both peers.
+- **The runner keeps control.** Catch-up after a stall, pausing, Esc-to-quit,
+  Worker mode and (later) rollback snapshots all happen between calls, where
+  the guest's state is entirely in linear memory.
+
+Games that keep their own loop still work: the SDKs' **loop helpers** (C/C++
+`gasm_loop.h`, Rust `gasm::main_loop!`) export these entry points, run the
+game's `main` on the first frame and suspend it in `wait_frame()` with
+Binaryen's Asyncify, inside the module. ScummVM runs this way. To runners such a
+guest is an ordinary v0 guest.
+
 ## `gasm` imports
 
 All pointers are `i32` offsets into guest memory. Strings are UTF-8 `(ptr, len)`.
@@ -433,4 +456,9 @@ imports never return `-1` there, and the cursor modes count as achieved.
 - Capabilities manifest (custom section `gasm.manifest`) that declares required
   and optional imports, network hosts, and platform extensions (`gasm:ext/*`).
 - Runner-level rollback netplay (snapshot/restore guest memory).
+- Optional `gasm_main` export with a blocking `wait_frame` import, for guests
+  with their own loop and no Asyncify (code size, speed): runners suspend the
+  guest's stack instead (wasmtime async, JSPI in browsers). `gasm_frame` stays
+  the default; the SDK loop helpers can switch over without changing games.
+- `gasm:gl`: OpenGL ES 3.0 with WebGL 2 rules (see `design/gasm-gl.md`).
 - Move to WIT/Component Model once browser support doesn't need transpiling.

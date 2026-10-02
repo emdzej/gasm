@@ -39,7 +39,7 @@ features:
 | | |
 |---|---|
 | **Runners** | `gasm-run`: native (Rust: wasmtime, wgpu, winit, cpal, gilrs), with AOT compilation for no-JIT platforms. Browser runner: WebAssembly, WebGPU, AudioWorklet, Gamepad API. Headless Node runner. |
-| **Games** | **Sumo**: 3D two-player arena with lockstep netcode. **NES**: a complete emulator (tetanes-core) passing the blargg CPU, timing and APU tests. **DOOM**: doomgeneric in C, with OPL music and saves, playing any IWAD. **Triangle** and **test pattern**: minimal examples in Rust and C. |
+| **Games** | **Sumo**: 3D two-player arena with lockstep netcode. **NES**: a complete emulator (tetanes-core) passing the blargg CPU, timing and APU tests. **DOOM**: doomgeneric in C, with OPL music and saves, playing any IWAD. **ScummVM**: point-and-click adventures, starting with the freeware Beneath a Steel Sky. **SDL 3**: SDL programs build unchanged; SDL's own snake and woodeneye demos. **Triangle** and **test pattern**: minimal examples in Rust and C. |
 | **Tools** | `gasm-relay` (WebSocket rooms), the `gasm` Rust crate, `gasm.h` for C, cross-runner determinism and network test suites. |
 
 ## Performance

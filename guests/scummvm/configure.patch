@@ -1,0 +1,52 @@
+--- a/configure
++++ b/configure
+@@ -1992,6 +1992,13 @@
+ 	_host_cpu=aarch64
+ 	_host_alias=arm64-apple-darwin11
+ 	;;
++wasm32-gasm)
++	# gasm: a WebAssembly guest built with wasi-sdk (CXX from the environment)
++	_endian=little
++	_host_os=gasm
++	_host_cpu=wasm32
++	datadir='/data'
++	;;
+ wasm32-*)
+ 	_endian=little # the endian check below fails, but emscripten is always little endian anyway
+ 	_host_os=emscripten
+@@ -3353,6 +3360,11 @@
+ 		append_var LIBS "-lmm9"
+ 		append_var LIBS "-lnds9"
+ 		append_var LIBS "-lcalico_ds9"
++		;;
++	gasm)
++		append_var DEFINES "-DGASM"
++		add_line_to_config_mk 'GASM = 1'
++		_port_mk="backends/platform/gasm/gasm.mk"
+ 		;;
+ 	emscripten)
+ 		append_var DEFINES "-DEMSCRIPTEN"
+@@ -3737,6 +3749,13 @@
+ 		*darwin*)
+ 			_ranlib=$_host-ranlib
+ 			_strip=$_host-strip
++			;;
++		wasm32-gasm)
++			_backend="gasm"
++			_enet=no
++			_sdlnet=no
++			_libcurl=no
++			_cloud=no
+ 			;;
+ 		wasm*-emscripten)
+ 			_backend="emscripten"
+@@ -4294,6 +4313,9 @@
+ 	emscripten)
+ 		_sdl=yes
+ 		append_var MODULES "backends/platform/sdl"
++		;;
++	gasm)
++		# backends/platform/gasm is added to MODULES for every backend below
+ 		;;
+ 	ios7)
+ 		append_var LIBS "-lobjc -framework UIKit -framework CoreGraphics -framework OpenGLES"

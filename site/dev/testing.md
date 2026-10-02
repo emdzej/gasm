@@ -49,7 +49,13 @@ are hashed, covering the whole scene), the blargg CPU instruction, CPU timing
 and APU tests, spritecans, Quantum Disco Brothers, 2,400 frames of Blade
 Buster gameplay with scripted input, the attract-mode demos of shareware DOOM
 and Freedoom (video, sound effects and OPL music), and a scripted Freedoom
-game that saves to `gasm:storage`, plays on and loads the save. It fetches
+game that saves to `gasm:storage`, plays on and loads the save, and ScummVM
+playing Beneath a Steel Sky: intro skipped, a click to walk, a save through
+ScummVM's menu with a typed name, then a restore, and the SCUMM engine on the Day
+of the Tentacle demo. Games with their own main loop (the Rust and C loop
+helpers) and four SDL 3 programs (snake and woodeneye-008 from SDL, a callbacks
+app with audio and gamepad events, a classic `main()` loop with text input and a
+save file) are cases too. It fetches
 ROMs and WADs if missing and AOT-compiles the games first.
 
 ```sh

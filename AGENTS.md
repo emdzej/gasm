@@ -21,6 +21,9 @@ property: most tests assert bit-identical hashes.
 | `sdk/c/` | C/C++ SDK: CMake toolchain (wraps wasi-sdk) + `Gasm.cmake` + example |
 | `guests/` | Rust workspace (`wasm32-unknown-unknown`): `gasm` (SDK + native stub host), `sumo`, `nes` (tetanes-core), `triangle`, `textured` (textures/layouts/offsets test), `inputtest` (raw input tester), `assetcheck`, `parity` (native harness) |
 | `guests/test-pattern/` | C guest (wasi-sdk) |
+| `sdk/c/src/gasm_loop.c`, `sdk/c/include/gasm_loop.h` | loop helper for games with their own main loop (`gasm_main` + `gasm_wait_frame`, Asyncify inside the guest); Rust: `gasm::main_loop!`. Used by ScummVM and SDL3 classic `main()` |
+| `sdk/sdl3/` | SDL 3 for gasm: SDL as a "private platform" (`SDL_PLATFORM_PRIVATE`), config + drivers (zlib). `scripts/fetch-sdl3.sh` puts SDL in `tools/SDL3-src`; `make sdl3` builds `build/sdl3/` (lib, headers, `find_package` config); `scripts/package-sdl3.sh` bundles it |
+| `guests/scummvm/` | ScummVM: gasm backend (MIT, `backend/` -> `backends/platform/gasm`) + `configure.patch` (`wasm32-gasm` host). `scripts/fetch-scummvm.sh` puts ScummVM (GPL-3.0) in `tools/scummvm-src`; `make scummvm` builds with wasi-sdk and runs `wasm-opt --asyncify` (`scripts/fetch-binaryen.sh`); `scripts/package-scummvm-src.sh` packs exactly the files the build used |
 | `guests/doom/` | DOOM: gasm platform layer (MIT) for doomgeneric. `scripts/fetch-doom.sh` puts the GPL-2.0 engine (+ chocolate-doom OPL music) in `tools/doom-src` and applies `engine.patch`; `scripts/package-doom-src.sh` packs the complete source shipped with releases and the site |
 | `runners/native/` | crate `gasm-host`: library (`src/lib.rs`) + bins `gasm-run` (`src/main.rs`) and `gasm-relay` (`src/bin/`); `relay.Dockerfile` |
 | `runners/web/` | npm package `@emdzej/gasm-host` (`gasm-host.js` + `.d.ts`: host, asset providers, keymap; `gasm-worker.js`: Worker mode; `webgpu-gfx.js`; `headless.mjs` = `gasm-headless`). Not published: `app.js`/`index.html` (the player), `opfs.html`/`opfs.js` (csfs OPFS import; csfs is a devDependency vendored by `scripts/vendor-web.sh`), `testdata.js` |
@@ -34,7 +37,7 @@ property: most tests assert bit-identical hashes.
 ```sh
 make                          # games -> build/*.wasm, native runner + relay
 make roms                     # test ROMs, Freedoom, shareware doom1.wad into roms/ (needed by the determinism test)
-scripts/determinism-test.sh   # 14 cases: wasmtime JIT == AOT == V8 (must pass)
+scripts/determinism-test.sh   # 22 cases: wasmtime JIT == AOT == V8 (must pass)
 scripts/net-test.sh           # lockstep sumo via gasm-relay, 3 runner pairs + TLS (must pass)
 scripts/asset-test.sh         # folders, case-insensitive names, 200 MB streaming + RSS (must pass)
 node scripts/opfs-test.mjs    # Chrome: OPFS + Worker mode == Node, memory flat
@@ -76,6 +79,25 @@ Headless runs with `--screenshot` render GPU games offscreen: look at the PNG.
   (its checksum is part of the fetch stamp, so `make doom` re-fetches). Wherever
   `doom.wasm` is distributed (release bundles, games zip, site), its source
   archive must be too.
+- **Own main loops use Asyncify inside the guest** (`sdk/c/src/gasm_loop.c`,
+  Rust `gasm::main_loop`): no runner support. Rules (each was a bug, listed at
+  the top of `gasm_loop.c`): yield through an indirect call; `--asyncify`
+  before `-O2`; `gasm_loop_frame` on the remove list and reaching the game only
+  through the noinline `run_main`; nothing instrumented between an unwind and
+  `asyncify_stop_unwind`; `exit` is wrapped (`--wrap=exit`) when static
+  destructors could yield. Rust also removelists `gasm_frame`.
+- **ScummVM is GPL-3.0** and runs on `gasm_loop` (copied in as `gasm-loop.cpp`).
+  Change ScummVM only through `guests/scummvm/configure.patch` or the backend.
+  `SOURCE_DATE_EPOCH` keeps builds reproducible (the in-game menu shows the
+  build date).
+- **SDL 3 is not patched.** gasm is an SDL private platform: config in
+  `sdk/sdl3/include/SDL_build_config_private.h`, drivers in `sdk/sdl3/src`,
+  entry points in `SDL_main_impl_private.h`. Files SDL replaces on gasm are
+  left out of the build (`SDL_SKIP` in the Makefile), `fopen` in
+  `SDL_iostream.c` is redirected to assets/storage. SDL time is virtual and
+  per frame; callback apps need no Asyncify, classic `main()` apps do.
+- **Runners never call a guest after it exited or trapped** (the windowed
+  runner drops the game in `stop()`; the event loop can tick once more).
 - **wasm checks indirect call signatures.** C that calls through a mismatched
   function pointer traps with "indirect call type mismatch"; fix it with a
   typed wrapper (see `engine.patch`).

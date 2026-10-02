@@ -32,13 +32,21 @@ jobs:
         with:
           name: games
           path: build/*.wasm
-      # doom.wasm is GPL-2.0: its complete source goes out with every release
-      - name: DOOM source
-        run: scripts/package-doom-src.sh "$TAG"
+      # doom.wasm (GPL-2.0) and scummvm.wasm (GPL-3.0): their complete source goes out with every release
+      - name: DOOM and ScummVM source
+        run: |
+          scripts/package-doom-src.sh "$TAG"
+          scripts/package-scummvm-src.sh "$TAG"
+      # SDL3 for gasm (libSDL3.a was built with the games)
+      - name: SDL3 bundle
+        run: scripts/package-sdl3.sh "$TAG"
       - uses: actions/upload-artifact@v4
         with:
           name: doom-src
-          path: dist/*-doom-src.tar.gz
+          path: |
+            dist/*-doom-src.tar.gz
+            dist/*-scummvm-src.tar.gz
+            dist/gasm-sdl3-*.zip
 
   native:
     needs: games
@@ -145,8 +153,10 @@ jobs:
           | \`gasm-$VERSION-linux-x86_64.tar.gz\`, \`gasm-$VERSION-linux-arm64.tar.gz\` | same for Linux (x86_64, arm64) |
           | \`gasm-$VERSION-windows-x86_64.zip\` | same for Windows |
           | \`gasm-$VERSION-games-wasm.zip\` | just the games: the same .wasm files run on every runner and at https://gasm.emdzej.pl/demos/ |
+          | \`gasm-$VERSION-scummvm-src.tar.gz\` | complete source of \`scummvm.wasm\` (GPL-3.0: the ScummVM files the build uses, gasm's backend and configure patch); \`make scummvm\` rebuilds it byte for byte |
           | \`gasm-$VERSION-doom-src.tar.gz\` | complete source of \`doom.wasm\` (GPL-2.0: doomgeneric, chocolate-doom's OPL music, gasm's glue); \`make doom\` rebuilds it |
-          | \`gasm-c-sdk-$VERSION.zip\` | C/C++ SDK: \`gasm.h\` + CMake toolchain (wasi-sdk) + example |
+          | \`gasm-c-sdk-$VERSION.zip\` | C/C++ SDK: \`gasm.h\` + CMake toolchain (wasi-sdk) + examples (own main loop: \`gasm_loop.h\`) |
+          | \`gasm-sdl3-$VERSION.zip\` | SDL 3 for gasm: \`libSDL3.a\`, headers, \`find_package(SDL3)\` config, examples (zlib license) |
           | \`gasm.h\`, \`abi.json\` | the ABI as a single C header, and machine-readable |
 
           Packages: [\`gasm-sdk\`](https://crates.io/crates/gasm-sdk) (write games in Rust) · [\`gasm-host\`](https://crates.io/crates/gasm-host) (native host library + \`cargo install gasm-host\`) · [\`@emdzej/gasm-host\`](https://www.npmjs.com/package/@emdzej/gasm-host) (browser/Node host) · \`ghcr.io/emdzej/gasm-relay\` (relay image)

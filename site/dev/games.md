@@ -430,6 +430,10 @@ most old C codebases:
 - **Own the main loop.** Desktop code loops forever; a guest runs one step per
   `gasm_frame`. Look for other loops that wait for time to pass (DOOM's screen
   melt, "wait for the next tic") and turn them into per-frame state.
+- **Engines that can't be turned inside out.** When the loop is spread over a
+  whole engine (ScummVM has dozens), keep it: see
+  [your own main loop](#your-own-main-loop) below, and call `gasm_wait_frame()`
+  from the sleep call when a frame is due.
 - **Count frames, not milliseconds.** Derive the game's clock from the frame
   number, and let `sleep` just advance it. The game then runs identically on
   every runner, and headless tests are reproducible.
@@ -449,6 +453,85 @@ most old C codebases:
 - **Keep the license in mind.** DOOM is GPL-2.0, so the repository fetches the
   engine at build time, and releases ship the complete source next to
   `doom.wasm`.
+
+### Your own main loop
+
+gasm calls the game once per frame ([why](/docs/abi#why-the-runner-drives-the-frames)).
+For code that wants to own its loop, both SDKs have a loop helper: write a
+normal `main` that loops and call `wait_frame()` where a frame ends. The helper
+exports the gasm entry points, starts `main` on the first frame and suspends it
+in `wait_frame()` until the next one, with Binaryen's Asyncify inside the module
+(no runner support, works everywhere). Returning from `main` ends the game with
+that exit code.
+
+```c
+#include "gasm.h"
+#include "gasm_loop.h"
+
+int gasm_main(void) {
+    for (;;) {
+        if (gasm_pad(0) & GASM_BTN_START) return 0;
+        update(); draw();
+        gasm_wait_frame();
+    }
+}
+```
+
+With the C SDK: `gasm_add_game(mygame LOOP main.c)` (needs `wasm-opt` from
+[Binaryen](https://github.com/WebAssembly/binaryen/releases); set
+`GASM_WASM_OPT` if it's not on `PATH`). By hand: compile `src/gasm_loop.c` with
+the game, link with `-Wl,--wrap=exit`, then run
+`wasm-opt game.wasm --asyncify --pass-arg=asyncify-removelist@gasm_loop_frame -O2 -o game.wasm`.
+Optional `gasm_loop_init()` and `gasm_loop_exit()` run at `gasm_init` and
+`gasm_exit`; `-DGASM_LOOP_STACK_SIZE=` sets the space for the suspended stack
+(default 1 MiB; ScummVM uses 4 MiB).
+
+In Rust:
+
+```rust
+fn run() -> i32 {
+    loop {
+        if gasm::pad(0).held(gasm::Buttons::START) { return 0; }
+        draw();
+        gasm::main_loop::wait_frame();
+    }
+}
+gasm::main_loop!(run);
+```
+
+then `wasm-opt game.wasm --asyncify --pass-arg=asyncify-removelist@gasm_frame,gasm_loop_frame -O2 -o game.wasm`.
+Examples: [`sdk/c/example-loop`](https://github.com/emdzej/gasm/tree/main/sdk/c/example-loop),
+[`guests/loopdemo`](https://github.com/emdzej/gasm/tree/main/guests/loopdemo).
+
+The cost is size and speed: Asyncify instruments every function that can reach
+`wait_frame()` (ScummVM: 9.7 MB without it, 15.0 MB with it). Prefer the per-frame callback for
+new games; use the loop helper for ports. The rules it follows, each learned from
+a bug, are at the top of
+[`gasm_loop.c`](https://github.com/emdzej/gasm/blob/main/sdk/c/src/gasm_loop.c).
+
+### SDL 3
+
+SDL programs build for gasm with their source unchanged:
+[SDL 3 for gasm](https://github.com/emdzej/gasm/blob/main/sdk/sdl3/README.md)
+is SDL itself with gasm as an SDL "private platform" (release asset
+`gasm-sdl3-<version>.zip`, or `make sdl3`). The window framebuffer and the
+software `SDL_Renderer` go to `video_present`; keyboard, text input, mouse
+(including relative mode), joysticks and `SDL_Gamepad`, audio playback, files
+(assets and `gasm:storage`) and storage all map onto the ABI, on virtual time.
+
+```cmake
+find_package(SDL3 REQUIRED)        # -DSDL3_DIR=<gasm-sdl3>/lib/cmake/SDL3
+add_executable(mygame main.c)
+target_link_libraries(mygame PRIVATE SDL3::SDL3)
+gasm_sdl3_app(mygame)              # SDL_MAIN_USE_CALLBACKS
+gasm_sdl3_app(mygame LOOP)         # or: a classic main() loop (Asyncify)
+```
+
+Apps on the main callbacks map one-to-one: `SDL_AppIterate` runs once per gasm
+frame. A classic `main()` loop runs on the loop helper above; its frame ends at
+`SDL_RenderPresent` (or at an `SDL_Delay` across a frame boundary). SDL's own
+demos run unchanged: [snake and woodeneye-008](/demos/#sdl-3). Not available:
+threads (and `SDL_AddTimer`), OpenGL/Vulkan/`SDL_GPU`, audio recording, camera.
 
 ## Checklist
 

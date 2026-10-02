@@ -18,11 +18,15 @@ guests/              Rust workspace, target wasm32-unknown-unknown
   sumo/                3D two-player game (sim.rs, render.rs, lib.rs)
   nes/                 NES emulator on tetanes-core
   doom/                DOOM: platform layer for doomgeneric (C; engine fetched at build)
+  scummvm/             ScummVM: gasm backend (C++; engine fetched at build, Asyncify)
   triangle/            smallest GPU example
   textured/            textures, samplers, explicit layouts, dynamic offsets
   inputtest/           raw keyboard, pointer, gamepads
   parity/              runs the NES game natively (parity + benchmarks)
   test-pattern/        C example (wasi-sdk)
+  loopdemo/            a game with its own main loop (Rust)
+sdk/c/               C/C++ SDK: CMake toolchain, gasm_loop, examples
+sdk/sdl3/            SDL 3 for gasm (config + drivers; SDL fetched at build)
 runners/native/      gasm-run + gasm-relay (Rust)
 runners/web/         browser runner + headless Node runner (JS)
 scripts/             toolchain/ROM fetchers, test suites, site build
