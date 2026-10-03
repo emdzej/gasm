@@ -32,6 +32,8 @@ property: most tests assert bit-identical hashes.
 | `tests/golden/determinism.txt` | golden hashes of every determinism case; the same on every platform |
 | `scripts/` | toolchain/ROM fetchers (`lib.sh`: shared checksum helpers), test suites, packaging (`third-party-notices.sh`: license notices shipped with the games), site build, Linux container |
 | `site/` | VitePress website (docs live here; `site/docs/abi.md` includes `spec/ABI.md`) |
+| `site/docs/roadmap.md` | **The roadmap**: everything planned or known to be missing, in one place |
+| `design/` | design documents: proposals (`gasm-gl.md`, `threads.md`) and implemented ones kept as a record (`presentation.md`) |
 | `.github/workflows/` | `ci.yml`, `pages.yml`, `release.yml` |
 
 ## Build and test
@@ -234,3 +236,6 @@ from the repo root, then
 - Measured numbers in docs (performance, sizes, memory) must come from an actual
   run. Re-measure rather than copy when things change.
 - Commit messages: a short summary line, then what changed and why.
+- **Plans and known gaps go in `site/docs/roadmap.md` only**, not in READMEs or
+  the spec (they link to it). Larger items get a `design/` document; when one
+  ships, update its status, take it off the roadmap and add it to the CHANGELOG.

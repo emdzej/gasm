@@ -77,20 +77,9 @@ Done:
   files, the libraries, the backend) with every release and on the website;
   rebuilding from it gives the same module byte for byte.
 
-Not done yet:
-
-| Missing | Effect | What it takes |
-|---|---|---|
-| Other engines | only the five above | add them to `SCUMMVM_ENGINES` (+ engine data); the freeware Flight of the Amazon Queen (`queen`) and Lure of the Temptress (`lure`) are next, then Sierra (`agi`, `sci`), `kyra`, `gob`, `saga`, `sword1`/`sword2`, `tinsel` |
-| MT-32 emulation | Roland MT-32 music (many Sierra and LucasArts games sound best with it) | `--enable-mt32emu` (built into ScummVM) and the user's MT-32 ROMs as assets |
-| General MIDI synth (FluidSynth/fluidlite) | GM music; AdLib is used instead | build fluidlite, ship or load a SoundFont |
-| GUI themes | the built-in classic look ("scummremastered" and `gui-icons.dat` aren't embedded) | embed the theme zip and icons (zlib is in now) |
-| Translations, TTS, FreeType, fribidi | English GUI, no speech synthesis, no TrueType fonts (some engines need them) | build the libraries, embed `translations.dat` |
-| Video codecs (MPEG-2, Theora, VPX, AAC, JPEG, PNG) | cutscenes and images in engines that use them | build the libraries |
-| 3D engines (Grim Fandango, Myst III, The Longest Journey) | not built | TinyGL (software 3D) now, or `gasm:gl` later |
-| Cloud, LAN, networking | off | `gasm:net` could carry some of it |
-| Gamepads 2–4, touch controls, virtual keyboard | one gamepad; mouse and keyboard otherwise | backend work |
-| Size and speed | 16.1 MB module (10.6 MB without Asyncify) | runner-side stack switching (ABI roadmap) |
+Not done yet (more engines, MT-32 and General MIDI music, GUI themes, video
+codecs, 3D engines, more gamepads, size): see the
+[roadmap](https://github.com/emdzej/gasm/blob/main/site/docs/roadmap.md#scummvm).
 
 ## Parameters
 

@@ -23,6 +23,7 @@ export default defineConfig({
       { text: 'How it works', link: '/docs/how-it-works' },
       { text: 'Develop', link: '/dev/' },
       { text: 'ABI', link: '/docs/abi' },
+      { text: 'Roadmap', link: '/docs/roadmap' },
       { text: 'Demos', link: '/demos/' },
     ],
     sidebar: {
@@ -31,6 +32,7 @@ export default defineConfig({
         { text: 'Documentation', items: [
           { text: 'How it works', link: '/docs/how-it-works' },
           { text: 'ABI v0 specification', link: '/docs/abi' },
+          { text: 'Roadmap', link: '/docs/roadmap' },
         ] },
       ],
       '/dev/': [
@@ -42,7 +44,7 @@ export default defineConfig({
           { text: 'Badge', link: '/dev/badge' },
           { text: 'Testing & contributing', link: '/dev/testing' },
         ] },
-        { text: 'Reference', items: [{ text: 'ABI v0', link: '/docs/abi' }] },
+        { text: 'Reference', items: [{ text: 'ABI v0', link: '/docs/abi' }, { text: 'Roadmap', link: '/docs/roadmap' }] },
       ],
     },
     outline: { level: [2, 3] },

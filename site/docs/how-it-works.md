@@ -337,7 +337,8 @@ which translates it to C (see [engines](/dev/runners#_1-choose-an-engine)).
   than `--call-timeout` (30 s by default) traps. Network connections (16) and
   their queues are bounded too.
 - Memory isn't capped yet: a malicious guest could grow its memory to the
-  engine maximum (4 GiB for wasm32). This is a TODO before running untrusted
+  engine maximum (4 GiB for wasm32). A limit is on the
+  [roadmap](/docs/roadmap#runtime-and-abi), needed before running untrusted
   content.
 
 ## Measured costs (Apple M1 Pro)

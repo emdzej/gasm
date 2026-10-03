@@ -200,7 +200,7 @@ pthreads shim, SDL backend) stays the same, so the same source can target either
 ## Later: cheaper switching
 
 Runner-side stack switching (wasmtime's async support, JSPI in browsers, and
-eventually wasm's stack-switching proposal) is already on the ABI roadmap for an
+eventually wasm's stack-switching proposal) is already on the [roadmap](https://github.com/emdzej/gasm/blob/main/site/docs/roadmap.md) for an
 optional `gasm_run` export (not `gasm_main`: that name is the C loop helper's
 entry point in `gasm_loop.h`). It would also replace Asyncify in cooperative
 threads: same API, no code-size cost. Games wouldn't change.

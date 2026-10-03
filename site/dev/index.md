@@ -73,12 +73,16 @@ gasm:storage get · set · delete · count · key
 Full details: [ABI v0 specification](/docs/abi). What each release added:
 [CHANGELOG](https://github.com/emdzej/gasm/blob/main/CHANGELOG.md).
 
-## Design proposals
+## Design documents
 
-Not implemented yet; each describes a feature and a plan:
+Larger features get a design document with a phased plan before the work
+starts. Proposals (not implemented yet):
 
 - [`gasm:gl`](https://github.com/emdzej/gasm/blob/main/design/gasm-gl.md): OpenGL ES 3.0 with WebGL 2 rules
 - [Threads](https://github.com/emdzej/gasm/blob/main/design/threads.md): cooperative threads inside the guest, real wasm threads later
-- [Presentation](https://github.com/emdzej/gasm/blob/main/design/presentation.md): upscaling filters, display aspect, window title
 
-The rest of the plan is the [ABI roadmap](/docs/abi#roadmap-not-in-v0).
+Implemented (kept as a record of the decisions):
+
+- [Presentation](https://github.com/emdzej/gasm/blob/main/design/presentation.md): upscaling filters, display aspect, window title (0.6.0)
+
+Everything else that is planned or missing is on the [roadmap](/docs/roadmap).

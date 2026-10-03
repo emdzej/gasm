@@ -38,7 +38,7 @@ Games in this repo (Rust, C and C++):
 **Website:** [gasm.emdzej.pl](https://gasm.emdzej.pl): docs and **playable demos** in your browser.
 **Docs:** [user guide](site/guide/index.md) · [how it works](site/docs/how-it-works.md) ·
 [writing games](site/dev/games.md) · [writing runners](site/dev/runners.md) ·
-[testing](site/dev/testing.md) · [ABI spec](spec/ABI.md)
+[testing](site/dev/testing.md) · [ABI spec](spec/ABI.md) · [roadmap](site/docs/roadmap.md)
 
 ## Packages
 
@@ -187,7 +187,9 @@ CHANGELOG.md                 what each release added
 
 ## Next steps
 
-Rollback netplay, `.gasm` packages, render targets and the rest are on the
-[ABI roadmap](spec/ABI.md#roadmap-not-in-v0). Design proposals (not implemented):
-[`gasm:gl`](design/gasm-gl.md), [threads](design/threads.md),
-[presentation](design/presentation.md).
+Everything planned or missing is on the
+[roadmap](site/docs/roadmap.md): runner-side
+stack switching, threads ([design](design/threads.md)), `gasm:gl`
+([design](design/gasm-gl.md)), render targets, rollback netplay, packages.
+Implemented designs stay in `design/` as a record
+([presentation](design/presentation.md)).

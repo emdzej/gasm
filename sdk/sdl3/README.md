@@ -69,7 +69,8 @@ Command line: the `args` param (`--param "args=-x 1"`) becomes `argv[1...]`.
 | `SDL_ShowMessageBox` | the log; returns the default button |
 
 Not available: threads (`SDL_CreateThread` fails, and with it `SDL_AddTimer`),
-OpenGL, Vulkan and `SDL_GPU` (gasm has no GL yet; see `gasm:gl` on the roadmap),
+OpenGL, Vulkan and `SDL_GPU` (gasm has no GL yet; see `gasm:gl` on the
+[roadmap](https://github.com/emdzej/gasm/blob/main/site/docs/roadmap.md#sdl-3)),
 audio recording, camera, haptics and rumble, sensors, dialogs, tray, processes,
 loading shared objects. Each fails the way SDL fails on a platform without it.
 

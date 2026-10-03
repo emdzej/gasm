@@ -534,18 +534,9 @@ runners accept and reject the same scripts.
 Headless runs have a keyboard, a pointer and four gamepad slots, so the raw
 imports never return `-1` there, and the cursor modes count as achieved.
 
-## Roadmap (not in v0)
+## Roadmap
 
-- `.gasm` packages: one file bundling `game.wasm`, assets and a manifest.
-- `gasm:files`: a runner-provided file picker (the game only sees what the player picks).
-- `gasm:gfx`: render targets (render-to-texture), cube maps, render bundles.
-- Capabilities manifest (custom section `gasm.manifest`) that declares required
-  and optional imports, network hosts, and platform extensions (`gasm:ext/*`).
-- Runner-level rollback netplay (snapshot/restore guest memory).
-- Optional `gasm_run` export with a blocking `wait_frame` import, for guests
-  with their own loop and no Asyncify (code size, speed): runners suspend the
-  guest's stack instead (wasmtime async, JSPI in browsers). `gasm_frame` stays
-  the default; the SDK loop helpers can switch over without changing games.
-- Batched gfx commands (one call per frame for draw-heavy guests).
-- `gasm:gl`: OpenGL ES 3.0 with WebGL 2 rules (see `design/gasm-gl.md`).
-- Move to WIT/Component Model once browser support doesn't need transpiling.
+What is planned beyond this (`gasm_run` with runner-side stack switching,
+threads, `gasm:gl`, render targets, rollback netplay, packages, a capabilities
+manifest, ...) is on the
+[roadmap](https://github.com/emdzej/gasm/blob/main/site/docs/roadmap.md).
