@@ -22,6 +22,11 @@ SDKs:
   scheduling on the guest's one wasm thread (design/threads.md). Build with
   `gasm_add_game(<target> LOOP THREADS ...)` (gasm_loop.c with
   `-DGASM_LOOP_THREADS`); Asyncify builds only.
+- SDL 3: threads work (`SDL_CreateThread`, `SDL_AddTimer`, mutexes,
+  conditions, semaphores, read/write locks, TLS) on those cooperative threads,
+  in classic `main()` apps linked with the threaded loop helper
+  (`gasm_sdl3_app(<target> LOOP THREADS)`, `lib/gasm_loop_threads.o`). The SDL
+  CMake helper now also writes `<target>-run.wasm` for `LOOP` apps.
 - The loop helpers (`gasm_loop.h`, `gasm::main_loop!`) export `gasm_run` too.
   Own-loop games now build twice from one link: `game.wasm` with Asyncify
   (every runner) and `game-run.wasm` without (stack switching only): ScummVM

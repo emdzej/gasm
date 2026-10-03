@@ -16,7 +16,7 @@ const GAMES = {
   'sumo.wasm': '3D sumo (2 players)', 'nes.wasm': 'NES (tetanes-core)', 'doom.wasm': 'DOOM (doomgeneric)',
   'scummvm.wasm': 'ScummVM',
   'sdl3-snake.wasm': 'SDL3: snake', 'sdl3-woodeneye.wasm': 'SDL3: woodeneye-008', 'sdl3-callbacks.wasm': 'SDL3: callbacks + audio',
-  'sdl3-classic.wasm': 'SDL3: classic main loop',
+  'sdl3-classic.wasm': 'SDL3: classic main loop', 'sdl3-threads.wasm': 'SDL3: threads (cooperative)',
   'triangle.wasm': 'GPU triangle', 'textured.wasm': 'GPU textures (test)', 'inputtest.wasm': 'input tester', 'test-pattern.wasm': 'test pattern (C)',
   'assetcheck.wasm': 'asset check (test)',
 };

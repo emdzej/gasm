@@ -36,6 +36,9 @@ void gasm_wait_frame(void);
 /** Number of frames waited so far (0 during the first frame). */
 unsigned gasm_loop_frames(void);
 
+/** 1 if the loop helper was built with cooperative threads (GASM_LOOP_THREADS, gasm_thread.h). */
+int gasm_loop_threads(void);
+
 /*
  * Optional hooks (weak defaults): gasm_loop_init() runs in gasm_init (return non-zero
  * to fail loading); gasm_loop_exit() runs when the player quits (gasm_exit): save

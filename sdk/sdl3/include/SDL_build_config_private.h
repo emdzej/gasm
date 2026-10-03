@@ -124,7 +124,11 @@
 #define SDL_PRIVATE_GAMEPAD_DEFINITIONS   /* none: standard-mapped pads describe themselves */
 #define SDL_VIDEO_RENDER_SW 1          /* SDL_Renderer draws in software */
 
-/* Single-threaded (gasm guests have one thread) */
+/* Threads: cooperative, on the guest's one wasm thread (src/SDL_gasmthread.c on the
+   C SDK's gasm_thread.h); SDL_CreateThread needs the threaded loop helper. The flag
+   stays: it is how SDL picks the generic thread handle type, and the generic files
+   it would stub out are replaced (SDL_SKIP). Of the rest, only SDL_assert.c reads it
+   (no lock around assertion reports). */
 #define SDL_THREADS_DISABLED 1
 
 /* Everything else is stubbed */

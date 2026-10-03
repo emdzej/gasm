@@ -56,7 +56,8 @@ $(FLAGS_DIR)/$(1): FORCE
 endef
 
 GUESTS   := $(BUILD)/test-pattern.wasm $(BUILD)/nes.wasm $(BUILD)/sumo.wasm $(BUILD)/triangle.wasm $(BUILD)/textured.wasm $(BUILD)/inputtest.wasm $(BUILD)/loopdemo.wasm $(BUILD)/loopdemo-c.wasm $(BUILD)/threadtest.wasm $(BUILD)/assetcheck.wasm $(BUILD)/doom.wasm $(BUILD)/scummvm.wasm \
-  $(BUILD)/sdl3-snake.wasm $(BUILD)/sdl3-woodeneye.wasm $(BUILD)/sdl3-callbacks.wasm $(BUILD)/sdl3-classic.wasm
+  $(BUILD)/sdl3-snake.wasm $(BUILD)/sdl3-woodeneye.wasm $(BUILD)/sdl3-callbacks.wasm $(BUILD)/sdl3-classic.wasm \
+  $(BUILD)/sdl3-threads.wasm
 # made by the same recipes as the Asyncify builds
 RUN_BUILDS := $(BUILD)/loopdemo-run.wasm $(BUILD)/loopdemo-c-run.wasm $(BUILD)/sdl3-classic-run.wasm $(BUILD)/scummvm-run.wasm
 
@@ -195,10 +196,16 @@ SDL_DIRS  := src src/atomic src/audio src/camera src/camera/dummy src/core src/c
   src/process src/process/dummy src/render src/render/software src/sensor src/sensor/dummy \
   src/stdlib src/storage src/storage/generic src/thread src/thread/generic src/time src/timer \
   src/tray src/tray/dummy src/video src/video/yuv2rgb
-SDL_SKIP  := src/audio/SDL_audiodev.c src/io/generic/SDL_asyncio_generic.c
+SDL_SKIP  := src/audio/SDL_audiodev.c src/io/generic/SDL_asyncio_generic.c \
+  src/thread/generic/SDL_systhread.c src/thread/generic/SDL_sysmutex.c src/thread/generic/SDL_syscond.c \
+  src/thread/generic/SDL_syssem.c src/thread/generic/SDL_systls.c src/thread/generic/SDL_sysrwlock.c
 SDL_GLUE  := $(wildcard sdk/sdl3/src/*.c)
 SDL_OBJS   = $(patsubst $(SDL_SRC)/%.c,$(SDL_OBJ)/%.o,$(SDL_CSRC)) \
-  $(patsubst sdk/sdl3/src/%.c,$(SDL_OBJ)/gasm/%.o,$(SDL_GLUE)) $(SDL_OBJ)/gasm/gasm_loop.o $(SDL_OBJ)/gasm/gasm_vfile.o
+  $(patsubst sdk/sdl3/src/%.c,$(SDL_OBJ)/gasm/%.o,$(SDL_GLUE)) $(SDL_OBJ)/gasm/gasm_loop.o $(SDL_OBJ)/gasm/gasm_vfile.o \
+  $(SDL_OBJ)/gasm/gasm_thread.o
+# the loop helper with cooperative threads, next to the library: classic main() apps that
+# create threads link it before libSDL3.a (it replaces the plain one in the archive)
+SDL_LOOP_THREADS := $(SDL_OUT)/lib/gasm_loop_threads.o
 SDL_CFLAGS := $(TARGET) $(OPT) -DSDL_PLATFORM_PRIVATE -D_GNU_SOURCE -Isdk/sdl3/include \
   -I$(SDL_SRC)/include -I$(SDL_SRC)/include/build_config -I$(SDL_SRC)/src -Ispec -Isdk/c/include \
   -Wno-deprecated-declarations
@@ -238,15 +245,23 @@ $(SDL_OBJ)/gasm/gasm_loop.o: sdk/c/src/gasm_loop.c sdk/c/include/gasm_loop.h $(C
 	@mkdir -p $(@D)
 	$(CC) $(TARGET) $(OPT) -Ispec -Isdk/c/include -c $< -o $@
 
+$(SDL_OBJ)/gasm/gasm_thread.o: sdk/c/src/gasm_thread.c sdk/c/include/gasm_thread.h spec/gasm.h $(CLANG)
+	@mkdir -p $(@D)
+	$(CC) $(TARGET) $(OPT) -Ispec -Isdk/c/include -c $< -o $@
+
+$(SDL_LOOP_THREADS): sdk/c/src/gasm_loop.c sdk/c/include/gasm_loop.h sdk/c/include/gasm_thread.h spec/gasm.h $(CLANG)
+	@mkdir -p $(@D)
+	$(CC) $(TARGET) $(OPT) -DGASM_LOOP_THREADS -Ispec -Isdk/c/include -c $< -o $@
+
 $(SDL_OBJ)/gasm/gasm_vfile.o: sdk/c/src/gasm_vfile.c sdk/c/include/gasm_vfile.h spec/gasm.h $(CLANG)
 	@mkdir -p $(@D)
 	$(CC) $(TARGET) $(OPT) -D_GNU_SOURCE -Ispec -Isdk/c/include -c $< -o $@
 
-$(SDL_LIB): $(SDL_OBJS) $(wildcard sdk/sdl3/cmake/*.cmake)
+$(SDL_LIB): $(SDL_OBJS) $(SDL_LOOP_THREADS) $(wildcard sdk/sdl3/cmake/*.cmake)
 	@mkdir -p $(@D) $(SDL_OUT)/include/SDL3
 	@rm -f $@ && $(WASI_SDK)/bin/llvm-ar rcs $@ $(SDL_OBJS) && echo "AR $@"
 	cp $(SDL_SRC)/include/SDL3/*.h sdk/sdl3/include/SDL_main_private.h sdk/sdl3/include/SDL_main_impl_private.h \
-	  sdk/c/include/gasm_loop.h spec/gasm.h $(SDL_OUT)/include/SDL3/
+	  sdk/c/include/gasm_loop.h sdk/c/include/gasm_thread.h spec/gasm.h $(SDL_OUT)/include/SDL3/
 	@mkdir -p $(SDL_OUT)/lib/cmake/SDL3 && cp sdk/sdl3/cmake/*.cmake $(SDL_OUT)/lib/cmake/SDL3/
 
 # SDL3 games: SDL's own demos (public domain) and sdk/sdl3/examples, unchanged
@@ -268,6 +283,11 @@ $(BUILD)/sdl3-callbacks.wasm: sdk/sdl3/examples/callbacks/main.c $(SDL_LIB) $(WA
 $(BUILD)/sdl3-classic.wasm: sdk/sdl3/examples/classic/main.c $(SDL_LIB) $(WASM_OPT)
 	$(call SDL_LINK,$<)
 	$(call wasm_opt_loop)
+
+# SDL threads: the threaded loop helper before the library; Asyncify only
+$(BUILD)/sdl3-threads.wasm: sdk/sdl3/examples/threads/main.c $(SDL_LIB) $(SDL_LOOP_THREADS) $(WASM_OPT)
+	$(call SDL_LINK,$< $(SDL_LOOP_THREADS))
+	$(call wasm_opt,$(ASYNCIFY))
 
 $(BUILD)/test-pattern.wasm: guests/test-pattern/main.c spec/gasm.h $(CLANG) $(WASM_OPT)
 	@mkdir -p $(@D)

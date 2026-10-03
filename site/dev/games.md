@@ -623,14 +623,17 @@ find_package(SDL3 REQUIRED)        # -DSDL3_DIR=<gasm-sdl3>/lib/cmake/SDL3
 add_executable(mygame main.c)
 target_link_libraries(mygame PRIVATE SDL3::SDL3)
 gasm_sdl3_app(mygame)              # SDL_MAIN_USE_CALLBACKS
-gasm_sdl3_app(mygame LOOP)         # or: a classic main() loop (Asyncify)
+gasm_sdl3_app(mygame LOOP)         # or: a classic main() loop (also writes mygame-run.wasm)
+gasm_sdl3_app(mygame LOOP THREADS) # or: a classic main() that creates threads
 ```
 
 Apps on the main callbacks map one-to-one: `SDL_AppIterate` runs once per gasm
 frame. A classic `main()` loop runs on the loop helper above; its frame ends at
 `SDL_RenderPresent` (or at an `SDL_Delay` across a frame boundary). SDL's own
-demos run unchanged: [snake and woodeneye-008](/demos/#sdl-3). Not available:
-threads (and `SDL_AddTimer`), OpenGL/Vulkan/`SDL_GPU`, audio recording, camera.
+demos run unchanged: [snake and woodeneye-008](/demos/#sdl-3). With `LOOP
+THREADS`, `SDL_CreateThread`, `SDL_AddTimer` and SDL's locks run on the
+[cooperative threads](#threads) above. Not available: OpenGL/Vulkan/`SDL_GPU`,
+audio recording, camera.
 
 ## Checklist
 

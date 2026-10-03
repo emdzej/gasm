@@ -140,7 +140,20 @@ driven inside the guest.
 
 1. Scheduler + C API + determinism case (the hard part: stack pointer and TLS
    switching, Asyncify rules shared with `gasm_loop.c`). **Done.**
-2. SDL thread backend; SDL thread and timer tests in CI.
+2. SDL thread backend; SDL thread and timer tests in CI. **Done**:
+   `sdk/sdl3/src/SDL_gasmthread.c` (threads, mutexes, conditions,
+   semaphores, read/write locks, TLS) replaces all of `src/thread/generic`.
+   `SDL_THREADS_DISABLED` stays defined, because it is what selects the generic
+   thread handle type (SDL isn't patched); its other effects are a shared
+   error buffer and an unlocked event queue, both safe with cooperative
+   threads. SDL's clock catches up with the scheduler's frames in whichever
+   thread next waits or reads the time (the scheduler can't run SDL's per-frame
+   audio work itself: it may block). Apps link `gasm_loop_threads.o`
+   (`gasm_sdl3_app(<target> LOOP THREADS)`). Test: `sdk/sdl3/examples/threads`
+   (workers on a mutex, condition and read/write lock across `SDL_Delay`,
+   `SDL_AddTimer`'s timer thread posting a semaphore, TLS), in the determinism
+   suite and checked in Chrome. SDL's own test programs need SDL_test, which
+   isn't part of this build.
 3. pthreads shim; port one pthread-using program as the example.
 4. Docs (site dev guide), Rust API later.
 

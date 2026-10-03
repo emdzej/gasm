@@ -34,6 +34,17 @@ static Uint64 frame;          /* gasm frames begun */
 static bool delay_ended_frame;
 static void (*wait_frame)(void);
 
+/* with the threaded loop helper (gasm_thread.h) any thread can wait for a frame: SDL's
+   frames are counted from the scheduler's then (gasm_loop.c; weak: callback apps don't
+   link it) */
+extern int gasm_loop_threads(void) __attribute__((weak));
+extern unsigned gasm_loop_frames(void) __attribute__((weak));
+
+static bool Threaded(void)
+{
+    return wait_frame && gasm_loop_threads && gasm_loop_threads();
+}
+
 static Uint64 FrameStart(Uint64 f)
 {
     return f * SDL_NS_PER_SECOND / FRAME_RATE;
@@ -60,11 +71,26 @@ void SDL_GASM_UseLoop(void (*wait)(void))
     wait_frame = wait;
 }
 
+/* Threaded: begin the frames the scheduler has begun, in whichever thread looks first. */
+static void SyncFrames(void)
+{
+    if (Threaded()) {
+        const Uint64 f = (Uint64)gasm_loop_frames() + 1;
+        while (frame < f) {
+            SDL_GASM_BeginFrame();
+        }
+    }
+}
+
 static void EndFrame(void)
 {
     if (wait_frame) {
         wait_frame();
-        SDL_GASM_BeginFrame();
+        if (Threaded()) {
+            SyncFrames();
+        } else {
+            SDL_GASM_BeginFrame();
+        }
     }
 }
 
@@ -78,6 +104,7 @@ void SDL_GASM_Presented(void)
 
 static void DelayNS(Uint64 ns)
 {
+    SyncFrames();
     const Uint64 target = now_ns + ns;
     if (wait_frame) {
         while (FrameStart(frame) <= target) {
@@ -94,6 +121,7 @@ static void DelayNS(Uint64 ns)
 
 Uint64 SDL_GetPerformanceCounter(void)
 {
+    SyncFrames();
     return now_ns + 1;   /* never 0: SDL_InitTicks treats 0 as "not started" */
 }
 

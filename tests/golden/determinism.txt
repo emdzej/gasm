@@ -12,6 +12,7 @@ sdl3-snake frames=900 presented=900 size=576x432 video_fnv32=d81113c5 audio_fnv3
 sdl3-woodeneye frames=400 presented=400 size=640x480 video_fnv32=8dab25b4 audio_fnv32=811c9dc5 audio_frames=0 
 sdl3-callbacks frames=281 presented=280 size=320x240 video_fnv32=8debd2d5 audio_fnv32=28c224f5 audio_frames=224800 
 sdl3-classic frames=252 presented=251 size=320x240 video_fnv32=c2b2a39d audio_fnv32=811c9dc5 audio_frames=0 
+sdl3-threads frames=98 presented=92 size=160x120 video_fnv32=5c6433ed audio_fnv32=811c9dc5 audio_frames=0 
 triangle frames=300 presented=300 size=0x0 video_fnv32=bebe0fed audio_fnv32=811c9dc5 audio_frames=0 
 sumo-vs-bot frames=3000 presented=3000 size=0x0 video_fnv32=c456b030 audio_fnv32=811c9dc5 audio_frames=0 
 cpu_instr_test frames=3000 presented=3000 size=256x240 video_fnv32=5fe26da1 audio_fnv32=dcbe01e0 audio_frames=2395923 

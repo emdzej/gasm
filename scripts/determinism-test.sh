@@ -25,7 +25,7 @@ for n in node ${NODE24:-} "$HOME"/.nvm/versions/node/v2[4-9]*/bin/node; do
 done
 [ -n "$NODE_JSPI" ] || echo "note: no Node with JSPI (24+): run builds are checked natively only"
 [ -d roms ] && [ -n "$(ls roms/*.nes 2>/dev/null)" ] && [ -f roms/freedoom2.wad ] && [ -f roms/doom1.wad ] && [ -f roms/bass/sky.dnr ] && [ -d roms/scumm/dott-dos-ni-demo-en ] && [ -f roms/drascula/flac/audio/track28.flac ] || scripts/fetch-roms.sh
-for g in nes test-pattern sumo triangle textured inputtest threadtest loopdemo loopdemo-run loopdemo-c loopdemo-c-run doom scummvm scummvm-run sdl3-snake sdl3-woodeneye sdl3-callbacks sdl3-classic sdl3-classic-run; do "$NATIVE" build/$g.wasm --compile build/$g.cwasm 2>/dev/null; done
+for g in nes test-pattern sumo triangle textured inputtest threadtest sdl3-threads loopdemo loopdemo-run loopdemo-c loopdemo-c-run doom scummvm scummvm-run sdl3-snake sdl3-woodeneye sdl3-callbacks sdl3-classic sdl3-classic-run; do "$NATIVE" build/$g.wasm --compile build/$g.cwasm 2>/dev/null; done
 
 pass=0; fail=0
 run() { "$@" 2>/dev/null | grep -E '^(frames|video)' | tr '\n' ' '; }
@@ -83,6 +83,9 @@ check sdl3-snake          sdl3-snake 900 --input '100-110:KEY(ArrowUp),200-210:K
 check sdl3-woodeneye      sdl3-woodeneye 400 --input '50-150:KEY(KeyW),100-200:MOVE(8,0),160-180:KEY(KeyA+Space),210:PTR(640,360),211-213:PTR(640,360,L),250-300:KEY(KeyD)'
 check sdl3-callbacks      sdl3-callbacks 300 --input '20-21:KEY(Digit1),60-61:KEY(Digit5),100-103:GP0(B0),140-142:GP0(B3),200-201:KEY(Digit8),280-281:KEY(Escape)'
 check sdl3-classic        sdl3-classic 300 --input '20-60:KEY(ArrowRight),70-71:KEY(Tab),80:"hello gasm",90-91:KEY(Backspace),100-140:KEY(ArrowDown+ArrowLeft),250-251:KEY(Escape)'
+# SDL threads on cooperative threads: workers on a mutex/condition/rwlock, SDL_AddTimer's
+# timer thread posting a semaphore, SDL TLS; quits with 0 when everything added up
+check sdl3-threads        sdl3-threads 400
 # triangle: the smallest gfx guest (one buffer, one pipeline); --screenshot of it is the GPU smoke test
 check triangle            triangle 300
 check sumo-vs-bot         sumo 3000 --input "130-900:RIGHT+A,900-1800:UP+B,1800-3000:LEFT+DOWN"

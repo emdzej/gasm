@@ -103,6 +103,8 @@ unsigned gasm_loop_frames(void) {
     return frames;
 }
 
+int gasm_loop_threads(void) { return 0; }
+
 /* Not inlined: it must be instrumented, unlike the export, so an unwind returns
  * from here at once instead of looking like gasm_main() ended. */
 __attribute__((noinline)) static void run_main(void) {
@@ -243,6 +245,7 @@ static void suspend(int state) {
 
 void gasm_wait_frame(void) { suspend(WAIT_FRAME); }
 unsigned gasm_loop_frames(void) { return frames; }
+int gasm_loop_threads(void) { return 1; }
 
 gasm_thread *gasm_thread_self(void) { return current; }
 uint32_t gasm_thread_id(gasm_thread *t) { return t ? t->id : 0; }

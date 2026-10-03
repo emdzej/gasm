@@ -69,8 +69,16 @@ Command line: the `args` param (`--param "args=-x 1"`) becomes `argv[1...]`.
 | Async I/O | done at once (gasm guests have one thread); results are ready on the next poll |
 | `SDL_ShowMessageBox` | the log; returns the default button |
 
-Not available: threads (`SDL_CreateThread` fails, and with it `SDL_AddTimer`),
-OpenGL, Vulkan and `SDL_GPU` (gasm has no GL yet; see `gasm:gl` on the
+**Threads** (`SDL_CreateThread`, `SDL_AddTimer`, mutexes, conditions,
+semaphores, read/write locks, TLS) are cooperative: every thread runs on the
+guest's one wasm thread, until it blocks, sleeps (`SDL_Delay`) or ends a frame,
+so runs stay reproducible. `SDL_CreateThread` needs a classic `main()` linked
+with the threaded loop helper (`gasm_sdl3_app(<target> LOOP THREADS)`, by hand:
+`lib/gasm_loop_threads.o` before `libSDL3.a`; Asyncify build only); elsewhere it
+fails, and the locks work as on one thread. `SDL_GetError` is shared by all
+threads. Example: `examples/threads`.
+
+Not available: OpenGL, Vulkan and `SDL_GPU` (gasm has no GL yet; see `gasm:gl` on the
 [roadmap](https://github.com/emdzej/gasm/blob/main/site/docs/roadmap.md#sdl-3)),
 audio recording, camera, haptics and rumble, sensors, dialogs, tray, processes,
 loading shared objects. Each fails the way SDL fails on a platform without it.

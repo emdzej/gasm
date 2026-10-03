@@ -132,6 +132,10 @@ from the repo root, then
   left out of the build (`SDL_SKIP` in the Makefile), `fopen` in
   `SDL_iostream.c` is redirected to assets/storage. SDL time is virtual and
   per frame; callback apps need no Asyncify, classic `main()` apps do.
+  Threads: `SDL_gasmthread.c` replaces all of `src/thread/generic` (in
+  `SDL_SKIP`); `SDL_THREADS_DISABLED` stays defined because it selects the
+  generic thread handle type. Threaded apps link `lib/gasm_loop_threads.o`;
+  SDL's frame clock catches up with the scheduler lazily (`SyncFrames`).
 - **Runners never call a guest after it exited or trapped** (the windowed
   runner drops the game in `stop()`; the event loop can tick once more;
   `GasmHost.dead` makes `frame()` throw without calling the guest).
