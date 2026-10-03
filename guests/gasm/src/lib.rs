@@ -770,11 +770,13 @@ macro_rules! game {
 /// Games that keep their own main loop (`loop { update(); draw(); wait_frame(); }`)
 /// instead of implementing [`Game`]. Same mechanism as the C SDK's `gasm_loop.h`:
 /// [`main_loop!`] exports the entry points and runs your function on the first frame;
-/// [`main_loop::wait_frame`] suspends it until the next frame with Binaryen's Asyncify,
-/// inside the module. Build, then post-process the `.wasm`:
+/// [`main_loop::wait_frame`] suspends it until the next frame: with Binaryen's
+/// Asyncify inside the module (`gasm_frame`, any runner), or by the runner itself
+/// when it switches stacks (`gasm_run`). Build, then post-process the `.wasm`:
 ///
 /// ```text
 /// wasm-opt game.wasm --asyncify --pass-arg=asyncify-removelist@gasm_frame,gasm_loop_frame -O2 -o game.wasm
+/// wasm-opt game.wasm -O2 -o game-run.wasm    # runners with stack switching only: smaller, faster
 /// ```
 ///
 /// ```ignore
@@ -823,10 +825,17 @@ pub mod main_loop {
     static mut EXIT_CODE: i32 = 0;
     static mut MAIN: Option<fn() -> i32> = None;
     static mut FRAMES: u32 = 0;
+    /// entered through `gasm_run`: the runner switches stacks (no Asyncify)
+    static mut RUN_MODE: bool = false;
 
     fn wait_impl() {
         #[cfg(target_arch = "wasm32")]
         unsafe {
+            if RUN_MODE {
+                crate::sys::yield_frame();
+                FRAMES += 1;
+                return;
+            }
             if REWINDING {
                 asyncify::stop_rewind();
                 REWINDING = false;
@@ -870,6 +879,17 @@ pub mod main_loop {
                 EXIT_CODE = rc;
                 FINISHED = true;
             }
+        }
+    }
+
+    /// The whole run for runners that switch stacks (`gasm_run`): frames end in
+    /// the `yield_frame` import. A build without the Asyncify pass only works this way.
+    #[doc(hidden)]
+    pub fn __run() -> i32 {
+        unsafe {
+            RUN_MODE = true;
+            STARTED = true;
+            MAIN.map_or(0, |f| f())
         }
     }
 
@@ -932,6 +952,10 @@ macro_rules! main_loop {
         #[inline(never)]
         pub extern "C" fn gasm_loop_frame() {
             $crate::main_loop::__loop_frame()
+        }
+        #[unsafe(no_mangle)]
+        pub extern "C" fn gasm_run() -> i32 {
+            $crate::main_loop::__run()
         }
     };
     ($main:path, $exit:path) => {

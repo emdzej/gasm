@@ -25,6 +25,10 @@ path = "src/main.rs"
 members = ["relay"]
 default-members = [".", "relay"]
 
+[dev-dependencies]
+# tests write small guests in the text format
+wat = "1"
+
 [features]
 default = ["window"]
 # the windowed runner: winit window, cpal audio, gilrs gamepads, keyboard layouts.

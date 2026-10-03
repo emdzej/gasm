@@ -41,6 +41,9 @@ ASYNCIFY := --asyncify --pass-arg=asyncify-removelist@gasm_loop_frame
 # Every module gets a final wasm-opt -O2 (measured: DOOM 14%, NES 16%, sumo 31% smaller;
 # speed unchanged within noise; hashes unchanged). $(call wasm_opt,flags) turns $@.raw into $@.
 wasm_opt = $(WASM_OPT) $@.raw $(1) -O2 -o $@ && rm -f $@.raw
+# Own-loop games (gasm_loop.h, gasm::main_loop!): $@ with Asyncify (every runner) and
+# $*-run.wasm without (runners with stack switching: gasm_run, design/stack-switching.md)
+wasm_opt_loop = $(WASM_OPT) $@.raw -O2 -o $(@:.wasm=-run.wasm) && $(call wasm_opt,$(ASYNCIFY))
 
 # Flag stamps: $(call flags,<name>,<text>) is a file that changes only when <text> does,
 # so targets that depend on it rebuild when their flags change, not on every Makefile edit.
@@ -54,11 +57,15 @@ endef
 
 GUESTS   := $(BUILD)/test-pattern.wasm $(BUILD)/nes.wasm $(BUILD)/sumo.wasm $(BUILD)/triangle.wasm $(BUILD)/textured.wasm $(BUILD)/inputtest.wasm $(BUILD)/loopdemo.wasm $(BUILD)/loopdemo-c.wasm $(BUILD)/assetcheck.wasm $(BUILD)/doom.wasm $(BUILD)/scummvm.wasm \
   $(BUILD)/sdl3-snake.wasm $(BUILD)/sdl3-woodeneye.wasm $(BUILD)/sdl3-callbacks.wasm $(BUILD)/sdl3-classic.wasm
+# made by the same recipes as the Asyncify builds
+RUN_BUILDS := $(BUILD)/loopdemo-run.wasm $(BUILD)/loopdemo-c-run.wasm $(BUILD)/sdl3-classic-run.wasm $(BUILD)/scummvm-run.wasm
 
 .PHONY: all guests native test web relay roms parity clean rust-toolchain doom scummvm sdl3 FORCE
 all: guests native
 
 guests: $(GUESTS)
+$(RUN_BUILDS): $(BUILD)/%-run.wasm: $(BUILD)/%.wasm
+	@test -f $@
 
 FORCE:
 
@@ -171,6 +178,7 @@ $(BUILD)/scummvm.wasm: $(SCUMMVM_SRC)/config.mk $(SCUMMVM_SRCS) $(SCUMMVM_SRC)/b
 	scripts/fetch-scummvm.sh
 	SOURCE_DATE_EPOCH=$(SCUMMVM_DATE) $(MAKE) -C $(SCUMMVM_SRC) -j$$(getconf _NPROCESSORS_ONLN) scummvm
 	@mkdir -p $(@D)
+	$(WASM_OPT) $(SCUMMVM_SRC)/scummvm -O2 -o $(@:.wasm=-run.wasm)
 	$(WASM_OPT) $(SCUMMVM_SRC)/scummvm $(ASYNCIFY) -O2 -o $@
 
 # --- SDL3 (sdk/sdl3): SDL as a "private platform" with gasm drivers ------------------
@@ -259,7 +267,7 @@ $(BUILD)/sdl3-callbacks.wasm: sdk/sdl3/examples/callbacks/main.c $(SDL_LIB) $(WA
 # a classic main() loop: Asyncify, like any gasm_loop game
 $(BUILD)/sdl3-classic.wasm: sdk/sdl3/examples/classic/main.c $(SDL_LIB) $(WASM_OPT)
 	$(call SDL_LINK,$<)
-	$(call wasm_opt,$(ASYNCIFY))
+	$(call wasm_opt_loop)
 
 $(BUILD)/test-pattern.wasm: guests/test-pattern/main.c spec/gasm.h $(CLANG) $(WASM_OPT)
 	@mkdir -p $(@D)
@@ -278,12 +286,13 @@ $(RUST_OUT)/%.wasm: $(BUILD)/.rust-guests ;
 # own main loop (gasm::main_loop / gasm_loop.h): Asyncify after linking
 $(BUILD)/loopdemo.wasm: $(RUST_OUT)/loopdemo.wasm $(WASM_OPT)
 	@mkdir -p $(@D)
+	$(WASM_OPT) $< -O2 -o $(@:.wasm=-run.wasm)
 	$(WASM_OPT) $< --asyncify --pass-arg=asyncify-removelist@gasm_frame,gasm_loop_frame -O2 -o $@
 
 $(BUILD)/loopdemo-c.wasm: sdk/c/example-loop/main.c sdk/c/src/gasm_loop.c sdk/c/include/gasm_loop.h spec/gasm.h $(CLANG) $(WASM_OPT)
 	@mkdir -p $(@D)
 	$(CC) $(TARGET) $(REACTOR) $(OPT) -Ispec -Isdk/c/include sdk/c/example-loop/main.c sdk/c/src/gasm_loop.c -Wl,--wrap=exit -o $@.raw -lm
-	$(call wasm_opt,$(ASYNCIFY))
+	$(call wasm_opt_loop)
 
 $(BUILD)/%.wasm: $(RUST_OUT)/%.wasm $(WASM_OPT)
 	@mkdir -p $(@D)

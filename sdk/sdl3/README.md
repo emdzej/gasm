@@ -7,7 +7,8 @@ with their source unchanged. Both kinds of SDL program work:
   then every gasm frame delivers that frame's events to `SDL_AppEvent` and calls
   `SDL_AppIterate` once. Nothing else is needed.
 - **A classic `main()` with its own loop**: `main` runs on the C SDK's loop helper
-  (`gasm_loop`, Binaryen's Asyncify) and is suspended where a frame ends:
+  (`gasm_loop`: Binaryen's Asyncify, or the runner's stack switching for the
+  `-run.wasm` build) and is suspended where a frame ends:
   `SDL_RenderPresent` / `SDL_UpdateWindowSurface`, or an `SDL_Delay` that crosses
   a frame boundary (programs that pace themselves with `SDL_Delay` keep their
   rate). Needs one `wasm-opt` step after linking.
@@ -82,7 +83,8 @@ loading shared objects. Each fails the way SDL fails on a platform without it.
 - A frame ends at the first present. A program that presents more than once per
   frame (or never, for long stretches) should add `SDL_Delay` pacing.
 - Sizes: SDL adds about 0.8 MB to a module (`sdl3-snake.wasm` is 810 KB);
-  Asyncify adds a little more for a `main()` loop (`sdl3-classic.wasm`: 1.15 MB).
+  Asyncify adds a little more for a `main()` loop (`sdl3-classic.wasm`: 1.15 MB;
+  the run build without it, `sdl3-classic-run.wasm`: 0.81 MB).
 
 ## Files
 

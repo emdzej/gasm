@@ -1,7 +1,7 @@
 // Browser runner: canvas (2D or WebGPU) + AudioWorklet + keyboard/Gamepad API
 // + WebSocket networking around GasmHost.
 import {
-  GasmHost, staticTitle, IdbStorage, MemoryStorage, ProcExit, Resampler, AssetTable, bytesSource,
+  GasmHost, STACK_SWITCHING, staticTitle, IdbStorage, MemoryStorage, ProcExit, Resampler, AssetTable, bytesSource,
   directoryHandleEntries, fileListEntries, preloadAssets, DEFAULT_KEYMAP, parseKeymap, keyboardPads,
   BrowserInput, INPUT_KEYS_RAW, gamepadPads, normalizeCode,
 } from './gasm-host.js';
@@ -31,6 +31,9 @@ const CONTENT = {
 const FOLDER_GAMES = {
   'scummvm.wasm': { dir: 'bass/', files: ['sky.dnr', 'sky.dsk', 'readme.txt'], args: '-p / sky', folderArgs: '--auto-detect -p /' },
 };
+// Games with their own main loop also come as a "run build" (no Asyncify: smaller,
+// faster), used where the browser can switch stacks (JSPI): design/stack-switching.md.
+const RUN_BUILDS = new Set(['scummvm.wasm', 'sdl3-classic.wasm']);
 const contentGame = (name) => Object.keys(CONTENT).find((g) => name.toLowerCase().endsWith(CONTENT[g].ext));
 
 const $ = (id) => document.getElementById(id);
@@ -276,6 +279,20 @@ function tick(now) {
         rawInput.setMode(w.inputMode);
       }, stopped);
     }
+  } else if (due > 0 && host.switching) {
+    // a gasm_run guest resumes asynchronously: one batch in flight, as for the worker
+    if (!inflight) {
+      inflight = true;
+      acc -= due * period;
+      const h = host;
+      h.runFramesAsync(batch(due), true).then(() => {
+        if (h !== host) return;
+        inflight = false;
+        fpsN += due;
+        draw2d();
+        rawInput.setMode(h.inputMode);
+      }, stopped);
+    }
   } else if (due > 0) {
     // one batch: only the last frame is shown; a gfx canvas gets 2D frames as a WebGPU blit
     try { host.runFrames(batch(due), true); } catch (e) { return stopped(e); }
@@ -302,7 +319,7 @@ async function hashRun(n) {
   } else {
     // like the headless runners and the worker: frames aren't shown (begin_frame returns 0)
     host.showFrame = false;
-    try { for (let i = 0; i < n; i++) host.frame(); } catch (e) { if (!(e instanceof ProcExit)) throw e; }
+    try { for (let i = 0; i < n; i++) await host.frameAsync(); } catch (e) { if (!(e instanceof ProcExit)) throw e; }
     s = { frames: host.frameIndex, presented: host.framesPresented, width: host.width, height: host.height,
           videoHash: host.videoHash, audioHash: host.audioHash, audioFrames: host.audioFrames };
   }
@@ -346,12 +363,12 @@ async function start({ romBytes } = {}) {
     } catch (e) { return log(`${e.message}: open a folder with a game instead`); }
   }
   // Launch parameters: URL query plus the relay/room fields.
-  const skip = ['game', 'autostart', 'wasm', 'worker', 'opfs', 'prefix', 'hashframes', 'rom', 'filter', 'integer'];
+  const skip = ['game', 'autostart', 'wasm', 'worker', 'opfs', 'prefix', 'hashframes', 'rom', 'filter', 'integer', 'asyncify'];
   const params = Object.fromEntries([...url].filter(([k]) => !skip.includes(k)));
   if (fg && params.args === undefined) params.args = folder || url.has('opfs') ? fg.folderArgs : fg.args;
   if ($('relay').value.trim()) { params.relay = $('relay').value.trim(); params.room = $('room').value.trim() || 'sumo'; }
   try {
-    const bytes = await fetchBytes(game.includes('/') ? new URL(game, location.href) : new URL(`build/${game}`, ROOT));
+    const bytes = game.includes('/') ? await fetchBytes(new URL(game, location.href)) : await fetchGame(game);
     // compiled once: the imports tell where it can run, the same Module is instantiated
     const module = await WebAssembly.compile(bytes);
     if (stale()) return;
@@ -420,9 +437,18 @@ async function start({ romBytes } = {}) {
     return;
   }
   if (hashFrames > 0) return hashRun(hashFrames).catch((e) => log(`hash run failed: ${e.message}`));
-  log(`running ${game}${worker ? ' in a worker' : ''} @ ${(worker ?? host).frameRate.toFixed(2)} Hz`);
+  const how = [worker && 'in a worker', (worker ?? host).switching && 'stack switching'].filter(Boolean).join(', ');
+  log(`running ${game}${how ? ` (${how})` : ''} @ ${(worker ?? host).frameRate.toFixed(2)} Hz`);
   acc = 0; last = performance.now(); running = true;
   rafId = requestAnimationFrame(tick);
+}
+
+/** build/<game>, or its run build where the browser switches stacks (falls back if missing). */
+async function fetchGame(game) {
+  if (STACK_SWITCHING && RUN_BUILDS.has(game) && !new URLSearchParams(location.search).has('asyncify')) {
+    try { return await fetchBytes(new URL(`build/${game.replace(/\.wasm$/, '-run.wasm')}`, ROOT)); } catch {}
+  }
+  return fetchBytes(new URL(`build/${game}`, ROOT));
 }
 
 async function fetchBytes(url) {

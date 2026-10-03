@@ -504,9 +504,16 @@ gasm calls the game once per frame ([why](/docs/abi#why-the-runner-drives-the-fr
 For code that wants to own its loop, both SDKs have a loop helper: write a
 normal `main` that loops and call `wait_frame()` where a frame ends. The helper
 exports the gasm entry points, starts `main` on the first frame and suspends it
-in `wait_frame()` until the next one, with Binaryen's Asyncify inside the module
-(no runner support, works everywhere). Returning from `main` ends the game with
-that exit code.
+in `wait_frame()` until the next one. Returning from `main` ends the game with
+that exit code. Two builds come from one link:
+
+- **`game.wasm`**, post-processed with Binaryen's Asyncify: suspends itself,
+  inside the module, so it runs on every runner.
+- **`game-run.wasm`**, without Asyncify: the runner suspends it
+  ([stack switching](/docs/abi#stack-switching): `gasm-run`, Chromium, Node
+  24+). About a third smaller (ScummVM: 10.6 MB instead of 16.1 MB, SDL 3
+  classic: 0.81 MB instead of 1.15 MB); runners without stack switching refuse
+  it, so ship both for the browser.
 
 ```c
 #include "gasm.h"
@@ -523,8 +530,9 @@ int gasm_main(void) {
 
 With the C SDK: `gasm_add_game(mygame LOOP main.c)` (needs `wasm-opt` from
 [Binaryen](https://github.com/WebAssembly/binaryen/releases); set
-`GASM_WASM_OPT` if it's not on `PATH`). By hand: compile `src/gasm_loop.c` with
-the game, link with `-Wl,--wrap=exit`, then run
+`GASM_WASM_OPT` if it's not on `PATH`); it writes both builds. By hand: compile
+`src/gasm_loop.c` with the game, link with `-Wl,--wrap=exit`, then run
+`wasm-opt game.wasm -O2 -o game-run.wasm` and
 `wasm-opt game.wasm --asyncify --pass-arg=asyncify-removelist@gasm_loop_frame -O2 -o game.wasm`.
 Optional `gasm_loop_init()` and `gasm_loop_exit()` run at `gasm_init` and
 `gasm_exit`; `-DGASM_LOOP_STACK_SIZE=` sets the space for the suspended stack
@@ -543,15 +551,16 @@ fn run() -> i32 {
 gasm::main_loop!(run);              // or main_loop!(run, on_exit): also exports gasm_exit
 ```
 
-then `wasm-opt game.wasm --asyncify --pass-arg=asyncify-removelist@gasm_frame,gasm_loop_frame -O2 -o game.wasm`.
+then `wasm-opt game.wasm -O2 -o game-run.wasm` and
+`wasm-opt game.wasm --asyncify --pass-arg=asyncify-removelist@gasm_frame,gasm_loop_frame -O2 -o game.wasm`.
 Only `main_loop!` games carry the loop export (`gasm_loop_frame`) and the
 Asyncify imports; `game!` games don't.
 Examples: [`sdk/c/example-loop`](https://github.com/emdzej/gasm/tree/main/sdk/c/example-loop),
 [`guests/loopdemo`](https://github.com/emdzej/gasm/tree/main/guests/loopdemo).
 
-The cost is size and speed: Asyncify instruments every function that can reach
-`wait_frame()` (ScummVM: 10.6 MB without it, 16.1 MB with it). Prefer the per-frame callback for
-new games; use the loop helper for ports. The rules it follows, each learned from
+The Asyncify build costs size: Asyncify instruments every function that can
+reach `wait_frame()`. Prefer the per-frame callback for new games; use the loop
+helper for ports. The rules it follows, each learned from
 a bug, are at the top of
 [`gasm_loop.c`](https://github.com/emdzej/gasm/blob/main/sdk/c/src/gasm_loop.c).
 

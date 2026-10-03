@@ -40,6 +40,7 @@ options:
                            (then run the .cwasm with --allow-precompiled)
   --allow-precompiled      accept a .cwasm: native code, so only files you compiled yourself
   --call-timeout <secs>    trap a guest call (init, a frame) that runs longer (default 30, 0 = never)
+  --no-stack-switching     call gasm_frame even if the game exports gasm_run (its Asyncify path)
   --headless <frames>      run N frames without window/audio, print hashes
   --screenshot <out.png>   (headless) write the last frame as PNG (renders gfx on the GPU)
   --screenshot-filtered <out.png>
@@ -85,6 +86,7 @@ struct Args {
     no_hash: bool,
     allow_precompiled: bool,
     call_timeout: Option<Duration>,
+    stack_switching: bool,
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -111,6 +113,7 @@ fn parse_args() -> Result<Args, String> {
         no_hash: false,
         allow_precompiled: false,
         call_timeout: Some(Duration::from_secs(30)),
+        stack_switching: true,
     };
     while let Some(a) = it.next() {
         let mut val = |name: &str| it.next().ok_or(format!("{name} needs a value"));
@@ -160,6 +163,7 @@ fn parse_args() -> Result<Args, String> {
             "--mute" => args.mute = true,
             "--no-hash" => args.no_hash = true,
             "--allow-precompiled" => args.allow_precompiled = true,
+            "--no-stack-switching" => args.stack_switching = false,
             "--call-timeout" => {
                 let secs: f64 = val("--call-timeout")?.parse().map_err(|_| "--call-timeout expects seconds")?;
                 if !(secs >= 0.0 && secs.is_finite()) {
@@ -275,7 +279,7 @@ fn run(args: Args) -> Result<i32, String> {
         params: args.params.clone(),
         allow_net: args.allow_net,
         storage: open_storage(&args)?,
-        load: LoadOptions { allow_precompiled: args.allow_precompiled, call_timeout: args.call_timeout },
+        load: LoadOptions { allow_precompiled: args.allow_precompiled, call_timeout: args.call_timeout, stack_switching: args.stack_switching },
     };
     match args.headless {
         Some(frames) => {

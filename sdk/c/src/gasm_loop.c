@@ -1,6 +1,12 @@
 /*
  * gasm_loop.c: the gasm exports for games with their own main loop (gasm_loop.h).
  *
+ * Two ways to suspend gasm_main() between frames, from the same object:
+ * - gasm_run (runners with stack switching, design/stack-switching.md): the
+ *   runner calls it once and suspends the guest in the gasm.yield_frame import.
+ *   Needs no Asyncify: a "run build" skips the wasm-opt --asyncify pass.
+ * - gasm_frame (every runner): Asyncify, below. Needs the --asyncify pass.
+ *
  * The first gasm_frame() starts gasm_main(). gasm_wait_frame() unwinds the wasm
  * stack (Binaryen Asyncify) back out of gasm_frame(); the next gasm_frame()
  * rewinds into it, and gasm_main() continues where it waited. The suspended stack
@@ -44,11 +50,17 @@ __attribute__((import_module("asyncify"), import_name("stop_rewind"))) void asyn
 static struct { void *cur, *end; } async_data;
 static char async_stack[GASM_LOOP_STACK_SIZE];
 static int rewinding, unwinding, started, finished, exiting, exit_code;
+static int run_mode;   /* entered through gasm_run: the runner switches stacks */
 static unsigned frames;
 
 static void wait_impl(void) {
     if (exiting)
         return;
+    if (run_mode) {   /* the runner suspends us until the next frame */
+        gasm_yield_frame();
+        frames++;
+        return;
+    }
     if (rewinding) {   /* back from the runner: continue where the game waited */
         asyncify_stop_rewind();
         rewinding = 0;
@@ -115,6 +127,14 @@ GASM_EXPORT("gasm_frame") void gasm_loop_frame(void) {
         fflush(NULL);
         _Exit(exit_code);   /* proc_exit: the runner ends the game */
     }
+}
+
+/* The whole run, for runners that switch stacks: frames end in gasm_yield_frame(). */
+GASM_EXPORT("gasm_run") int32_t gasm_loop_run(void) {
+    run_mode = started = 1;
+    int rc = gasm_main();
+    fflush(NULL);
+    return rc;   /* the runner ends the game with it */
 }
 
 GASM_EXPORT("gasm_exit") void gasm_loop_exit_export(void) { gasm_loop_exit(); }

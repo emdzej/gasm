@@ -52,5 +52,5 @@ built natively. That's about 9× faster than the console itself. Sumo holds
 ## Status
 
 gasm is a **proof of concept**. ABI v0 is experimental and will change. See the
-[roadmap](/docs/roadmap): runner-side stack switching, threads, `gasm:gl`,
-rollback netplay, `.gasm` packages.
+[roadmap](/docs/roadmap): threads, `gasm:gl`, rollback netplay, `.gasm`
+packages.

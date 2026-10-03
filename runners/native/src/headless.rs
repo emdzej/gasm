@@ -72,20 +72,21 @@ pub fn run(session: Session, opts: &Options) -> Result<Report, String> {
     let mut clock = VirtualClock::default();
     let mut script_state = ScriptState::default();
     for i in 0..opts.frames {
-        let host = game.host_mut();
-        let rate = host.frame_rate;
-        host.virtual_time_ms = Some(clock.at(i, rate));
-        host.pads = [opts.script.pad(i), 0, 0, 0];
-        host.text = Some(opts.script.text(i));
-        let (w, h) = host.gfx.size();
-        let mode = host.input_mode;
-        host.input = opts.script.raw(i, &mut script_state, (w as f32, h as f32), mode);
-        host.show_frame = gpu && i + 1 == opts.frames;
+        // between frames the host is reached through with_host (a gasm_run guest owns it)
+        game.with_host(|host| {
+            let rate = host.frame_rate;
+            host.virtual_time_ms = Some(clock.at(i, rate));
+            host.pads = [opts.script.pad(i), 0, 0, 0];
+            host.text = Some(opts.script.text(i));
+            let (w, h) = host.gfx.size();
+            let mode = host.input_mode;
+            host.input = opts.script.raw(i, &mut script_state, (w as f32, h as f32), mode);
+            host.show_frame = gpu && i + 1 == opts.frames;
+        });
         ran = i + 1;
         let result = game.frame();
-        let host = game.host_mut();
-        if std::mem::take(&mut host.title_changed) {
-            eprintln!("[gasm] title: {}", host.title.as_deref().unwrap_or("(default)"));
+        if let Some(t) = game.with_host(|host| std::mem::take(&mut host.title_changed).then(|| host.title.clone())) {
+            eprintln!("[gasm] title: {}", t.as_deref().unwrap_or("(default)"));
         }
         match result {
             Ok(()) => {}
@@ -96,7 +97,7 @@ pub fn run(session: Session, opts: &Options) -> Result<Report, String> {
             Err(Stop::Trap(e)) => return Err(format!("frame {i}: {e}")),
         }
         if opts.realtime {
-            let due = t0 + Duration::from_secs_f64((i + 1) as f64 / game.host().frame_rate);
+            let due = t0 + Duration::from_secs_f64((i + 1) as f64 / game.with_host(|h| h.frame_rate));
             if let Some(wait) = due.checked_duration_since(Instant::now()) {
                 std::thread::sleep(wait);
             }

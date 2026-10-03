@@ -6,6 +6,39 @@ embedders. The ABI version is still 0: additions keep it (see
 guests can probe for newer imports with `gasm.has`. Versions are the git tags and
 the package versions (`gasm-sdk`, `gasm-host`, `@emdzej/gasm-host`).
 
+## Unreleased
+
+ABI (additive):
+- Stack switching: an optional export `gasm_run() -> i32` and the import
+  `gasm.yield_frame()`. Runners that can suspend a wasm stack (natively with
+  wasmtime's async calls; JSPI in Chromium and Node 24+) run such a guest's
+  whole loop in one call and resume it every frame; the frames, input and
+  hashes are those of `gasm_frame`. Runners without it keep calling
+  `gasm_frame`.
+
+SDKs:
+- The loop helpers (`gasm_loop.h`, `gasm::main_loop!`) export `gasm_run` too.
+  Own-loop games now build twice from one link: `game.wasm` with Asyncify
+  (every runner) and `game-run.wasm` without (stack switching only): ScummVM
+  10.6 MB instead of 16.1 MB, SDL 3 classic 0.81 MB instead of 1.15 MB. CMake's
+  `gasm_add_game(... LOOP ...)` writes both.
+
+Runners:
+- Native: guests that export `gasm_run` run that way (`--no-stack-switching`
+  forces `gasm_frame`); a run build is refused with a message when switching is
+  off. `Game::with_host` reaches the host between frames for every guest
+  (`host()`/`host_mut()` don't work while a `gasm_run` guest is suspended);
+  `Host` is `Send` (`AudioOut: Send`; `AudioSink::open` returns the cpal
+  stream separately). Loading ScummVM's run build peaks at 506 MB RSS instead
+  of 904 MB for the Asyncify build.
+- `@emdzej/gasm-host`: `GasmHost.frameAsync()` / `runFramesAsync()` (required
+  for gasm_run guests, `host.switching`), `STACK_SWITCHING`, the
+  `stackSwitching` option; Worker mode and `gasm-headless`
+  (`--no-stack-switching`) use them. The player loads the run builds where the
+  browser has JSPI (`?asyncify` forces the Asyncify build).
+- Native release bundles ship ScummVM's run build (`games/scummvm-run.wasm`).
+- CI runs on Node 24.
+
 ## 0.6.0 (2026-10-02)
 
 ABI (additive):

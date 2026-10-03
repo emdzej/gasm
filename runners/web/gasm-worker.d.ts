@@ -49,6 +49,8 @@ export declare class GasmWorker {
   }): Promise<GasmWorker>;
   readonly worker: Worker;
   frameRate: number;
+  /** The guest runs through gasm_run (stack switching, JSPI in the worker). */
+  readonly switching: boolean;
   /** The guest's set_title as of the last batch (null: default). */
   readonly title: string | null;
   /** GASM_INPUT_* flags the guest asked for, after the last batch. */

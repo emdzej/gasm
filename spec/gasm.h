@@ -10,6 +10,7 @@
  *   gasm_abi_version   required  Must return the ABI version (0).
  *   gasm_init          required  0 = ok; anything else aborts.
  *   gasm_frame         required  One simulation + render step, called at the frame rate.
+ *   gasm_run           optional  The game's whole run with its own loop: runners with stack switching call it on the first frame instead of gasm_frame; each yield_frame ends a frame. Returning ends the game with that exit code.
  *   gasm_exit          optional  The player is quitting: flush saves (best effort).
  *   _initialize        optional  WASI reactor constructor hook, called first if present.
  *
@@ -378,6 +379,10 @@ GASM_IMPORT("param") int32_t gasm_param(const char *name, uint32_t name_len, cha
  * empty resets to the default. Newer than has: probe has("gasm.set_title")
  * first. */
 GASM_IMPORT("set_title") void gasm_set_title(const char *title, uint32_t title_len);
+/* End the frame inside gasm_run: the runner suspends the guest and resumes it
+ * at the start of the next frame. Traps outside gasm_run (and on runners
+ * without stack switching: probe has("gasm.yield_frame")). */
+GASM_IMPORT("yield_frame") void gasm_yield_frame(void);
 
 /* ---- gasm:gfx (optional) ---------------------------------------------------------- */
 /* GPU rendering: a WebGPU subset. Handles are u32 (0 is never valid); creation

@@ -304,7 +304,7 @@ function conformance() {
     const want = new Map(m.functions.map((f) => [f.name, f]));
     // native runner (wasmtime): func_wrap("gasm", "name", ..) or func_wrap(M, "name", ..) after const M
     const rs = m.name === 'gasm'
-      ? rustClosures(hostRs, '"gasm"')
+      ? rustClosures(hostRs + read('runners/native/src/switching.rs'), '"gasm"')   // yield_frame lives there
       : rustClosures(section(hostRs, `const M: &str = "${m.name}";`, '\nfn '), 'M');
     compareSigs(`runners/native (${m.name})`, want, rs);
     // JS runner: keys of the import object returned by the matching method; arity only

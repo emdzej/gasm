@@ -84,5 +84,6 @@ starts. Proposals (not implemented yet):
 Implemented (kept as a record of the decisions):
 
 - [Presentation](https://github.com/emdzej/gasm/blob/main/design/presentation.md): upscaling filters, display aspect, window title (0.6.0)
+- [Stack switching](https://github.com/emdzej/gasm/blob/main/design/stack-switching.md): `gasm_run` and `yield_frame`, games with their own loop without Asyncify
 
 Everything else that is planned or missing is on the [roadmap](/docs/roadmap).

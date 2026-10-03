@@ -6,7 +6,7 @@ header plus CMake glue:
 ```
 include/gasm.h              the whole ABI (generated from spec/abi.json)
 include/gasm_loop.h         optional: games with their own main loop
-src/gasm_loop.c             (gasm_main + gasm_wait_frame, Binaryen Asyncify)
+src/gasm_loop.c             (gasm_main + gasm_wait_frame: Asyncify, or gasm_run for runners that switch stacks)
 include/gasm_vfile.h        optional: stdio FILE* over assets and gasm:storage
 src/gasm_vfile.c
 cmake/gasm-toolchain.cmake  wasm32 toolchain (wraps wasi-sdk's)

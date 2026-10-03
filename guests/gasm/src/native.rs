@@ -189,6 +189,11 @@ pub mod abi {
         let ok = (num, den) == (0, 0) || ((1..=65535).contains(&num) && (1..=65535).contains(&den) && num as u64 * 8 >= den as u64 && den as u64 * 8 >= num as u64);
         assert!(ok, "video_set_aspect: invalid ratio {num}:{den}");
     }
+    /// A frame of a `gasm_run` game ends: natively the game just runs on, so
+    /// this is the frame boundary (time advances as after a `gasm_frame`).
+    pub unsafe fn yield_frame() {
+        super::end_frame();
+    }
     pub unsafe fn set_title(ptr: *const u8, len: u32) {
         eprintln!("[gasm] title: {}", unsafe { text(ptr, len) });
     }

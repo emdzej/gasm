@@ -57,6 +57,7 @@ export class GasmWorker {
     try {
       const r = await ready;
       w.frameRate = r.frameRate;
+      w.switching = r.switching;
       return w;
     } catch (e) {
       w.worker.terminate();
@@ -180,7 +181,7 @@ if (inWorker) {
         });
         host.hashing = m.hashing;
         await host.load(m.wasm);
-        post({ type: 'ready', frameRate: host.frameRate, title: host.title });
+        post({ type: 'ready', frameRate: host.frameRate, title: host.title, switching: host.switching });
       } catch (err) {
         post(err instanceof ProcExit ? { type: 'exit', code: err.code } : { type: 'error', message: err.message });
       }
@@ -189,7 +190,8 @@ if (inWorker) {
       if (gfx && m.size) gfx.setSize(...m.size);
       const steps = m.steps.map((s) => ({ ...s, text: keyboard ? (s.text ?? '') : null }));
       // a gfx canvas belongs to WebGPU here: runFrames blits 2D frames into it
-      try { ({ video } = host.runFrames(steps, m.show)); } catch (err) {
+      // gasm_run guests (stack switching) resume asynchronously
+      try { ({ video } = await host.runFramesAsync(steps, m.show)); } catch (err) {
         if (err instanceof ProcExit) exit = err.code; else error = err.message;
       }
       // Send the latest 2D frame only if a new one was presented (transfer, no copy on arrival).

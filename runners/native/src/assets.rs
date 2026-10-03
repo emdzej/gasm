@@ -26,7 +26,7 @@ use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::fs::File;
 use std::path::{Path, PathBuf};
-use std::rc::Rc;
+use std::sync::Arc;
 
 /// Folder entries kept open at once (least recently used are closed).
 const OPEN_FILES: usize = 64;
@@ -52,7 +52,7 @@ pub struct Assets {
     /// sorted names, built by `finish`
     sorted: Vec<String>,
     /// open folder entries, most recently used last
-    open: RefCell<VecDeque<(PathBuf, Rc<File>)>>,
+    open: RefCell<VecDeque<(PathBuf, Arc<File>)>>,
 }
 
 impl From<HashMap<String, Vec<u8>>> for Assets {
@@ -233,7 +233,7 @@ impl Assets {
 
     /// Open a folder entry (cached). Refuses anything that is no longer a regular
     /// file (e.g. replaced by a symlink since start-up).
-    fn open_lazy(&self, path: &Path) -> Option<Rc<File>> {
+    fn open_lazy(&self, path: &Path) -> Option<Arc<File>> {
         let mut open = self.open.borrow_mut();
         if let Some(i) = open.iter().position(|(p, _)| p == path) {
             let hit = open.remove(i)?;
@@ -243,7 +243,7 @@ impl Assets {
         }
         let ok = std::fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_file());
         let file = match ok.then(|| File::open(path)) {
-            Some(Ok(f)) => Rc::new(f),
+            Some(Ok(f)) => Arc::new(f),
             Some(Err(e)) => {
                 eprintln!("[gasm] assets: {}: {e}", path.display());
                 return None;

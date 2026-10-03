@@ -5,6 +5,7 @@
 //   node runners/web/headless.mjs <game.wasm> --headless N [--rom p] [--asset n=p]
 //        [--asset-dir [prefix=]dir] [--param k=v] [--allow-net] [--storage-dir dir]
 //        [--storage-id id] [--input script] [--screenshot out.png] [--realtime] [--no-hash]
+//        [--no-stack-switching]
 //
 // The options mean what they mean for gasm-run. --screenshot writes the last
 // video_present frame: there is no GPU here, so gasm:gfx games can't be captured
@@ -21,6 +22,7 @@ const USAGE = 'usage: headless.mjs <game.wasm> --headless N [--rom path] [--asse
 const fail = (msg) => { console.error(`error: ${msg}\n\n${USAGE}`); process.exit(2); };
 const argv = process.argv.slice(2);
 let wasm, frames = 600, screenshot, noHash = false, allowNet = false, realtime = false, storageDir = null, storageId = null;
+let stackSwitching = true;
 // --input: see input-script.mjs (same syntax as gasm-run --input)
 let script = new InputScript();
 const assets = {}, params = {}, assetDirs = [];
@@ -42,6 +44,7 @@ for (let i = 0; i < argv.length; i++) {
   else if (a === '--param') { const [k, v] = pair(val(), '--param'); params[k] = v; }
   else if (a === '--allow-net') allowNet = true;
   else if (a === '--realtime') realtime = true;
+  else if (a === '--no-stack-switching') stackSwitching = false;
   else if (a === '--storage-dir') storageDir = val();
   else if (a === '--storage-id') storageId = val();
   else if (a === '-h' || a === '--help') { console.error(USAGE); process.exit(0); }
@@ -117,7 +120,7 @@ const storage = storageDir ? dirStorage(storageDir) : new MemoryStorage();
 console.error(`[gasm-node] storage: ${storageDir ?? 'memory'}`);
 
 const host = new GasmHost({
-  assets: table, params, allowNet, storage, virtualTime: true, onLog: (m) => console.error(m),
+  assets: table, params, allowNet, storage, virtualTime: true, onLog: (m) => console.error(m), stackSwitching,
   onTitle: (t) => console.error(`[gasm] title: ${t ?? '(default)'}`),
   getPad: (p) => (p !== 0 ? 0 : script.pad(host.frameIndex)),
 });
@@ -144,7 +147,7 @@ try {
   for (; ran < frames; ran++) {
     host.text = script.textAt(ran);
     host.input = script.raw(ran, scriptState, [host.gfx.width(), host.gfx.height()], host.inputMode);
-    host.frame();
+    if (host.switching) await host.frameAsync(); else host.frame();
     if (realtime) {
       const due = t1 + (ran + 1) * 1000 / host.frameRate;
       while (performance.now() < due) await new Promise((r) => setTimeout(r, Math.max(0, due - performance.now())));

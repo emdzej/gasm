@@ -6,7 +6,9 @@ the backend (`backend/`, copied into ScummVM as `backends/platform/gasm/`) and a
 small `configure` patch that adds the `wasm32-gasm` host. `make scummvm` fetches
 ScummVM 2026.3.0 into `tools/scummvm-src` (git-ignored), builds its libraries
 (zlib, MP3, Ogg Vorbis, FLAC) and ScummVM with wasi-sdk, and post-processes the
-module with Binaryen's Asyncify.
+module twice: `scummvm.wasm` with Binaryen's Asyncify (every runner) and
+`scummvm-run.wasm` without (runners that switch stacks: `gasm-run`, Chromium,
+Node 24+; 10.6 MB instead of 16.1 MB).
 
 ```sh
 make scummvm && make roms                  # scummvm.wasm; Beneath a Steel Sky (freeware) into roms/bass/,
@@ -93,12 +95,12 @@ codecs, 3D engines, more gamepads, size): see the
   `delayMillis` advances it, and when it crosses a 60 Hz frame boundary the
   engine **yields** to the runner and resumes on the next `gasm_frame`. Runs
   depend only on their input, so headless hashes match on every runner.
-- **Asyncify.** The yield is the C SDK's loop helper
+- **Suspending.** The yield is the C SDK's loop helper
   ([`sdk/c/src/gasm_loop.c`](https://github.com/emdzej/gasm/blob/main/sdk/c/src/gasm_loop.c)):
-  `gasm_main()` runs ScummVM, `gasm_wait_frame()` suspends it with Binaryen's
-  Asyncify, entirely inside the guest, so runners need nothing. The rules it
-  follows are at the top of that file. It costs size: 10.6 MB without
-  Asyncify, 16.1 MB with it.
+  `gasm_main()` runs ScummVM and `gasm_wait_frame()` suspends it, either with
+  Binaryen's Asyncify inside the guest (`scummvm.wasm`) or by the runner
+  through `gasm_run` and `yield_frame` (stack switching, `scummvm-run.wasm`).
+  Both give the same hashes. The Asyncify rules are at the top of that file.
 - **Video.** A software graphics manager combines the game screen (8, 16 or 32
   bit), the GUI overlay (640x480) and the cursor into one RGBA frame.
   320x200 and 640x400 screens are stretched to 4:3. The GUI shows the game

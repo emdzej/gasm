@@ -12,7 +12,7 @@ Games in this repo (Rust, C and C++):
 |---|---|---|
 | `sumo.wasm` | 3D (`gasm:gfx`, WebGPU/WGSL) + online 2-player lockstep (`gasm:net`), with cross-play between native and browser | 57 KB |
 | `nes.wasm` | NES emulator on [tetanes-core](https://crates.io/crates/tetanes-core): 2D video, audio, input, assets | 1.3 MB |
-| `scummvm.wasm` | [ScummVM](https://www.scummvm.org/) with a gasm backend (Asyncify inside the guest): the LucasArts SCUMM games (Monkey Island, Day of the Tentacle, Sam & Max, Full Throttle, ...), Humongous games, the freeware Beneath a Steel Sky and Drascula, MP3/Ogg Vorbis/FLAC audio, saves in `gasm:storage` ([guests/scummvm](guests/scummvm/README.md), with its porting status) | 16.1 MB |
+| `scummvm.wasm` | [ScummVM](https://www.scummvm.org/) with a gasm backend (Asyncify inside the guest, or `scummvm-run.wasm` for runners that switch stacks): the LucasArts SCUMM games (Monkey Island, Day of the Tentacle, Sam & Max, Full Throttle, ...), Humongous games, the freeware Beneath a Steel Sky and Drascula, MP3/Ogg Vorbis/FLAC audio, saves in `gasm:storage` ([guests/scummvm](guests/scummvm/README.md), with its porting status) | 16.1 MB |
 | `doom.wasm` | DOOM ([doomgeneric](https://github.com/ozkl/doomgeneric), C) with OPL music, saves in `gasm:storage`, any IWAD as an asset ([guests/doom](guests/doom/README.md)) | 656 KB |
 | `sdl3-snake.wasm`, `sdl3-woodeneye.wasm` | SDL 3's own demos, source unchanged, on [SDL 3 for gasm](sdk/sdl3/README.md) (SDL as a private platform: video, input, audio, gamepads, files) | 817 KB |
 | `triangle.wasm` | Smallest `gasm:gfx` program (about 50 lines of Rust) | 17 KB |
@@ -150,7 +150,7 @@ guests/                      Rust workspace (wasm32-unknown-unknown)
   triangle/                    smallest GPU example
   textured/                    textures, samplers, explicit layouts, dynamic offsets
   inputtest/                   raw keyboard, pointer, gamepads (input tester)
-  loopdemo/                    a game with its own main loop (gasm::main_loop, Asyncify)
+  loopdemo/                    a game with its own main loop (gasm::main_loop: Asyncify or stack switching)
   assetcheck/                  test guest for asset providers
   parity/                      runs the NES game natively (parity + benchmarks)
   test-pattern/                C guest (wasi-sdk)
@@ -188,8 +188,7 @@ CHANGELOG.md                 what each release added
 ## Next steps
 
 Everything planned or missing is on the
-[roadmap](site/docs/roadmap.md): runner-side
-stack switching, threads ([design](design/threads.md)), `gasm:gl`
-([design](design/gasm-gl.md)), render targets, rollback netplay, packages.
-Implemented designs stay in `design/` as a record
-([presentation](design/presentation.md)).
+[roadmap](site/docs/roadmap.md): threads ([design](design/threads.md)),
+`gasm:gl` ([design](design/gasm-gl.md)), render targets, rollback netplay,
+packages. Implemented designs stay in `design/` as a record
+([presentation](design/presentation.md), [stack switching](design/stack-switching.md)).

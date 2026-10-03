@@ -199,16 +199,12 @@ pthreads shim, SDL backend) stays the same, so the same source can target either
 
 ## Later: cheaper switching
 
-Runner-side stack switching (wasmtime's async support, JSPI in browsers, and
-eventually wasm's stack-switching proposal) is already on the [roadmap](https://github.com/emdzej/gasm/blob/main/site/docs/roadmap.md) for an
-optional `gasm_run` export (not `gasm_main`: that name is the C loop helper's
-entry point in `gasm_loop.h`). It would also replace Asyncify in cooperative
-threads: same API, no code-size cost. Games wouldn't change.
-
-It is not free for runners: JSPI and wasmtime's async calls make a suspended
-guest call return a promise / future, while `GasmHost.frame()` and the Worker
-batching are synchronous today. The runners' frame loops would need an async
-path for such guests.
+Runner-side stack switching exists now for the main loop
+([stack-switching.md](stack-switching.md): `gasm_run` and `yield_frame`,
+wasmtime async calls natively, JSPI in browsers). Whether cooperative threads
+can use it too is open: `gasm_run` suspends one stack, and threads need one per
+thread (several suspended calls, and a C shadow stack each). Until then threads
+use Asyncify, as `gasm_loop` did.
 
 ## Open questions
 

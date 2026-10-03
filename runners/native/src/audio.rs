@@ -3,8 +3,9 @@
 //! [`AudioOut`] is what the host needs; [`AudioSink`] (feature `window`) plays it
 //! on the default cpal device in any of its sample formats.
 
-/// Where the host sends `audio_push` samples.
-pub trait AudioOut {
+/// Where the host sends `audio_push` samples. `Send`: the host lives in the
+/// wasmtime store, which async (`gasm_run`) calls require to be `Send`.
+pub trait AudioOut: Send {
     /// Source format of the following pushes (validated by the host).
     fn configure(&mut self, rate: u32, channels: u32);
     /// Interleaved little-endian f32 samples in the configured format.
@@ -51,7 +52,7 @@ impl Resampler {
 }
 
 #[cfg(feature = "window")]
-pub use sink::AudioSink;
+pub use sink::{AudioSink, AudioStream};
 
 #[cfg(feature = "window")]
 mod sink {
@@ -133,6 +134,12 @@ mod sink {
         resampler: Resampler,
         scratch: Vec<f32>,
         max: usize,
+    }
+
+    /// The device stream feeding from an [`AudioSink`]: keep it alive while
+    /// playing. Separate because cpal streams aren't `Send` (the sink goes into
+    /// the host, see [`AudioOut`]).
+    pub struct AudioStream {
         _stream: cpal::Stream,
     }
 
@@ -179,7 +186,7 @@ mod sink {
     }
 
     impl AudioSink {
-        pub fn open() -> Result<AudioSink, String> {
+        pub fn open() -> Result<(AudioSink, AudioStream), String> {
             let host = cpal::default_host();
             let device = host.default_output_device().ok_or("no audio output device")?;
             let supported = device.default_output_config().map_err(|e| e.to_string())?;
@@ -204,7 +211,8 @@ mod sink {
             }
             .map_err(|e| e.to_string())?;
             stream.play().map_err(|e| e.to_string())?;
-            Ok(AudioSink { ring, device_rate, resampler: Resampler::new(device_rate), scratch: Vec::new(), max, _stream: stream })
+            let sink = AudioSink { ring, device_rate, resampler: Resampler::new(device_rate), scratch: Vec::new(), max };
+            Ok((sink, AudioStream { _stream: stream }))
         }
 
         pub fn device_rate(&self) -> u32 {

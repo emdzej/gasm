@@ -1044,6 +1044,7 @@ dependencies = [
  "serde_json",
  "tungstenite",
  "wasmtime",
+ "wat",
  "wgpu",
  "winit",
 ]

@@ -15,20 +15,19 @@ at 0 (older runners trap only if a guest calls something they lack, see
 
 The suggested order, from the most benefit for the least risk:
 
-1. **Runner-side stack switching (`gasm_run`).** Contained work, and every game
-   with its own main loop gets smaller and faster without changing: ScummVM is
-   16.1 MB with Asyncify, 10.6 MB without.
-2. **Cooperative threads.** Removes the most common porting blocker
+1. **Cooperative threads.** Removes the most common porting blocker
    (`SDL_CreateThread`, `SDL_AddTimer`, pthreads) and keeps runs deterministic.
-3. **`gasm:gl`.** The largest payoff (GLES/WebGL engines, Godot, ScummVM's 3D
+   Builds on stack switching (done: `gasm_run`, see
+   [design/stack-switching.md](https://github.com/emdzej/gasm/blob/main/design/stack-switching.md)).
+2. **`gasm:gl`.** The largest payoff (GLES/WebGL engines, Godot, ScummVM's 3D
    engines) and the most work, mostly building and shipping ANGLE natively.
 
 ## Runtime and ABI
 
 | Item | What it gives | Status |
 |---|---|---|
-| `gasm_run` export with a blocking `wait_frame` import | Games with their own loop without Asyncify (code size, speed): runners suspend the guest's stack (wasmtime async, JSPI in browsers, later wasm stack switching). `gasm_frame` stays the default; the SDK loop helpers (`gasm_loop.h`, `gasm::main_loop!`) switch over without changing games. Needs an async path in the runners' frame loops (`GasmHost.frame()` and Worker batches are synchronous today). | not started; notes in [threads, "Later: cheaper switching"](https://github.com/emdzej/gasm/blob/main/design/threads.md#later-cheaper-switching) |
 | Cooperative threads | Threads inside the guest (no ABI change, deterministic): a scheduler and C API, an SDL thread backend (`SDL_CreateThread`, `SDL_AddTimer`), a pthreads shim, later a Rust API. | proposal: [design/threads.md](https://github.com/emdzej/gasm/blob/main/design/threads.md) (part A) |
+| Stack switching beyond JSPI | Browsers without JSPI (and Node 22) still need the Asyncify builds; wasm's stack-switching proposal would cover them too. | waiting on engines |
 | Real wasm threads | Shared memory and atomics, opt-in, for guests that need parallel CPU (physics, job systems, Godot's worker pool). Not deterministic. | proposal, after cooperative threads: [design/threads.md](https://github.com/emdzej/gasm/blob/main/design/threads.md) (part B) |
 | Guest memory limit | A cap on linear memory growth. Today a guest can grow to the engine maximum (4 GiB for wasm32); needed before running untrusted content. | not started |
 | Capabilities manifest | Custom section `gasm.manifest` declaring required and optional imports, network hosts and platform extensions (`gasm:ext/*`), so runners can check a game before running it. | not started |
@@ -91,7 +90,7 @@ What works is in the [ScummVM README](https://github.com/emdzej/gasm/blob/main/g
 | 3D engines (Grim Fandango, Myst III, The Longest Journey) | not built | TinyGL (software 3D) now, or `gasm:gl` later |
 | Cloud, LAN, networking | off | `gasm:net` could carry some of it |
 | Gamepads 2–4, touch controls, virtual keyboard | one gamepad; mouse and keyboard otherwise | backend work |
-| Size and speed | 16.1 MB module (10.6 MB without Asyncify) | runner-side stack switching (`gasm_run`, above) |
+| Size in browsers without JSPI | they need the 16.1 MB Asyncify build (the run build is 10.6 MB) | JSPI in more browsers |
 
 ### Godot
 

@@ -9,12 +9,13 @@ EXE=""; [[ "$PLATFORM" == windows* ]] && EXE=".exe"
 PKG="dist/gasm-$VERSION-$PLATFORM"
 rm -rf "$PKG"; mkdir -p "$PKG/games"
 cp "$BIN/gasm-run$EXE" "$BIN/gasm-relay$EXE" "$PKG/"
-cp build/sumo.wasm build/nes.wasm build/doom.wasm build/triangle.wasm build/test-pattern.wasm build/inputtest.wasm build/scummvm.wasm \
+cp build/sumo.wasm build/nes.wasm build/doom.wasm build/triangle.wasm build/test-pattern.wasm build/inputtest.wasm build/scummvm-run.wasm \
   build/sdl3-snake.wasm build/sdl3-woodeneye.wasm "$PKG/games/"
 # license notices of the third-party code in the games (scripts/third-party-notices.sh)
 [ -f build/THIRD-PARTY.txt ] && cp build/THIRD-PARTY.txt "$PKG/games/"
 cat > "$PKG/games/scummvm-LICENSE.txt" <<TXT
-scummvm.wasm is ScummVM for gasm, licensed under the GNU General Public License
+scummvm-run.wasm is ScummVM for gasm (the build for runners that switch stacks,
+like gasm-run: no Asyncify, smaller), licensed under the GNU General Public License
 version 3. Its complete source code is gasm-$VERSION-scummvm-src.tar.gz,
 published next to this package at
 https://github.com/emdzej/gasm/releases/tag/$VERSION
@@ -65,7 +66,7 @@ SH
 dir=$(cd "$1" && pwd); shift
 cd "$(dirname "$0")"
 args=${*:---auto-detect -p /}
-exec ./gasm-run games/scummvm.wasm --asset-dir "$dir" --param "args=$args"
+exec ./gasm-run games/scummvm-run.wasm --asset-dir "$dir" --param "args=$args"
 SH
   cat > "$PKG/run-relay.sh" <<'SH'
 #!/bin/sh
@@ -79,7 +80,7 @@ else
   printf '@echo off\r\nrem Sumo vs. the bot: run-sumo.cmd    Online: run-sumo.cmd ws://HOST:9000 [room]\r\ncd /d "%%~dp0"\r\nif "%%~1"=="" (gasm-run.exe games\\sumo.wasm) else (if "%%~2"=="" (gasm-run.exe games\\sumo.wasm --allow-net --param relay=%%1 --param room=sumo) else (gasm-run.exe games\\sumo.wasm --allow-net --param relay=%%1 --param room=%%2))\r\n' > "$PKG/run-sumo.cmd"
   printf '@echo off\r\nrem run-nes.cmd path\\to\\game.nes\r\ncd /d "%%~dp0"\r\ngasm-run.exe games\\nes.wasm --rom %%1\r\n' > "$PKG/run-nes.cmd"
   printf '@echo off\r\ncd /d "%%~dp0"\r\ngasm-relay.exe 0.0.0.0:9000\r\n' > "$PKG/run-relay.cmd"
-  printf '@echo off\r\nrem run-scummvm.cmd path\\to\\game-folder (detects the game and starts it)\r\ncd /d "%%~dp0"\r\ngasm-run.exe games\\scummvm.wasm --asset-dir %%1 --param "args=--auto-detect -p /"\r\n' > "$PKG/run-scummvm.cmd"
+  printf '@echo off\r\nrem run-scummvm.cmd path\\to\\game-folder (detects the game and starts it)\r\ncd /d "%%~dp0"\r\ngasm-run.exe games\\scummvm-run.wasm --asset-dir %%1 --param "args=--auto-detect -p /"\r\n' > "$PKG/run-scummvm.cmd"
   printf '@echo off\r\nrem run-doom.cmd path\\to\\doom1.wad [DOOM options, e.g. -warp 1 1 -skill 4] (any IWAD: doom1.wad, doom.wad, doom2.wad, Freedoom)\r\ncd /d "%%~dp0"\r\ngasm-run.exe games\\doom.wasm --asset wad=%%1 --param "args=%%2 %%3 %%4 %%5 %%6 %%7 %%8 %%9"\r\n' > "$PKG/run-doom.cmd"
 fi
 
@@ -92,7 +93,7 @@ https://gasm.emdzej.pl
   games/           sumo.wasm (3D, 2 players), nes.wasm (NES emulator),
                    doom.wasm (DOOM, GPL-2.0), triangle.wasm, test-pattern.wasm,
                    inputtest.wasm (shows keyboard, mouse, gamepads),
-                   scummvm.wasm (ScummVM, GPL-3.0; bring your own games),
+                   scummvm-run.wasm (ScummVM, GPL-3.0; bring your own games),
                    sdl3-snake.wasm, sdl3-woodeneye.wasm (SDL 3's demos, unchanged)
 
 Quick start: run-sumo (vs. bot), run-sumo ws://HOST:9000 (online, start

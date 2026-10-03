@@ -3,7 +3,10 @@
 //! [`crate::wasi`].
 
 use std::collections::{HashMap, HashSet};
-use std::sync::OnceLock;
+use std::future::Future;
+use std::pin::Pin;
+use std::sync::{Arc, OnceLock};
+use std::task::Poll;
 use std::time::{Duration, Instant};
 
 use wasmtime::{Caller, Config, Engine, Instance, Linker, Memory, Module, Store, TypedFunc, bail, format_err};
@@ -14,6 +17,7 @@ use crate::gfx::Gfx;
 use crate::net::Net;
 use crate::present::letterbox;
 use crate::storage::Storage;
+use crate::switching::{self, Cmd, Exchange, Job};
 use crate::wasi::{self, Splitmix};
 
 pub const ABI_VERSION: i32 = 0;
@@ -225,6 +229,8 @@ pub struct Host {
     pub frames_presented: u64,
     /// video_set_aspect (num, den); None: square pixels
     pub aspect: Option<(u32, u32)>,
+    /// gasm_run guests: what the runner asks of the suspended guest (yield_frame)
+    pub(crate) run: Option<Arc<Exchange>>,
     /// set_title (cleaned); None: the runner's default
     pub title: Option<String>,
     /// set_title changed `title` since the runner last looked (it clears this)
@@ -267,6 +273,7 @@ impl Host {
             title: None,
             title_changed: false,
             aspect: None,
+            run: None,
             rgba: Vec::new(),
             width: 0,
             height: 0,
@@ -864,6 +871,9 @@ fn classify(e: wasmtime::Error) -> Stop {
     if let Some(exit) = e.downcast_ref::<wasi::Exit>() {
         return Stop::Exit(exit.0);
     }
+    if e.downcast_ref::<switching::Quit>().is_some() {
+        return Stop::Exit(0);
+    }
     if e.downcast_ref::<wasmtime::Trap>() == Some(&wasmtime::Trap::Interrupt) {
         return Stop::Trap(format!("a guest call ran longer than the time limit (stuck in a loop?); see --call-timeout\n{e:?}"));
     }
@@ -875,25 +885,30 @@ const TICKS_PER_SEC: u64 = 10;
 
 /// The process-wide engine: the same configuration for compiling, precompiling
 /// and loading (`.cwasm` files must match it). Epoch interruption lets a guest
-/// call that never returns be stopped (`LoadOptions::call_timeout`).
+/// call that never returns be stopped (`LoadOptions::call_timeout`). Calls can be
+/// sync (`gasm_frame` guests) or async (`gasm_run` guests: stack switching).
 pub fn engine() -> &'static Engine {
     static ENGINE: OnceLock<Engine> = OnceLock::new();
-    ENGINE.get_or_init(|| {
-        let mut config = Config::new();
-        config.epoch_interruption(true);
-        let engine = Engine::new(&config).expect("wasmtime engine");
-        let ticker = engine.clone();
-        std::thread::Builder::new()
-            .name("gasm-epoch".into())
-            .spawn(move || {
-                loop {
-                    std::thread::sleep(Duration::from_millis(1000 / TICKS_PER_SEC));
-                    ticker.increment_epoch();
-                }
-            })
-            .expect("epoch thread");
-        engine
-    })
+    ENGINE.get_or_init(new_engine)
+}
+
+fn new_engine() -> Engine {
+    let mut config = Config::new();
+    config.epoch_interruption(true);
+    // a gasm_run guest's whole run is on this stack: the default wasm stack limit plus room
+    config.async_stack_size(4 << 20);
+    let engine = Engine::new(&config).expect("wasmtime engine");
+    let ticker = engine.clone();
+    std::thread::Builder::new()
+        .name("gasm-epoch".into())
+        .spawn(move || {
+            loop {
+                std::thread::sleep(Duration::from_millis(1000 / TICKS_PER_SEC));
+                ticker.increment_epoch();
+            }
+        })
+        .expect("epoch thread");
+    engine
 }
 
 /// Ahead-of-time compile a guest to native code for this host (no JIT needed at load).
@@ -909,19 +924,35 @@ pub struct LoadOptions {
     pub allow_precompiled: bool,
     /// Trap a single guest call (init, a frame, exit) that runs longer than this.
     pub call_timeout: Option<Duration>,
+    /// Run guests that export `gasm_run` that way (the runner switches stacks).
+    /// Off: always `gasm_frame` (tests of the Asyncify path).
+    pub stack_switching: bool,
 }
 
 impl Default for LoadOptions {
     fn default() -> Self {
-        LoadOptions { allow_precompiled: false, call_timeout: Some(Duration::from_secs(30)) }
+        LoadOptions { allow_precompiled: false, call_timeout: Some(Duration::from_secs(30)), stack_switching: true }
     }
 }
 
+/// The running `gasm_run` call: owns the store until the run ends.
+type Running = Pin<Box<dyn Future<Output = (Store<Host>, wasmtime::Result<i32>)>>>;
+
+/// A running guest. `gasm_frame` guests are called once per frame; `gasm_run`
+/// guests run in one suspended call (stack switching) that each [`Game::frame`]
+/// resumes until its next `yield_frame`.
 pub struct Game {
-    pub store: Store<Host>,
+    /// None while a `gasm_run` call is running (the call owns it): use [`Game::with_host`]
+    store: Option<Store<Host>>,
     frame: TypedFunc<(), ()>,
     exit: Option<TypedFunc<(), ()>>,
     deadline: u64,
+    /// `gasm_run` (async engine)
+    run: Option<TypedFunc<(), i32>>,
+    running: Option<Running>,
+    exchange: Option<Arc<Exchange>>,
+    /// the guest exited or trapped: it is never called again
+    ended: bool,
 }
 
 impl Game {
@@ -930,18 +961,30 @@ impl Game {
     }
 
     fn load_inner(wasm: &[u8], host: Host, opts: LoadOptions) -> wasmtime::Result<Game> {
-        let engine = engine();
         let module = if wasm.starts_with(b"\0asm") {
-            Module::new(engine, wasm)?
+            Module::new(engine(), wasm)?
         } else if opts.allow_precompiled {
             // Precompiled artifact from `gasm-run --compile`: native code, trusted
             // like the runner itself (unlike .wasm, which is sandboxed).
-            unsafe { Module::deserialize(engine, wasm)? }
+            unsafe { Module::deserialize(engine(), wasm)? }
         } else {
             bail!("not a wasm module (a precompiled .cwasm runs as native code: pass --allow-precompiled if you made it yourself)");
         };
+        // guests that export gasm_run run in one async call (stack switching)
+        let has_run = module.get_export("gasm_run").is_some();
+        let switching = has_run && opts.stack_switching;
+        if has_run && !switching && module.imports().any(|i| i.module() == "asyncify") {
+            // made without wasm-opt --asyncify: its gasm_frame can't suspend
+            bail!("this module is a run build (no Asyncify): it needs stack switching (gasm_run); use the game's Asyncify build");
+        }
+        let engine = engine();
         let mut linker: Linker<Host> = Linker::new(engine);
         add_gasm_imports(&mut linker)?;
+        if switching {
+            switching::add_yield_async(&mut linker)?;
+        } else {
+            switching::add_yield_sync(&mut linker)?;
+        }
         add_gfx_imports(&mut linker)?;
         add_net_imports(&mut linker)?;
         add_storage_imports(&mut linker)?;
@@ -965,42 +1008,113 @@ impl Game {
         let deadline = opts.call_timeout.map_or(u64::MAX / 2, |t| (t.as_millis() as u64 * TICKS_PER_SEC).div_ceil(1000).max(1));
         store.epoch_deadline_trap();
         store.set_epoch_deadline(deadline);
-        let instance: Instance = linker.instantiate(&mut store, &module)?;
+        let exchange = switching.then(|| Exchange::new(deadline));
+        store.data_mut().run = exchange.clone();
+        let instance: Instance = if switching {
+            switching::block_on(linker.instantiate_async(&mut store, &module))??
+        } else {
+            linker.instantiate(&mut store, &module)?
+        };
         let memory = instance
             .get_memory(&mut store, "memory")
             .ok_or_else(|| format_err!("guest does not export `memory`"))?;
         store.data_mut().memory = Some(memory);
 
+        // a call that must not suspend, on either engine
+        fn call<R: wasmtime::WasmResults + Send + Sync>(store: &mut Store<Host>, f: TypedFunc<(), R>, switching: bool) -> wasmtime::Result<R> {
+            if switching { switching::block_on(f.call_async(store, ()))? } else { f.call(store, ()) }
+        }
         if let Ok(init) = instance.get_typed_func::<(), ()>(&mut store, "_initialize") {
             store.set_epoch_deadline(deadline);
-            init.call(&mut store, ())?;
+            call(&mut store, init, switching)?;
         }
-        let version = instance
-            .get_typed_func::<(), i32>(&mut store, "gasm_abi_version")?
-            .call(&mut store, ())?;
+        let version = instance.get_typed_func::<(), i32>(&mut store, "gasm_abi_version")?;
+        let version = call(&mut store, version, switching)?;
         if version != ABI_VERSION {
             bail!("guest targets gasm ABI v{version}, runner implements v{ABI_VERSION}");
         }
         store.set_epoch_deadline(deadline);
-        let rc = instance.get_typed_func::<(), i32>(&mut store, "gasm_init")?.call(&mut store, ())?;
+        let init = instance.get_typed_func::<(), i32>(&mut store, "gasm_init")?;
+        let rc = call(&mut store, init, switching)?;
         if rc != 0 {
             bail!("gasm_init failed with code {rc}");
         }
         let frame = instance.get_typed_func::<(), ()>(&mut store, "gasm_frame")?;
         let exit = instance.get_typed_func::<(), ()>(&mut store, "gasm_exit").ok();
-        Ok(Game { store, frame, exit, deadline })
+        let run = if switching { Some(instance.get_typed_func::<(), i32>(&mut store, "gasm_run")?) } else { None };
+        Ok(Game { store: Some(store), frame, exit, deadline, run, running: None, exchange, ended: false })
     }
 
+    /// Whether the guest runs through `gasm_run` (the runner switches stacks).
+    pub fn switching(&self) -> bool {
+        self.run.is_some()
+    }
+
+    /// One frame: call `gasm_frame`, or resume `gasm_run` until its next `yield_frame`.
     pub fn frame(&mut self) -> Result<(), Stop> {
-        self.store.set_epoch_deadline(self.deadline);
-        self.frame.call(&mut self.store, ()).map_err(classify)
+        if self.ended {
+            return Err(Stop::Trap("the guest is not running".into()));
+        }
+        let Some(run) = self.run.clone() else {
+            let store = self.store.as_mut().expect("store");
+            store.set_epoch_deadline(self.deadline);
+            let r = self.frame.call(store, ()).map_err(classify);
+            self.ended = r.is_err();
+            return r;
+        };
+        match &self.exchange {
+            Some(ex) if self.running.is_some() => ex.set(Cmd::Resume),
+            _ => {
+                // frame 0 starts the run; the call owns the store from now on
+                let mut store = self.store.take().expect("store");
+                store.set_epoch_deadline(self.deadline);
+                self.running = Some(Box::pin(async move {
+                    let r = run.call_async(&mut store, ()).await;
+                    (store, r)
+                }));
+            }
+        }
+        self.poll()
+    }
+
+    /// Poll the running `gasm_run` call: Ok when it suspended again, the reason when it ended.
+    fn poll(&mut self) -> Result<(), Stop> {
+        let Some(running) = self.running.as_mut() else { return Ok(()) };
+        match switching::poll_once(running.as_mut()) {
+            Poll::Pending => Ok(()),
+            Poll::Ready((store, r)) => {
+                self.store = Some(store);
+                self.running = None;
+                self.ended = true;
+                Err(match r {
+                    Ok(code) => Stop::Exit(code),
+                    Err(e) => classify(e),
+                })
+            }
+        }
     }
 
     /// Best-effort "the player is quitting" notification (optional `gasm_exit` export).
+    /// A suspended `gasm_run` guest gets it on top of its run, which then ends.
     pub fn exit(&mut self) {
-        if let Some(f) = self.exit.take() {
-            self.store.set_epoch_deadline(self.deadline);
-            if let Err(e) = f.call(&mut self.store, ()) {
+        if self.running.is_some() {
+            if let Some(ex) = &self.exchange {
+                ex.set(Cmd::Exit);
+            }
+            if let Err(Stop::Trap(t)) = self.poll() {
+                eprintln!("[gasm] gasm_exit trapped: {t}");
+            }
+            if self.running.is_some() {
+                // gasm_exit yielded: give up on the run (the store stays with it)
+                self.running = None;
+            }
+            self.exit = None;
+            return;
+        }
+        if let (Some(f), Some(store)) = (self.exit.take(), self.store.as_mut()) {
+            store.set_epoch_deadline(self.deadline);
+            let r = if self.run.is_some() { switching::block_on(f.call_async(&mut *store, ())).and_then(|r| r) } else { f.call(&mut *store, ()) };
+            if let Err(e) = r {
                 if let Stop::Trap(t) = classify(e) {
                     eprintln!("[gasm] gasm_exit trapped: {t}");
                 }
@@ -1008,12 +1122,42 @@ impl Game {
         }
     }
 
+    /// Run `f` on the host: directly, or (a suspended `gasm_run` guest) through
+    /// the guest's `yield_frame`, which owns the store meanwhile. Runners use this
+    /// between frames for everything they read or set.
+    pub fn with_host<R>(&mut self, f: impl FnOnce(&mut Host) -> R) -> R {
+        if let Some(store) = &mut self.store {
+            return f(store.data_mut());
+        }
+        let (Some(running), Some(ex)) = (self.running.as_mut(), &self.exchange) else {
+            panic!("with_host: the guest's store is gone (gasm_exit yielded)");
+        };
+        let mut f = Some(f);
+        let mut out = None;
+        let mut job = |h: &mut Host| out = Some((f.take().expect("job runs once"))(h));
+        let ptr: *mut (dyn FnMut(&mut Host) + '_) = &mut job;
+        // SAFETY: the pointer is only used by yield_frame during the poll below,
+        // while `job` is alive on this stack; it is dropped before we return.
+        let ptr: *mut (dyn FnMut(&mut Host) + 'static) = unsafe { std::mem::transmute(ptr) };
+        ex.set(Cmd::Job(Job(ptr)));
+        let polled = switching::poll_once(running.as_mut());
+        ex.set(Cmd::None);
+        match polled {
+            Poll::Pending => {}
+            Poll::Ready(_) => unreachable!("yield_frame stays suspended after a job"),
+        }
+        out.expect("yield_frame ran the job")
+    }
+
+    /// The host of a guest that isn't suspended in `gasm_run` (every `gasm_frame`
+    /// guest; a `gasm_run` guest before its first frame and after it ended).
+    /// Otherwise use [`Game::with_host`].
     pub fn host(&self) -> &Host {
-        self.store.data()
+        self.store.as_ref().expect("Game::host: a gasm_run guest is running; use Game::with_host").data()
     }
 
     pub fn host_mut(&mut self) -> &mut Host {
-        self.store.data_mut()
+        self.store.as_mut().expect("Game::host_mut: a gasm_run guest is running; use Game::with_host").data_mut()
     }
 }
 
@@ -1027,6 +1171,61 @@ mod tests {
         assert_eq!(clean_title("\n\t"), None);
         // 200 two-byte characters: cut at 256 bytes, on a character boundary
         assert_eq!(clean_title(&"é".repeat(200)).map(|t| t.len()), Some(256));
+    }
+
+    const RUN_GUEST: &str = r#"(module
+      (import "gasm" "yield_frame" (func $yield))
+      (memory (export "memory") 1)
+      (global $n (mut i32) (i32.const 0))
+      (func (export "gasm_abi_version") (result i32) i32.const 0)
+      (func (export "gasm_init") (result i32) i32.const 0)
+      (func (export "gasm_frame") call $yield)
+      (func (export "gasm_exit") (global.set $n (i32.const 100)))
+      (func (export "frames") (result i32) global.get $n)
+      (func (export "gasm_run") (result i32)
+        (loop $l
+          (global.set $n (i32.add (global.get $n) (i32.const 1)))
+          call $yield
+          (br_if $l (i32.lt_u (global.get $n) (i32.const 3))))
+        i32.const 7))"#;
+
+    fn host() -> Host {
+        Host::new(Assets::new(), HashMap::new(), None, Gfx::null(), Net::new(false), Storage::memory())
+    }
+
+    #[test]
+    fn gasm_run_guests_suspend_between_frames() {
+        let mut g = Game::load(&wat::parse_str(RUN_GUEST).unwrap(), host(), LoadOptions::default()).unwrap();
+        assert!(g.switching());
+        g.with_host(|h| h.frame_rate = 30.0); // before the first frame: the store is ours
+        assert!(g.frame().is_ok()); // n = 1, suspended in yield_frame
+        // suspended: the host is reached through the guest's yield_frame
+        assert_eq!(g.with_host(|h| h.frame_rate), 30.0);
+        assert!(g.frame().is_ok()); // n = 2
+        assert!(g.frame().is_ok()); // n = 3
+        // the loop ends: gasm_run returns 7, the exit code
+        assert!(matches!(g.frame(), Err(Stop::Exit(7))));
+        assert!(g.frame().is_err(), "never called again");
+    }
+
+    #[test]
+    fn exit_runs_on_top_of_a_suspended_run() {
+        let mut g = Game::load(&wat::parse_str(RUN_GUEST).unwrap(), host(), LoadOptions::default()).unwrap();
+        g.frame().unwrap();
+        g.exit();
+        // the store is back after the run ended; gasm_exit ran (n = 100)
+        assert!(g.store.is_some());
+    }
+
+    #[test]
+    fn yield_frame_outside_gasm_run_traps() {
+        let opts = LoadOptions { stack_switching: false, ..LoadOptions::default() };
+        let mut g = Game::load(&wat::parse_str(RUN_GUEST).unwrap(), host(), opts).unwrap();
+        assert!(!g.switching());
+        match g.frame() {
+            Err(Stop::Trap(t)) => assert!(t.contains("only inside gasm_run"), "{t}"),
+            other => panic!("expected a trap, got {:?}", other.err()),
+        }
     }
 
     #[test]

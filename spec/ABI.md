@@ -30,8 +30,8 @@ if the guest calls something it lacks, and an older guest never calls the
 new imports. A guest that can do without a newer import asks first with
 `has("module.function")`. Textures, samplers, explicit layouts, viewport/scissor,
 text input, raw keyboard/pointer/gamepads, asset and storage enumeration, `has`,
-64-bit assets, `gfx.destroy`, `set_title` and `video_set_aspect` were added
-this way; the version is still 0.
+64-bit assets, `gfx.destroy`, `set_title`, `video_set_aspect` and `gasm_run`
+with `yield_frame` were added this way; the version is still 0.
 [CHANGELOG.md](https://github.com/emdzej/gasm/blob/main/CHANGELOG.md) lists what
 each release added.
 
@@ -43,6 +43,7 @@ each release added.
 | export | `gasm_abi_version() -> i32`         | yes      | must return `0` |
 | export | `gasm_init() -> i32`                | yes      | `0` = ok, anything else aborts |
 | export | `gasm_frame()`                      | yes      | one simulation + render step |
+| export | `gasm_run() -> i32`                 | no       | a game with its own loop, run by runners that switch stacks; see [Stack switching](#stack-switching) |
 | export | `_initialize()`                     | no       | WASI reactor ctor hook; called first if present |
 | export | `gasm_exit()`                       | no       | the player is quitting: flush saves (best effort) |
 | import | `gasm.*`, `gasm:gfx.*`, `gasm:net.*`, `gasm:storage.*` | — | see below |
@@ -64,7 +65,8 @@ behind, e.g. wasm-bindgen glue in Rust crates that also target browsers.
    **fixed timestep**, independent of display refresh. Runners may run up to a
    few frames back to back to catch up (rendering only the last, see
    `begin_frame`) and must not call it re-entrantly. Input is sampled before
-   each call.
+   each call. (Guests that export `gasm_run` may be run through it instead,
+   with the same frames: [Stack switching](#stack-switching).)
 5. The game ends when the user quits, when an export traps, or when the guest
    calls WASI `proc_exit(code)`. Code 0 is a normal exit; runners stop cleanly
    and report the code. When the *user* quits (window closed, Esc held, page left,
@@ -111,9 +113,31 @@ instead. That is deliberate:
 
 Games that keep their own loop still work: the SDKs' **loop helpers** (C/C++
 `gasm_loop.h`, Rust `gasm::main_loop!`) export these entry points, run the
-game's `main` on the first frame and suspend it in `wait_frame()` with
-Binaryen's Asyncify, inside the module. ScummVM runs this way. To runners such a
-guest is an ordinary v0 guest.
+game's `main` on the first frame and suspend it in `wait_frame()`: with
+Binaryen's Asyncify inside the module (an ordinary v0 guest to every runner), or,
+on runners that switch stacks, through `gasm_run` and the `yield_frame` import
+(see below). ScummVM and SDL 3 classic `main()` games run this way.
+
+### Stack switching
+
+A guest that exports **`gasm_run() -> i32`** keeps its whole run in one call.
+Runners that can suspend a wasm stack (wasmtime's async calls natively, JSPI in
+browsers and Node 24+) call it on the first frame, after `gasm_init`, instead
+of `gasm_frame`; the guest ends each frame by calling **`gasm.yield_frame()`**,
+and the runner resumes it at the start of the next one. Returning from
+`gasm_run` ends the game with that exit code.
+
+- Frames are exactly those of the `gasm_frame` model (frame 0 starts
+  `gasm_run`): input, time, catch-up, `begin_frame` and hashing are the same,
+  so a game gives the same hashes either way.
+- `gasm_exit` (the player quits) is called while `gasm_run` is suspended; the
+  run then ends. The call watchdog applies to each frame, not the whole run.
+- `yield_frame` anywhere else (in `gasm_init`, `gasm_frame`, `gasm_exit`) traps.
+- Every module still exports `gasm_frame`, for runners that can't switch
+  stacks. A **run build** (made without the Asyncify pass: smaller and
+  faster) can't suspend there: it exports `gasm_run` and still imports
+  `asyncify.*`, and such runners refuse it with a message. The SDKs build both
+  from the same link (`game.wasm` with Asyncify, `game-run.wasm` without).
 
 ## `gasm` imports
 
@@ -145,6 +169,7 @@ All pointers are `i32` offsets into guest memory. Strings are UTF-8 `(ptr, len)`
 | `asset_count` | `() -> u32` | Number of assets. |
 | `asset_name` | `(index, dst, cap) -> i32` | Name of asset `index` (0 … `asset_count`−1), sorted by UTF-8 bytes; folder entries as named on disk. Returns its length (copied only if length ≤ `cap`; `cap = 0` queries), or `-1` if `index` is out of range. |
 | `param` | `(name_ptr, name_len, dst, cap) -> i32` | Launch parameter value: returns its byte length, or `-1` if unset. Copied only if length ≤ `cap`; call with `cap = 0` to query the length. |
+| `yield_frame` | `()` | End the frame inside `gasm_run`: the runner suspends the guest until the next frame ([Stack switching](#stack-switching)). Traps outside `gasm_run`. |
 | `set_title` | `(ptr, len)` | Name the game's window or browser tab, see [Window title](#window-title). Probe `has("gasm.set_title")` first: the SDK wrappers (`gasm::set_title`, `gasm_set_title_str`) do, and do nothing without it. |
 
 Button bits: `A=0 B=1 X=2 Y=3 L=4 R=5 SELECT=6 START=7 UP=8 DOWN=9 LEFT=10 RIGHT=11`.

@@ -24,6 +24,7 @@ pub mod present;
 pub mod script;
 pub mod session;
 pub mod storage;
+pub mod switching;
 pub mod wasi;
 
 #[cfg(feature = "window")]

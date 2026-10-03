@@ -16,23 +16,46 @@ NEW_GOLDEN=$(mktemp)
 trap 'rm -f "$NEW_GOLDEN"' EXIT
 NATIVE=runners/native/target/release/gasm-run
 NODE="node runners/web/headless.mjs"
+# run builds (gasm_run, no Asyncify) need JSPI: Node 24+; else they're checked natively only
+NODE_JSPI=""
+for n in node ${NODE24:-} "$HOME"/.nvm/versions/node/v2[4-9]*/bin/node; do
+  if [ -x "$(command -v "$n" 2>/dev/null)" ] && "$n" -e 'process.exit(typeof WebAssembly.Suspending === "function" ? 0 : 1)' 2>/dev/null; then
+    NODE_JSPI="$n runners/web/headless.mjs"; break
+  fi
+done
+[ -n "$NODE_JSPI" ] || echo "note: no Node with JSPI (24+): run builds are checked natively only"
 [ -d roms ] && [ -n "$(ls roms/*.nes 2>/dev/null)" ] && [ -f roms/freedoom2.wad ] && [ -f roms/doom1.wad ] && [ -f roms/bass/sky.dnr ] && [ -d roms/scumm/dott-dos-ni-demo-en ] && [ -f roms/drascula/flac/audio/track28.flac ] || scripts/fetch-roms.sh
-for g in nes test-pattern sumo triangle textured inputtest loopdemo loopdemo-c doom scummvm sdl3-snake sdl3-woodeneye sdl3-callbacks sdl3-classic; do "$NATIVE" build/$g.wasm --compile build/$g.cwasm 2>/dev/null; done
+for g in nes test-pattern sumo triangle textured inputtest loopdemo loopdemo-run loopdemo-c loopdemo-c-run doom scummvm scummvm-run sdl3-snake sdl3-woodeneye sdl3-callbacks sdl3-classic sdl3-classic-run; do "$NATIVE" build/$g.wasm --compile build/$g.cwasm 2>/dev/null; done
 
 pass=0; fail=0
+run() { "$@" 2>/dev/null | grep -E '^(frames|video)' | tr '\n' ' '; }
 check() { # <name> <guest-basename> <frames> [runner args...]
   local name=$1 guest=$2 frames=$3; shift 3
-  local a b c
-  a=$("$NATIVE" build/$guest.wasm  --headless "$frames" "$@" 2>/dev/null | grep -E '^(frames|video)' | tr '\n' ' ')
-  b=$("$NATIVE" build/$guest.cwasm --allow-precompiled --headless "$frames" "$@" 2>/dev/null | grep -E '^(frames|video)' | tr '\n' ' ')
-  c=$($NODE     build/$guest.wasm  --headless "$frames" "$@" 2>/dev/null | grep -E '^(frames|video)' | tr '\n' ' ')
-  local want
+  # every runner must give the same hashes; games with their own main loop also in
+  # both suspension models (stack switching and Asyncify) and from their run build
+  local labels=() results=()
+  labels+=(jit);  results+=("$(run "$NATIVE" build/$guest.wasm --headless "$frames" "$@")")
+  labels+=(aot);  results+=("$(run "$NATIVE" build/$guest.cwasm --allow-precompiled --headless "$frames" "$@")")
+  labels+=(node); results+=("$(run $NODE build/$guest.wasm --headless "$frames" "$@")")
+  if [ -f "build/$guest-run.wasm" ]; then
+    labels+=(jit-asyncify);  results+=("$(run "$NATIVE" build/$guest.wasm --no-stack-switching --headless "$frames" "$@")")
+    labels+=(node-asyncify); results+=("$(run $NODE build/$guest.wasm --no-stack-switching --headless "$frames" "$@")")
+    labels+=(jit-run);  results+=("$(run "$NATIVE" build/$guest-run.wasm --headless "$frames" "$@")")
+    labels+=(aot-run);  results+=("$(run "$NATIVE" build/$guest-run.cwasm --allow-precompiled --headless "$frames" "$@")")
+    if [ -n "$NODE_JSPI" ]; then
+      labels+=(node-run); results+=("$(run $NODE_JSPI build/$guest-run.wasm --headless "$frames" "$@")")
+    fi
+  fi
+  local a=${results[0]} want same=1 i
   want=$([ -f "$GOLDEN" ] && grep "^$name " "$GOLDEN" | cut -d' ' -f2-)
   [ -n "$a" ] && printf '%s %s\n' "$name" "$a" >> "$NEW_GOLDEN"
-  if [ -n "$a" ] && [ "$a" = "$b" ] && [ "$a" = "$c" ] && { [ -n "$UPDATE" ] || [ "$a" = "$want" ]; }; then
-    pass=$((pass + 1)); printf 'PASS  %-22s %s\n' "$name" "$(echo "$a" | cut -d' ' -f4-5)"
+  for i in "${!results[@]}"; do [ "${results[$i]}" = "$a" ] || same=0; done
+  if [ -n "$a" ] && [ "$same" = 1 ] && { [ -n "$UPDATE" ] || [ "$a" = "$want" ]; }; then
+    pass=$((pass + 1)); printf 'PASS  %-22s %s%s\n' "$name" "$(echo "$a" | cut -d' ' -f4-5)" "$([ "${#results[@]}" -gt 3 ] && echo " (${#results[@]} variants)")"
   else
-    fail=$((fail + 1)); printf 'FAIL  %s\n  jit:    %s\n  aot:    %s\n  node:   %s\n  golden: %s\n' "$name" "$a" "$b" "$c" "${want:-(none; UPDATE_GOLDEN=1 records it)}"
+    fail=$((fail + 1)); printf 'FAIL  %s\n' "$name"
+    for i in "${!results[@]}"; do printf '  %-14s %s\n' "${labels[$i]}:" "${results[$i]}"; done
+    printf '  %-14s %s\n' "golden:" "${want:-(none; UPDATE_GOLDEN=1 records it)}"
   fi
 }
 

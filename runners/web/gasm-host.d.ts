@@ -228,6 +228,8 @@ export interface GasmHostOptions {
   /** Reproducible (headless) mode: frame-derived time_ms and WASI clocks, a fixed
    *  random_get sequence. Also enables hashing. */
   virtualTime?: boolean;
+  /** Run guests that export gasm_run that way (JSPI). Default: when the engine has JSPI. */
+  stackSwitching?: boolean;
 }
 
 /** One frame of a batch for GasmHost.runFrames / GasmWorker.frames. */
@@ -245,6 +247,8 @@ export interface FrameStep {
  *   await host.load(await (await fetch('game.wasm')).arrayBuffer());
  *   setInterval(() => host.frame(), 1000 / host.frameRate);
  */
+/** Whether this JS engine has JSPI, so gasm_run guests can run (stack switching). */
+export declare const STACK_SWITCHING: boolean;
 /** Longest title gasm.set_title keeps, in UTF-8 bytes (256). */
 export declare const TITLE_MAX_BYTES: number;
 /** set_title text as runners show it: control and bidi characters removed, cut to 256 bytes; null if empty. */
@@ -258,6 +262,12 @@ export declare class GasmHost {
   readonly title: string | null;
   /** The module's gasm.title section (cleaned), after load(); null if none. */
   readonly staticTitle: string | null;
+  /** This guest runs through gasm_run (stack switching, JSPI): use frameAsync / runFramesAsync. */
+  readonly switching: boolean;
+  /** One frame of any guest (for gasm_run guests: resume until the next yield_frame). */
+  frameAsync(): Promise<void>;
+  /** runFrames for any guest. */
+  runFramesAsync(steps: FrameStep[], show?: boolean): Promise<{ video: boolean }>;
   /** The guest's video_set_aspect [num, den]; null: square pixels. */
   readonly aspect: [number, number] | null;
   assets: GasmAssetProvider;

@@ -65,10 +65,13 @@ export function staticTitle(module) {
   try { return cleanTitle(new TextDecoder('utf-8', { fatal: true }).decode(s)); } catch { return null; }
 }
 
+/** Whether this JS engine can suspend wasm (JSPI): gasm_run guests, design/stack-switching.md. */
+export const STACK_SWITCHING = typeof WebAssembly.Suspending === 'function' && typeof WebAssembly.promising === 'function';
+
 export class GasmHost {
   constructor({ assets = {}, params = {}, gfx = new NullGfx(), storage = new MemoryStorage(), allowNet = false,
                 onPresent = () => {}, onAudio = () => {}, onLog = console.log, onTitle = () => {},
-                getPad = () => 0, virtualTime = false } = {}) {
+                getPad = () => 0, virtualTime = false, stackSwitching = STACK_SWITCHING } = {}) {
     // GasmAssetProvider ({ size(name), readAt(name, offset, dst), names() }), or a plain
     // { name: Uint8Array } record (wrapped as an in-memory provider).
     this.assets = isAssetProvider(assets) ? assets : memoryAssets(assets);
@@ -82,6 +85,12 @@ export class GasmHost {
     this.onLog = onLog;
     this.onTitle = onTitle;          // (title: string | null) after a frame that changed it; null = default
     this.title = null;               // set_title, cleaned
+    // gasm_run guests (JSPI): the guest's run is one suspended call; frames are async
+    this.stackSwitching = stackSwitching && STACK_SWITCHING;
+    this.switching = false;          // after load(): this guest runs through gasm_run
+    this.running = null;             // the gasm_run promise
+    this.resume = null;              // continues a guest suspended in yield_frame
+    this.frameEnd = null;            // [resolve, reject] of the frame in progress
     this.staticTitle = null;         // the module's gasm.title section (the default title), after load()
     this.aspect = null;              // video_set_aspect [num, den]; null = square pixels
     this.titleChanged = false;
@@ -155,6 +164,8 @@ export class GasmHost {
     return {
       log: (ptr, len) => this.onLog(`[guest] ${LOSSY.decode(this.bytes(ptr, len))}`),
       has: (ptr, len) => (this.provided.has(this.str(ptr, len)) ? 1 : 0),
+      // replaced by a suspending import for gasm_run guests (load)
+      yield_frame: () => { throw new Error('gasm.yield_frame: only inside gasm_run'); },
       set_title: (ptr, len) => {
         const t = cleanTitle(this.str(ptr, len));
         if (t !== this.title) { this.title = t; this.titleChanged = true; }
@@ -404,10 +415,24 @@ export class GasmHost {
     const trapping = (mod, fns = {}) => new Proxy(fns, {
       get: (t, n) => t[n] ?? (() => { throw new Error(`unsupported import ${String(mod)}.${String(n)}`); }),
     });
+    const module = wasm instanceof WebAssembly.Module ? wasm : await WebAssembly.compile(wasm);
+    const hasRun = WebAssembly.Module.exports(module).some((e) => e.name === 'gasm_run');
+    this.switching = hasRun && this.stackSwitching;
+    if (hasRun && !this.switching && WebAssembly.Module.imports(module).some((i) => i.module === 'asyncify')) {
+      // made without wasm-opt --asyncify: its gasm_frame can't suspend
+      throw new Error('this module is a run build (no Asyncify): it needs stack switching (JSPI); use the game\'s Asyncify build');
+    }
+    if (this.switching) {
+      // ends the frame: the guest stays suspended here until the next frameAsync()
+      known.gasm.yield_frame = new WebAssembly.Suspending(async () => {
+        const [done] = this.frameEnd ?? [];
+        this.frameEnd = null;
+        await new Promise((r) => { this.resume = r; done?.(); });
+      });
+    }
     const imports = new Proxy({ ...known, wasi_snapshot_preview1: this.wasiImports() }, {
       get: (t, mod) => (mod === 'wasi_snapshot_preview1' ? t[mod] : trapping(mod, t[mod])),
     });
-    const module = wasm instanceof WebAssembly.Module ? wasm : await WebAssembly.compile(wasm);
     this.staticTitle = staticTitle(module);
     const instance = await WebAssembly.instantiate(module, imports);
     const ex = instance.exports;
@@ -426,8 +451,10 @@ export class GasmHost {
     this.exports = ex;
   }
 
-  /** Run one frame. After the guest trapped or exited, this throws without calling it. */
+  /** Run one frame. After the guest trapped or exited, this throws without calling it.
+   *  gasm_run guests (host.switching) need frameAsync(). */
   frame() {
+    if (this.switching) throw new Error('this guest runs through gasm_run (stack switching): use frameAsync()');
     if (this.dead) throw this.dead instanceof ProcExit ? this.dead : new Error(`the guest is not running (${this.dead.message})`);
     if (this.virtualTime) this.vtime = this.clock.at(this.frameIndex, this.frameRate);
     try {
@@ -443,6 +470,60 @@ export class GasmHost {
   }
 
   /**
+   * Run one frame of any guest: frame(), or for a gasm_run guest, resume it
+   * until its next yield_frame (the first frame starts gasm_run).
+   */
+  async frameAsync() {
+    if (!this.switching) return this.frame();
+    if (this.dead) throw this.dead instanceof ProcExit ? this.dead : new Error(`the guest is not running (${this.dead.message})`);
+    if (this.virtualTime) this.vtime = this.clock.at(this.frameIndex, this.frameRate);
+    const ended = new Promise((resolve, reject) => { this.frameEnd = [resolve, reject]; });
+    try {
+      this.gfx.checkErrors?.();
+      if (!this.running) {
+        this.running = WebAssembly.promising(this.exports.gasm_run)();
+        this.running.then((code) => this.frameEnd?.[1](new ProcExit(code)), (e) => this.frameEnd?.[1](e));
+      } else {
+        const r = this.resume;
+        this.resume = null;
+        r();
+      }
+      await ended;
+    } catch (e) {
+      this.dead = e;
+      throw e;
+    } finally {
+      this.frameIndex++;
+      if (this.titleChanged) { this.titleChanged = false; this.onTitle(this.title); }
+    }
+  }
+
+  /** runFrames() for any guest (gasm_run guests need it). */
+  async runFramesAsync(steps, show = true) {
+    if (!this.switching) return this.runFrames(steps, show);
+    const before = this.videoFrames;
+    for (let i = 0; i < steps.length; i++) {
+      this.prepareStep(steps[i], show && i === steps.length - 1);
+      await this.frameAsync();
+    }
+    return this.finishBatch(before, show);
+  }
+
+  prepareStep(s, show) {
+    this.getPad = (p) => s.pads?.[p] ?? 0;
+    if (s.text !== undefined) this.text = s.text;
+    this.input = s.input ?? NO_INPUT;
+    this.showFrame = show;
+    this.gfx.used = false;
+  }
+
+  finishBatch(before, show) {
+    const video = this.videoFrames !== before && this.width > 0;
+    if (video && show && this.gfx.presentVideo && !this.gfx.used) this.gfx.presentVideo(this.rgba, this.width, this.height, this.aspect);
+    return { video };
+  }
+
+  /**
    * Run a batch of frames, as the runners do when catching up: one per step
    * ({ pads: [p0..p3], text, input }), only the last shown (if `show`). A 2D frame
    * from video_present is blitted with WebGPU when the canvas belongs to it (gfx
@@ -452,17 +533,10 @@ export class GasmHost {
   runFrames(steps, show = true) {
     const before = this.videoFrames;
     for (let i = 0; i < steps.length; i++) {
-      const s = steps[i];
-      this.getPad = (p) => s.pads?.[p] ?? 0;
-      if (s.text !== undefined) this.text = s.text;
-      this.input = s.input ?? NO_INPUT;
-      this.showFrame = show && i === steps.length - 1;
-      this.gfx.used = false;
+      this.prepareStep(steps[i], show && i === steps.length - 1);
       this.frame();
     }
-    const video = this.videoFrames !== before && this.width > 0;
-    if (video && show && this.gfx.presentVideo && !this.gfx.used) this.gfx.presentVideo(this.rgba, this.width, this.height, this.aspect);
-    return { video };
+    return this.finishBatch(before, show);
   }
 
   /** Best-effort "player is quitting" (optional gasm_exit export): games flush saves.

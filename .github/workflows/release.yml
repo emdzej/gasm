@@ -80,6 +80,8 @@ jobs:
             (cd "rebuild/$g" && scripts/fetch-wasi-sdk.sh >/dev/null && scripts/fetch-binaryen.sh >/dev/null && make "$g")
             cmp "rebuild/$g/build/$g.wasm" "shipped/$g.wasm" && echo "$g.wasm: identical"
           done
+          # the run build (no Asyncify) comes from the same source and recipe
+          cmp rebuild/scummvm/build/scummvm-run.wasm shipped/scummvm-run.wasm && echo "scummvm-run.wasm: identical"
 
   native:
     needs: [ci, games, rebuild-from-source]

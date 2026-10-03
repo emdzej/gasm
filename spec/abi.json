@@ -16,6 +16,7 @@
     { "name": "gasm_abi_version", "result": "i32", "required": true, "doc": "Must return the ABI version (0)." },
     { "name": "gasm_init", "result": "i32", "required": true, "doc": "0 = ok; anything else aborts." },
     { "name": "gasm_frame", "required": true, "doc": "One simulation + render step, called at the frame rate." },
+    { "name": "gasm_run", "result": "i32", "required": false, "doc": "The game's whole run with its own loop: runners with stack switching call it on the first frame instead of gasm_frame; each yield_frame ends a frame. Returning ends the game with that exit code." },
     { "name": "gasm_exit", "required": false, "doc": "The player is quitting: flush saves (best effort)." },
     { "name": "_initialize", "required": false, "doc": "WASI reactor constructor hook, called first if present." }
   ],
@@ -52,7 +53,8 @@
         { "name": "asset_count", "result": "u32", "doc": "Number of assets." },
         { "name": "asset_name", "params": [{ "name": "index", "type": "u32" }, { "name": "dst", "type": "ptr", "c": "char *", "rust": "*mut u8" }, { "name": "cap", "type": "u32" }], "result": "i32", "doc": "Name of asset index (0 .. asset_count-1, sorted by UTF-8 bytes; folder entries as named on disk). Its length (copied only if length <= cap; cap = 0 queries), or -1 if index is out of range." },
         { "name": "param", "params": [{ "name": "name", "type": "str" }, { "name": "dst", "type": "ptr", "c": "char *", "rust": "*mut u8" }, { "name": "cap", "type": "u32" }], "result": "i32", "doc": "Launch parameter value length, or -1 if unset. Copied only if length <= cap (cap = 0 queries the length)." },
-        { "name": "set_title", "params": [{ "name": "title", "type": "str" }], "doc": "Name the game's window or tab (the runner adds its own suffix). Control characters and bidi overrides are removed and the rest is cut to 256 bytes; empty resets to the default. Newer than has: probe has(\"gasm.set_title\") first." }
+        { "name": "set_title", "params": [{ "name": "title", "type": "str" }], "doc": "Name the game's window or tab (the runner adds its own suffix). Control characters and bidi overrides are removed and the rest is cut to 256 bytes; empty resets to the default. Newer than has: probe has(\"gasm.set_title\") first." },
+        { "name": "yield_frame", "doc": "End the frame inside gasm_run: the runner suspends the guest and resumes it at the start of the next frame. Traps outside gasm_run (and on runners without stack switching: probe has(\"gasm.yield_frame\"))." }
       ]
     },
     {

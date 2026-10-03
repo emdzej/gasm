@@ -5,11 +5,14 @@
  * ABI's "Lifecycle"). Engines built around a blocking loop (`while (running) {
  * update(); render(); sleep(); }`) can keep it: define gasm_main() instead of the
  * gasm exports, and call gasm_wait_frame() once per frame. gasm_loop.c provides
- * the exports and suspends gasm_main() between frames with Binaryen's Asyncify,
- * entirely inside the module (runners need nothing).
+ * the exports and suspends gasm_main() between frames: with Binaryen's Asyncify,
+ * entirely inside the module (any runner), or by the runner itself when it
+ * supports stack switching (the gasm_run export; no Asyncify needed).
  *
  * Build: link gasm_loop.c, link with -Wl,--wrap=exit, then post-process:
  *   wasm-opt game.wasm --asyncify --pass-arg=asyncify-removelist@gasm_loop_frame -O2 -o game.wasm
+ * or, for runners with stack switching only (smaller, faster), without --asyncify:
+ *   wasm-opt game.wasm -O2 -o game-run.wasm
  * CMake does all of it: gasm_add_game(<target> LOOP <sources...>).
  *
  * Rules for the game: call gasm_wait_frame() only from inside gasm_main()'s call

@@ -22,18 +22,18 @@ property: most tests assert bit-identical hashes.
 | `sdk/c/` | C/C++ SDK: CMake toolchain (wraps wasi-sdk) + `Gasm.cmake` + examples; `gasm_vfile.h` (`FILE*` over assets and storage, used by DOOM and SDL 3) |
 | `guests/` | Rust workspace (`wasm32-unknown-unknown`): `gasm` (SDK + native stub host), `sumo`, `nes` (tetanes-core), `triangle`, `textured` (textures/layouts/offsets test), `inputtest` (raw input tester), `loopdemo` (`gasm::main_loop!`), `assetcheck`, `parity` (native harness) |
 | `guests/test-pattern/` | C guest (wasi-sdk) |
-| `sdk/c/src/gasm_loop.c`, `sdk/c/include/gasm_loop.h` | loop helper for games with their own main loop (`gasm_main` + `gasm_wait_frame`, Asyncify inside the guest); Rust: `gasm::main_loop!`. Used by ScummVM and SDL3 classic `main()` |
+| `sdk/c/src/gasm_loop.c`, `sdk/c/include/gasm_loop.h` | loop helper for games with their own main loop (`gasm_main` + `gasm_wait_frame`): exports `gasm_frame` (Asyncify inside the guest) and `gasm_run` (the runner switches stacks); Rust: `gasm::main_loop!`. Used by ScummVM and SDL3 classic `main()`; each builds as `game.wasm` (Asyncify) and `game-run.wasm` (without) |
 | `sdk/sdl3/` | SDL 3 for gasm: SDL as a "private platform" (`SDL_PLATFORM_PRIVATE`), config + drivers (zlib). `scripts/fetch-sdl3.sh` puts SDL in `tools/SDL3-src`; `make sdl3` builds `build/sdl3/` (lib, headers, `find_package` config); `scripts/package-sdl3.sh` bundles it |
 | `guests/scummvm/` | ScummVM: gasm backend (MIT, `backend/` -> `backends/platform/gasm`) + `configure.patch` (`wasm32-gasm` host). `scripts/fetch-scummvm.sh` puts ScummVM (GPL-3.0) in `tools/scummvm-src`; `scripts/build-scummvm-libs.sh` builds zlib, libmad, libogg/libvorbis, libFLAC (pinned release tarballs) into `tools/scummvm-libs`; `make scummvm` builds with wasi-sdk and runs `wasm-opt --asyncify` (`scripts/fetch-binaryen.sh`); `scripts/package-scummvm-src.sh` packs exactly the files the build used plus the library sources (verify: a clean `make scummvm` from the tarball is byte-identical) |
 | `guests/doom/` | DOOM: gasm platform layer (MIT) for doomgeneric. `scripts/fetch-doom.sh` puts the GPL-2.0 engine (+ chocolate-doom OPL music) in `tools/doom-src` and applies `engine.patch`; `scripts/package-doom-src.sh` packs the complete source shipped with releases and the site |
-| `runners/native/` | crate `gasm-host` (workspace root; one `target/`): the library has the host (`host.rs`, `wasi.rs` WASI subset, `gfx.rs`, `net.rs`, `storage.rs`, `assets.rs`) and both runners (`headless.rs`, `window.rs` + `keymap.rs` behind the default `window` feature); `src/main.rs` (`gasm-run`) only parses arguments. `relay/`: crate `gasm-relay` (no runtime deps, not on crates.io); `relay.Dockerfile` |
+| `runners/native/` | crate `gasm-host` (workspace root; one `target/`): the library has the host (`host.rs`, `switching.rs` stack switching for `gasm_run`, `wasi.rs` WASI subset, `gfx.rs`, `present.rs` 2D filters, `net.rs`, `storage.rs`, `assets.rs`) and both runners (`headless.rs`, `window.rs` + `keymap.rs` behind the default `window` feature); `src/main.rs` (`gasm-run`) only parses arguments. `relay/`: crate `gasm-relay` (no runtime deps, not on crates.io); `relay.Dockerfile` |
 | `runners/web/` | npm package `@emdzej/gasm-host`: `gasm-host.js` re-exports `lib/` (`host.js`, `wasi.js`, `gfx.js` GfxModel + NullGfx, `net.js`, `storage.js`, `assets.js`, `input.js` keys/keymap/BrowserInput, `audio.js`) + `.d.ts`; `gasm-worker.js`: Worker mode; `webgpu-gfx.js`; `gasm-present.js` (2D frames on WebGL 2: letterbox + upscaling filters, GLSL ports of `runners/native/src/present.rs`); `headless.mjs` = `gasm-headless`. Not published: `app.js`/`index.html` (the player), `opfs.html`/`opfs.js` (csfs OPFS import; csfs is a devDependency vendored by `scripts/vendor-web.sh`), `testdata.js` |
 | `runners/native/src/assets.rs`, `keymap.rs` | file-backed assets, `--asset-dir`, case-insensitive lookup; keyboard layouts (`default-keymap.txt` must equal the JS `DEFAULT_KEYMAP`, checked by `gen-abi.mjs --check`) |
 | `tests/golden/determinism.txt` | golden hashes of every determinism case; the same on every platform |
 | `scripts/` | toolchain/ROM fetchers (`lib.sh`: shared checksum helpers), test suites, packaging (`third-party-notices.sh`: license notices shipped with the games), site build, Linux container |
 | `site/` | VitePress website (docs live here; `site/docs/abi.md` includes `spec/ABI.md`) |
 | `site/docs/roadmap.md` | **The roadmap**: everything planned or known to be missing, in one place |
-| `design/` | design documents: proposals (`gasm-gl.md`, `threads.md`) and implemented ones kept as a record (`presentation.md`) |
+| `design/` | design documents: proposals (`gasm-gl.md`, `threads.md`) and implemented ones kept as a record (`presentation.md`, `stack-switching.md`) |
 | `.github/workflows/` | `ci.yml`, `pages.yml`, `release.yml` |
 
 ## Build and test
@@ -104,8 +104,11 @@ from the repo root, then
   (its checksum is part of the fetch stamp, so `make doom` re-fetches). Wherever
   `doom.wasm` is distributed (release bundles, games zip, site), its source
   archive must be too.
-- **Own main loops use Asyncify inside the guest** (`sdk/c/src/gasm_loop.c`,
-  Rust `gasm::main_loop`): no runner support. Rules (each was a bug, listed at
+- **Own main loops: Asyncify inside the guest, or stack switching** (`sdk/c/src/gasm_loop.c`,
+  Rust `gasm::main_loop`). Both entry points come from one link; `game.wasm`
+  gets `--asyncify`, `game-run.wasm` doesn't (`wasm_opt_loop` in the Makefile).
+  Runners prefer `gasm_run` when it's exported (natively always; JS with JSPI),
+  so the Asyncify path is tested with `--no-stack-switching`. Asyncify rules (each was a bug, listed at
   the top of `gasm_loop.c`): yield through an indirect call; `--asyncify`
   before `-O2`; `gasm_loop_frame` on the remove list and reaching the game only
   through the noinline `run_main`; nothing instrumented between an unwind and
@@ -204,6 +207,15 @@ from the repo root, then
   GLSL in `gasm-present.js`): change both, then `node scripts/present-test.mjs`.
   Both sample from the exact fragment position (plus a 1/1024 bias) and use
   whole-pixel viewports, so the runners render the same pixels.
+- **Stack switching (`gasm_run`):** natively the guest's run is one async
+  wasmtime call polled once per frame (`switching.rs`); the store lives inside
+  that call, so runner code reaches the host only through `Game::with_host`
+  (never `host_mut()` between frames) and `Host` must stay `Send` (`AudioOut:
+  Send`; the cpal stream lives in the window runner). In JS, `yield_frame` is a
+  JSPI `Suspending` import and frames are async (`frameAsync`/`runFramesAsync`;
+  `frame()` throws for such guests). Same frames and hashes as `gasm_frame`:
+  the determinism suite checks 8 variants of each own-loop game. CI uses Node
+  24 (JSPI); Node 22 can only run the Asyncify builds.
 - **Worker mode:** transferables only (no SharedArrayBuffer/COOP/COEP); main
   thread stays the default. `gasm:gfx` guests go to a worker only through a
   transferred `OffscreenCanvas` with WebGPU in the worker; otherwise they run

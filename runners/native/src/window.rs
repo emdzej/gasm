@@ -13,7 +13,7 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{Key, KeyCode, NamedKey, PhysicalKey};
 use winit::window::{CursorGrabMode, Window, WindowId};
 
-use crate::audio::{AudioOut, AudioSink};
+use crate::audio::{AudioOut, AudioSink, AudioStream};
 use crate::gfx::Gfx;
 use crate::host::{self, Game, Gamepad, KEY_STATE_BYTES, Pointer, RawInput, Stop};
 use crate::keymap;
@@ -57,6 +57,7 @@ pub fn run(session: Session, opts: Options) -> Result<i32, String> {
         fps_t: Instant::now(),
         fps_n: 0,
         result: Ok(0),
+        audio_stream: None,
     };
     event_loop.run_app(&mut app).map_err(|e| e.to_string())?;
     app.result
@@ -181,6 +182,8 @@ struct App {
     fps_t: Instant,
     fps_n: u32,
     result: Result<i32, String>,
+    /// the audio device stream (kept alive while the game plays)
+    audio_stream: Option<AudioStream>,
 }
 
 impl App {
@@ -202,8 +205,8 @@ impl App {
     }
 
     fn apply_input_mode(&mut self) {
-        let (Some(game), Some(w)) = (&self.game, &self.window) else { return };
-        let want = game.host().input_mode & 6;
+        let (Some(game), Some(w)) = (&mut self.game, &self.window) else { return };
+        let want = game.with_host(|h| h.input_mode) & 6;
         if want == self.applied_mode {
             return;
         }
@@ -228,7 +231,7 @@ impl App {
 
     fn tick(&mut self, el: &ActiveEventLoop) {
         let Some(game) = &mut self.game else { return };
-        let period = Duration::from_secs_f64(1.0 / game.host().frame_rate);
+        let period = Duration::from_secs_f64(1.0 / game.with_host(|h| h.frame_rate));
         let now = Instant::now();
         if now >= self.next {
             // Fixed timestep: catch up at most 4 frames, only the last one is shown.
@@ -249,15 +252,15 @@ impl App {
             let (mut pads, gamepads) = self.gilrs.as_mut().map(gamepad_pads).unwrap_or_default();
             let raw_pads = self.gilrs.as_ref().map(gamepads_raw).unwrap_or_default();
             // a guest that reads the keyboard itself (KEYS_RAW) gets no keymap pads
-            if game.host().input_mode & 1 == 0 {
+            if game.with_host(|h| h.input_mode) & 1 == 0 {
                 let kb = keymap::pads(&self.opts.keymap, &self.keys, gamepads);
                 for (p, k) in pads.iter_mut().zip(kb) {
                     *p |= k;
                 }
             }
-            let drawable = game.host().gfx.size();
+            let drawable = game.with_host(|h| h.gfx.size());
             for k in 0..steps {
-                let host = game.host_mut();
+                game.with_host(|host| {
                 host.pads = pads;
                 // typed text, key events and relative motion go to the first frame of a catch-up batch
                 let first = k == 0;
@@ -288,6 +291,7 @@ impl App {
                 }
                 host.show_frame = k + 1 == steps;
                 host.gfx.used = false;
+                });
                 match game.frame() {
                     Ok(()) => {}
                     Err(Stop::Exit(code)) => return self.stop(el, Ok(code)),
@@ -300,15 +304,17 @@ impl App {
                 self.next = Instant::now() + period;
             }
             // 2D guests: show the last video_present frame.
-            let host = game.host_mut();
-            if !host.gfx.used && host.width > 0 {
-                let (w, h) = (host.width as u32, host.height as u32);
-                let rgba = std::mem::take(&mut host.rgba);
-                host.gfx.present_video(&rgba, w, h, host.aspect);
-                host.rgba = rgba;
-            }
-            if std::mem::take(&mut host.title_changed) {
-                self.title = host.title.clone().unwrap_or_else(|| self.default_title.clone());
+            let title = game.with_host(|host| {
+                if !host.gfx.used && host.width > 0 {
+                    let (w, h) = (host.width as u32, host.height as u32);
+                    let rgba = std::mem::take(&mut host.rgba);
+                    host.gfx.present_video(&rgba, w, h, host.aspect);
+                    host.rgba = rgba;
+                }
+                std::mem::take(&mut host.title_changed).then(|| host.title.clone())
+            });
+            if let Some(t) = title {
+                self.title = t.unwrap_or_else(|| self.default_title.clone());
                 self.show_title();
             }
         }
@@ -346,8 +352,9 @@ impl ApplicationHandler for App {
             None
         } else {
             match AudioSink::open() {
-                Ok(a) => {
+                Ok((a, stream)) => {
                     eprintln!("[gasm] audio: {} Hz", a.device_rate());
+                    self.audio_stream = Some(stream);
                     Some(Box::new(a))
                 }
                 Err(e) => {
@@ -372,7 +379,7 @@ impl ApplicationHandler for App {
             WindowEvent::CloseRequested => self.quit(el),
             WindowEvent::Resized(size) => {
                 if let Some(g) = &mut self.game {
-                    g.host_mut().gfx.resize(size.width, size.height);
+                    g.with_host(|h| h.gfx.resize(size.width, size.height));
                 }
             }
             WindowEvent::Focused(false) => {

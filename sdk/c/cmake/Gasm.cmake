@@ -66,8 +66,12 @@ function(gasm_add_game target)
     if(NOT GASM_WASM_OPT)
       message(FATAL_ERROR "gasm: LOOP needs Binaryen's wasm-opt; set GASM_WASM_OPT")
     endif()
-    # Asyncify before optimizing; the frame export must not be instrumented (gasm_loop.c)
+    # <target>-run.wasm first, without Asyncify: for runners with stack switching
+    # (gasm_run; smaller and faster). Then Asyncify before optimizing; the frame
+    # export must not be instrumented (gasm_loop.c).
     add_custom_command(TARGET ${target} POST_BUILD
+      COMMAND "${GASM_WASM_OPT}" "$<TARGET_FILE:${target}>" "$<IF:$<CONFIG:Debug>,-g,-O2>"
+              -o "$<TARGET_FILE_DIR:${target}>/${target}-run.wasm"
       COMMAND "${GASM_WASM_OPT}" "$<TARGET_FILE:${target}>" --asyncify
               --pass-arg=asyncify-removelist@gasm_loop_frame "$<IF:$<CONFIG:Debug>,-g,-O2>" -o "$<TARGET_FILE:${target}>"
       VERBATIM)

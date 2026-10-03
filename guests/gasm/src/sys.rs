@@ -60,6 +60,8 @@ mod imports {
         pub fn param(name: *const u8, name_len: u32, dst: *mut u8, cap: u32) -> i32;
         /// Name the game's window or tab (the runner adds its own suffix). Control characters and bidi overrides are removed and the rest is cut to 256 bytes; empty resets to the default. Newer than has: probe has("gasm.set_title") first.
         pub fn set_title(title: *const u8, title_len: u32);
+        /// End the frame inside gasm_run: the runner suspends the guest and resumes it at the start of the next frame. Traps outside gasm_run (and on runners without stack switching: probe has("gasm.yield_frame")).
+        pub fn yield_frame();
     }
 
     #[link(wasm_import_module = "gasm:gfx")]
@@ -185,23 +187,24 @@ pub use imports::*;
 pub use crate::native::abi::*;
 
 /// Every import module and `module.function` of this ABI version (what `gasm::has` can report).
-pub const IMPORTS: [&str; 64] = [
+pub const IMPORTS: [&str; 65] = [
     "gasm", "gasm.log", "gasm.has", "gasm.time_ms",
     "gasm.set_frame_rate", "gasm.video_present", "gasm.video_set_aspect", "gasm.audio_config",
     "gasm.audio_push", "gasm.input_pad", "gasm.text_input", "gasm.input_mode",
     "gasm.key_state", "gasm.key_events", "gasm.pointer", "gasm.gamepad",
     "gasm.gamepad_name", "gasm.asset_size", "gasm.asset_size64", "gasm.asset_read",
     "gasm.asset_read_at", "gasm.asset_read_at64", "gasm.asset_count", "gasm.asset_name",
-    "gasm.param", "gasm.set_title", "gasm:gfx", "gasm:gfx.width",
-    "gasm:gfx.height", "gasm:gfx.create_shader", "gasm:gfx.create_buffer", "gasm:gfx.create_pipeline",
-    "gasm:gfx.create_bind_group", "gasm:gfx.create_bind_group_layout", "gasm:gfx.create_texture", "gasm:gfx.write_texture",
-    "gasm:gfx.create_sampler", "gasm:gfx.write_buffer", "gasm:gfx.begin_frame", "gasm:gfx.set_pipeline",
-    "gasm:gfx.set_bind_group", "gasm:gfx.set_bind_group_offsets", "gasm:gfx.set_viewport", "gasm:gfx.set_scissor_rect",
-    "gasm:gfx.set_vertex_buffer", "gasm:gfx.set_index_buffer", "gasm:gfx.draw", "gasm:gfx.draw_indexed",
-    "gasm:gfx.end_frame", "gasm:gfx.destroy", "gasm:net", "gasm:net.open",
-    "gasm:net.state", "gasm:net.send", "gasm:net.recv", "gasm:net.close",
-    "gasm:storage", "gasm:storage.get", "gasm:storage.set", "gasm:storage.delete",
-    "gasm:storage.count", "gasm:storage.key", "wasi_snapshot_preview1", "wasi_snapshot_preview1.proc_exit",
+    "gasm.param", "gasm.set_title", "gasm.yield_frame", "gasm:gfx",
+    "gasm:gfx.width", "gasm:gfx.height", "gasm:gfx.create_shader", "gasm:gfx.create_buffer",
+    "gasm:gfx.create_pipeline", "gasm:gfx.create_bind_group", "gasm:gfx.create_bind_group_layout", "gasm:gfx.create_texture",
+    "gasm:gfx.write_texture", "gasm:gfx.create_sampler", "gasm:gfx.write_buffer", "gasm:gfx.begin_frame",
+    "gasm:gfx.set_pipeline", "gasm:gfx.set_bind_group", "gasm:gfx.set_bind_group_offsets", "gasm:gfx.set_viewport",
+    "gasm:gfx.set_scissor_rect", "gasm:gfx.set_vertex_buffer", "gasm:gfx.set_index_buffer", "gasm:gfx.draw",
+    "gasm:gfx.draw_indexed", "gasm:gfx.end_frame", "gasm:gfx.destroy", "gasm:net",
+    "gasm:net.open", "gasm:net.state", "gasm:net.send", "gasm:net.recv",
+    "gasm:net.close", "gasm:storage", "gasm:storage.get", "gasm:storage.set",
+    "gasm:storage.delete", "gasm:storage.count", "gasm:storage.key", "wasi_snapshot_preview1",
+    "wasi_snapshot_preview1.proc_exit",
 ];
 
 // ---- buttons
