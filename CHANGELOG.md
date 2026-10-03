@@ -17,6 +17,9 @@ Runners:
   gasm-run (`--gl-lib DIR`, `$GASM_ANGLE_DIR`); the release bundles ship it
   (from Electron 43.7.7, licenses in `ANGLE-NOTICES.txt`), and
   `scripts/fetch-angle.sh` fetches it for builds from the repository.
+- `GASM_ANGLE_BACKEND` (metal, opengl, vulkan, d3d11) picks ANGLE's backend; on a
+  macOS virtual machine's paravirtual GPU (no Metal argument buffers) gasm-run
+  uses ANGLE's OpenGL backend by itself.
 - Headless `--screenshot` renders `gasm:gl` games with ANGLE offscreen.
   `--window-screenshot <frames>:<out.png>` writes a frame as the window shows
   it and quits (gasm:gl games; for tests).

@@ -387,6 +387,7 @@ your own copies.
 | Web: `HTTP 404` for `build/*.wasm` | Serve the **repo root** (`make web`), not `runners/web/`. Build the games first. |
 | `ANGLE (libEGL…) not found` | An OpenGL ES (`gasm:gl`) game needs ANGLE next to `gasm-run`: it is in the release bundles; in a repository build run `scripts/fetch-angle.sh`, or pass `--gl-lib DIR`. |
 | OpenGL ES game: `no display` / `eglInitialize failed` | No usable GPU driver: gasm-run tries SwiftShader next (`--gl-software` forces it). |
+| OpenGL ES game draws wrong or crashes | Try another ANGLE backend: `GASM_ANGLE_BACKEND=opengl` (macOS), `vulkan`, `d3d11` (Windows), `metal`. In macOS virtual machines gasm-run picks `opengl` itself. |
 | No sound (native) | Check `[gasm] audio:` on stderr; `audio disabled: …` explains why. |
 | No sound (web) | Click the page / **start** button; autoplay policies block audio before interaction. |
 | `.cwasm` is refused | Add `--allow-precompiled` (only for files you compiled yourself). |

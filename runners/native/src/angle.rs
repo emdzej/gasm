@@ -154,9 +154,11 @@ pub fn find(dir: Option<&Path>) -> Result<PathBuf, String> {
 impl Angle {
     /// An offscreen context of `w`×`h` (headless screenshots).
     pub fn offscreen(dir: &Path, w: u32, h: u32, software: bool) -> Result<Angle, String> {
-        Self::open(dir, None, software, |egl, display, config| unsafe {
-            let attrs = [EGL_WIDTH, w as i32, EGL_HEIGHT, h as i32, EGL_NONE];
-            (egl.CreatePbufferSurface)(display, config, attrs.as_ptr())
+        choose(software, |backend| {
+            Self::open(dir, None, software, backend, |egl, display, config| unsafe {
+                let attrs = [EGL_WIDTH, w as i32, EGL_HEIGHT, h as i32, EGL_NONE];
+                (egl.CreatePbufferSurface)(display, config, attrs.as_ptr())
+            })
         })
     }
 
@@ -168,8 +170,10 @@ impl Angle {
             NativeWindow::Xlib(_, id) => id as usize as *mut c_void,
             NativeWindow::Wayland(_) => return Err("gasm:gl: Wayland windows aren't supported yet; run with WAYLAND_DISPLAY= (X11)".into()),
         };
-        Self::open(dir, Some(window), software, |egl, display, config| unsafe {
-            (egl.CreateWindowSurface)(display, config, native, [EGL_NONE].as_ptr())
+        choose(software, |backend| {
+            Self::open(dir, Some(window), software, backend, |egl, display, config| unsafe {
+                (egl.CreateWindowSurface)(display, config, native, [EGL_NONE].as_ptr())
+            })
         })
     }
 
@@ -177,6 +181,7 @@ impl Angle {
         dir: &Path,
         window: Option<NativeWindow>,
         software: bool,
+        backend: Attrib,
         surface: impl FnOnce(&Egl, EglDisplay, EglConfig) -> EglSurface,
     ) -> Result<Angle, String> {
         if software {
@@ -193,15 +198,6 @@ impl Angle {
         let egl = unsafe { load_egl(&lib) }?;
         unsafe {
             let mut attrs: Vec<Attrib> = Vec::new();
-            let backend = if software {
-                EGL_PLATFORM_ANGLE_TYPE_VULKAN_ANGLE
-            } else if cfg!(target_os = "macos") {
-                EGL_PLATFORM_ANGLE_TYPE_METAL_ANGLE
-            } else if cfg!(windows) {
-                EGL_PLATFORM_ANGLE_TYPE_D3D11_ANGLE
-            } else {
-                EGL_PLATFORM_ANGLE_TYPE_VULKAN_ANGLE
-            };
             attrs.extend([EGL_PLATFORM_ANGLE_TYPE_ANGLE, backend]);
             if software {
                 attrs.extend([EGL_PLATFORM_ANGLE_DEVICE_TYPE_ANGLE, EGL_PLATFORM_ANGLE_DEVICE_TYPE_SWIFTSHADER_ANGLE]);
@@ -387,6 +383,33 @@ fn cstr(p: *const c_char) -> String {
 /// A NUL-terminated copy for GL (names never contain NUL: they come from UTF-8 checked strings).
 pub fn c_string(s: &str) -> CString {
     CString::new(s.replace('\0', "")).expect("no NUL")
+}
+
+/// The ANGLE backend: $GASM_ANGLE_BACKEND (metal, opengl, vulkan, d3d11), else the
+/// platform's (Vulkan for SwiftShader). Metal on a virtual machine's paravirtual GPU
+/// lacks what ANGLE needs (argument encoders; it crashes on the first draw), so
+/// there ANGLE's OpenGL backend is used instead.
+fn choose(software: bool, open: impl Fn(Attrib) -> Result<Angle, String>) -> Result<Angle, String> {
+    const OPENGL: Attrib = 0x320D; // EGL_PLATFORM_ANGLE_TYPE_OPENGL_ANGLE
+    let chosen = std::env::var("GASM_ANGLE_BACKEND").ok();
+    let backend = match chosen.as_deref() {
+        Some("metal") => EGL_PLATFORM_ANGLE_TYPE_METAL_ANGLE,
+        Some("opengl") => OPENGL,
+        Some("vulkan") => EGL_PLATFORM_ANGLE_TYPE_VULKAN_ANGLE,
+        Some("d3d11") => EGL_PLATFORM_ANGLE_TYPE_D3D11_ANGLE,
+        Some(other) => return Err(format!("GASM_ANGLE_BACKEND={other}: use metal, opengl, vulkan or d3d11")),
+        None if software => EGL_PLATFORM_ANGLE_TYPE_VULKAN_ANGLE,
+        None if cfg!(target_os = "macos") => EGL_PLATFORM_ANGLE_TYPE_METAL_ANGLE,
+        None if cfg!(windows) => EGL_PLATFORM_ANGLE_TYPE_D3D11_ANGLE,
+        None => EGL_PLATFORM_ANGLE_TYPE_VULKAN_ANGLE,
+    };
+    let a = open(backend)?;
+    if chosen.is_none() && backend == EGL_PLATFORM_ANGLE_TYPE_METAL_ANGLE && a.renderer.contains("Paravirtual") {
+        drop(a);
+        eprintln!("[gasm] gl: paravirtual GPU (a virtual machine): ANGLE on OpenGL instead of Metal");
+        return open(OPENGL);
+    }
+    Ok(a)
 }
 
 /// macOS: the NSView's layer (made layer-backed first): ANGLE draws into a sublayer of it.
