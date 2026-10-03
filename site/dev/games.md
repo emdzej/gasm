@@ -191,6 +191,8 @@ gasm::audio::push(&samples);         // interleaved f32 in [-1, 1], about rate/f
 
 ### GPU (`gasm:gfx`)
 
+Which of 2D frames, `gasm:gfx` and `gasm:gl` to use: [Choosing a graphics API](/dev/graphics).
+
 A WebGPU subset with WGSL shaders. Create resources in `init` (JSON
 descriptors mirror WebGPU), then draw each frame:
 

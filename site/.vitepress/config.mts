@@ -39,6 +39,7 @@ export default defineConfig({
         { text: 'Developer guide', items: [
           { text: 'Overview', link: '/dev/' },
           { text: 'Writing games', link: '/dev/games' },
+          { text: 'Choosing a graphics API', link: '/dev/graphics' },
           { text: 'Writing runners', link: '/dev/runners' },
           { text: 'Packages', link: '/dev/packages' },
           { text: 'Badge', link: '/dev/badge' },
