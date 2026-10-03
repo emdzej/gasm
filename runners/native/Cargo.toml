@@ -1,6 +1,6 @@
 [package]
 name = "gasm-host"
-version = "0.6.0"
+version = "0.7.0"
 edition = "2024"
 description = "Native host for gasm games (a portable game runtime on WebAssembly): wasmtime, WebGPU via wgpu, audio, gamepads, WebSocket networking and storage. Includes the gasm-run runner"
 license = "MIT"

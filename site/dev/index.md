@@ -76,14 +76,14 @@ Full details: [ABI v0 specification](/docs/abi). What each release added:
 ## Design documents
 
 Larger features get a design document with a phased plan before the work
-starts. Proposals (not implemented yet):
+starts. In progress:
 
-- [`gasm:gl`](https://github.com/emdzej/gasm/blob/main/design/gasm-gl.md): OpenGL ES 3.0 with WebGL 2 rules
-- [Threads](https://github.com/emdzej/gasm/blob/main/design/threads.md): cooperative threads inside the guest, real wasm threads later
+- [`gasm:gl`](https://github.com/emdzej/gasm/blob/main/design/gasm-gl.md): OpenGL ES 3.0 with WebGL 2 rules (browser and headless in 0.7.0; ANGLE natively next)
+- [Threads](https://github.com/emdzej/gasm/blob/main/design/threads.md): cooperative threads in C, POSIX and SDL 3 (0.7.0); Rust and real wasm threads later
 
 Implemented (kept as a record of the decisions):
 
 - [Presentation](https://github.com/emdzej/gasm/blob/main/design/presentation.md): upscaling filters, display aspect, window title (0.6.0)
-- [Stack switching](https://github.com/emdzej/gasm/blob/main/design/stack-switching.md): `gasm_run` and `yield_frame`, games with their own loop without Asyncify
+- [Stack switching](https://github.com/emdzej/gasm/blob/main/design/stack-switching.md): `gasm_run` and `yield_frame`, games with their own loop without Asyncify (0.7.0)
 
 Everything else that is planned or missing is on the [roadmap](/docs/roadmap).

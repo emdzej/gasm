@@ -1,6 +1,6 @@
 [package]
 name = "gasm-relay"
-version = "0.6.0"
+version = "0.7.0"
 edition = "2024"
 description = "gasm-relay: a tiny, game-agnostic WebSocket room relay for gasm games (lockstep netplay)"
 license = "MIT"

@@ -6,7 +6,7 @@ embedders. The ABI version is still 0: additions keep it (see
 guests can probe for newer imports with `gasm.has`. Versions are the git tags and
 the package versions (`gasm-sdk`, `gasm-host`, `@emdzej/gasm-host`).
 
-## Unreleased
+## 0.7.0 (2026-10-03)
 
 ABI (additive):
 - Stack switching: an optional export `gasm_run() -> i32` and the import
