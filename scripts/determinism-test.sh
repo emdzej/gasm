@@ -25,7 +25,7 @@ for n in node ${NODE24:-} "$HOME"/.nvm/versions/node/v2[4-9]*/bin/node; do
 done
 [ -n "$NODE_JSPI" ] || echo "note: no Node with JSPI (24+): run builds are checked natively only"
 [ -d roms ] && [ -n "$(ls roms/*.nes 2>/dev/null)" ] && [ -f roms/freedoom2.wad ] && [ -f roms/doom1.wad ] && [ -f roms/bass/sky.dnr ] && [ -d roms/scumm/dott-dos-ni-demo-en ] && [ -f roms/drascula/flac/audio/track28.flac ] || scripts/fetch-roms.sh
-for g in nes test-pattern sumo triangle textured inputtest loopdemo loopdemo-run loopdemo-c loopdemo-c-run doom scummvm scummvm-run sdl3-snake sdl3-woodeneye sdl3-callbacks sdl3-classic sdl3-classic-run; do "$NATIVE" build/$g.wasm --compile build/$g.cwasm 2>/dev/null; done
+for g in nes test-pattern sumo triangle textured inputtest threadtest loopdemo loopdemo-run loopdemo-c loopdemo-c-run doom scummvm scummvm-run sdl3-snake sdl3-woodeneye sdl3-callbacks sdl3-classic sdl3-classic-run; do "$NATIVE" build/$g.wasm --compile build/$g.cwasm 2>/dev/null; done
 
 pass=0; fail=0
 run() { "$@" 2>/dev/null | grep -E '^(frames|video)' | tr '\n' ' '; }
@@ -72,6 +72,10 @@ check inputtest-aspect    inputtest 120 --param aspect=16:9 --input '20:PTR(100,
 # play until START is held for a second and then return from main (exit code 0)
 check loopdemo-rust       loopdemo 400 --input '100-110:START,150-200:RIGHT+A,230-240:DOWN,250-330:START'
 check loopdemo-c          loopdemo-c 300 --input '50-120:RIGHT,200-270:START'
+# cooperative threads (gasm_thread.h): mutex + condition, semaphore timeout, recursive
+# mutex, joins, keys, errno, sleeps across frames; and 32 threads yielding
+check threadtest          threadtest 40
+check threadtest-many     threadtest 40 --param mode=many
 # SDL3 (sdk/sdl3): SDL's own demos unchanged (snake; woodeneye: WASD, relative mouse, shooting),
 # a callbacks app (audio stream, gamepad events) and a classic main() loop (Asyncify:
 # keyboard state, text input, SDL_Delay, a save file in the pref path)
@@ -109,6 +113,16 @@ check drascula-mp3        scummvm 900 --asset-dir roms/drascula/game --asset-dir
 check drascula-flac       scummvm 900 --asset-dir roms/drascula/game --asset-dir roms/drascula/flac --param "args=--auto-detect -p /"
 check freedoom2-save-load doom 1100 --asset wad=roms/freedoom2.wad --param "args=-warp 1 -skill 4" \
   --input "20-200:UP+A,210-211:START,220-221:DOWN,230-231:DOWN,240-241:DOWN,250-251:A,260-261:A,270-271:A,300-500:LEFT+UP+A,510-511:START,520-521:UP,530-531:A,540-541:A,600-900:RIGHT+UP+A+Y,905-906:X,910-1100:LEFT+R+A"
+
+# threads that wait for each other trap with the list of who waits for what
+for runner in "$NATIVE" "$NODE"; do
+  out=$($runner build/threadtest.wasm --headless 10 --param mode=deadlock 2>&1)
+  if grep -q 'gasm_thread: deadlock' <<<"$out" && grep -q 'thread 2 waits on' <<<"$out"; then
+    pass=$((pass + 1)); printf 'PASS  %-22s %s\n' "thread-deadlock" "${runner##*/}"
+  else
+    fail=$((fail + 1)); printf 'FAIL  thread-deadlock (%s): no deadlock report\n' "$runner"
+  fi
+done
 
 # video_set_aspect outside 1/8..8 traps on every runner
 for runner in "$NATIVE" "$NODE"; do

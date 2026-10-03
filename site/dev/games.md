@@ -564,6 +564,50 @@ helper for ports. The rules it follows, each learned from
 a bug, are at the top of
 [`gasm_loop.c`](https://github.com/emdzej/gasm/blob/main/sdk/c/src/gasm_loop.c).
 
+### Threads
+
+Games with their own main loop can use **cooperative threads**
+([`gasm_thread.h`](https://github.com/emdzej/gasm/blob/main/sdk/c/include/gasm_thread.h)):
+threads, mutexes (plain and recursive), condition variables, semaphores and
+thread-local keys. Every thread runs on the guest's one wasm thread and runs
+until it blocks, yields or waits for the next frame; then the next ready thread
+runs, in creation order. A frame ends when no thread is ready. So there are no
+data races and the schedule depends only on the input: runs stay reproducible.
+
+```c
+#include "gasm_thread.h"
+
+static gasm_mutex lock = GASM_MUTEX_INIT;
+static gasm_cond ready = GASM_COND_INIT;
+
+static int loader(void *arg) {
+    load_level(arg);                       // may wait for frames, sleep, lock
+    gasm_mutex_lock(&lock); loaded = 1; gasm_cond_signal(&ready); gasm_mutex_unlock(&lock);
+    return 0;
+}
+
+int gasm_main(void) {
+    gasm_thread *t = gasm_thread_create(loader, "level1", 0);   // 256 KiB C stack
+    while (!loaded) { draw_loading_screen(); gasm_wait_frame(); }
+    gasm_thread_join(t);
+    ...
+}
+```
+
+Build with `gasm_add_game(mygame LOOP THREADS main.c)` (by hand: add
+`src/gasm_thread.c` and compile `gasm_loop.c` with `-DGASM_LOOP_THREADS`).
+Threads switch with Asyncify, so such games only come as the Asyncify build.
+
+- Time is the frame's (`gasm_time_ms()`): `gasm_thread_sleep_ms` and the
+  timeouts of `gasm_cond_wait` / `gasm_sem_wait` end at the first frame at or
+  after their deadline.
+- `errno` is per thread; `_Thread_local` variables are shared (use
+  `gasm_thread_key_*`).
+- A thread that spins without blocking or yielding keeps the frame from
+  ending. If every thread waits for another, the frame traps with the list of
+  who waits for what.
+- Each thread costs its C stack plus a 256 KiB Asyncify buffer.
+
 ### SDL 3
 
 SDL programs build for gasm with their source unchanged:

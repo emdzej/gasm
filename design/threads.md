@@ -1,6 +1,8 @@
 # Threads for guests
 
-Status: proposal, not started. Two designs that complement each other:
+Status: **part A in progress** (phase 1, the scheduler and C API, is
+implemented: see "As built" below); part B is a proposal. Two designs that
+complement each other:
 **cooperative threads** inside the guest (no ABI change, deterministic), and
 **real wasm threads** as an optional capability later (parallel, not
 deterministic).
@@ -137,10 +139,39 @@ driven inside the guest.
 ### Plan
 
 1. Scheduler + C API + determinism case (the hard part: stack pointer and TLS
-   switching, Asyncify rules shared with `gasm_loop.c`).
+   switching, Asyncify rules shared with `gasm_loop.c`). **Done.**
 2. SDL thread backend; SDL thread and timer tests in CI.
 3. pthreads shim; port one pthread-using program as the example.
 4. Docs (site dev guide), Rust API later.
+
+### As built (phase 1)
+
+- **In the loop helper.** The scheduler is `gasm_loop.c` built with
+  `-DGASM_LOOP_THREADS`; the API and primitives are `gasm_thread.h` /
+  `gasm_thread.c` (`gasm_thread_*`, `gasm_mutex_*`, `gasm_cond_*`, `gasm_sem_*`,
+  keys). Without the define, `gasm_loop.c` is unchanged, and `gasm_thread.c`'s
+  weak single-thread versions apply (creating a thread fails, locks succeed,
+  waits with a deadline time out, waits without one are a deadlock).
+- **Main is a thread like the others** (it can block, e.g. in a join); threads
+  other than main get their own C stack. Main-callback games (no loop helper)
+  don't get threads: their frame callback can't be suspended.
+- **No `gasm_run` in threaded builds**: threads switch with Asyncify, so these
+  games come as the Asyncify build only, and runners call `gasm_frame`.
+- **C stacks.** Asyncify leaves `__stack_pointer` alone in both directions (no
+  epilogues on unwind, no prologues on rewind). So the scheduler records each
+  thread's stack pointer when it unwinds, restores exactly that before
+  rewinding it, and runs its own calls on a separate 64 KiB stack, so nothing
+  writes below a suspended thread's frames. (A first version that resumed every
+  thread from its base, or ran the scheduler on the main stack, corrupted
+  main's frames: caught by `guests/threadtest`.)
+- **Thread-local state**: `errno` is saved per thread; `_Thread_local`
+  variables are shared (the TLS copy described above is not done:
+  `gasm_thread_key_*` instead).
+- **Tests**: `guests/threadtest` (producer/consumer on a condition, a
+  semaphore timeout, a recursive mutex, joins, keys, errno, sleeps) and its
+  `mode=many` (32 threads) give the same hashes natively (JIT, AOT) and in
+  Node 22/24; `mode=deadlock` traps with the list of blocked threads on both
+  runners. All in `scripts/determinism-test.sh`.
 
 ## B. Real wasm threads (later, optional)
 

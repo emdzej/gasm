@@ -55,7 +55,7 @@ $(FLAGS_DIR)/$(1): FORCE
 	@echo '$(2)' | cmp -s - $$@ || echo '$(2)' > $$@
 endef
 
-GUESTS   := $(BUILD)/test-pattern.wasm $(BUILD)/nes.wasm $(BUILD)/sumo.wasm $(BUILD)/triangle.wasm $(BUILD)/textured.wasm $(BUILD)/inputtest.wasm $(BUILD)/loopdemo.wasm $(BUILD)/loopdemo-c.wasm $(BUILD)/assetcheck.wasm $(BUILD)/doom.wasm $(BUILD)/scummvm.wasm \
+GUESTS   := $(BUILD)/test-pattern.wasm $(BUILD)/nes.wasm $(BUILD)/sumo.wasm $(BUILD)/triangle.wasm $(BUILD)/textured.wasm $(BUILD)/inputtest.wasm $(BUILD)/loopdemo.wasm $(BUILD)/loopdemo-c.wasm $(BUILD)/threadtest.wasm $(BUILD)/assetcheck.wasm $(BUILD)/doom.wasm $(BUILD)/scummvm.wasm \
   $(BUILD)/sdl3-snake.wasm $(BUILD)/sdl3-woodeneye.wasm $(BUILD)/sdl3-callbacks.wasm $(BUILD)/sdl3-classic.wasm
 # made by the same recipes as the Asyncify builds
 RUN_BUILDS := $(BUILD)/loopdemo-run.wasm $(BUILD)/loopdemo-c-run.wasm $(BUILD)/sdl3-classic-run.wasm $(BUILD)/scummvm-run.wasm
@@ -288,6 +288,12 @@ $(BUILD)/loopdemo.wasm: $(RUST_OUT)/loopdemo.wasm $(WASM_OPT)
 	@mkdir -p $(@D)
 	$(WASM_OPT) $< -O2 -o $(@:.wasm=-run.wasm)
 	$(WASM_OPT) $< --asyncify --pass-arg=asyncify-removelist@gasm_frame,gasm_loop_frame -O2 -o $@
+
+# cooperative threads (gasm_thread.h): the loop helper with GASM_LOOP_THREADS, Asyncify only
+$(BUILD)/threadtest.wasm: guests/threadtest/main.c sdk/c/src/gasm_loop.c sdk/c/src/gasm_thread.c sdk/c/include/gasm_loop.h sdk/c/include/gasm_thread.h spec/gasm.h $(CLANG) $(WASM_OPT)
+	@mkdir -p $(@D)
+	$(CC) $(TARGET) $(REACTOR) $(OPT) -DGASM_LOOP_THREADS -Ispec -Isdk/c/include guests/threadtest/main.c sdk/c/src/gasm_loop.c sdk/c/src/gasm_thread.c -Wl,--wrap=exit -o $@.raw -lm
+	$(call wasm_opt,$(ASYNCIFY))
 
 $(BUILD)/loopdemo-c.wasm: sdk/c/example-loop/main.c sdk/c/src/gasm_loop.c sdk/c/include/gasm_loop.h spec/gasm.h $(CLANG) $(WASM_OPT)
 	@mkdir -p $(@D)

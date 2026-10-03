@@ -22,6 +22,7 @@ property: most tests assert bit-identical hashes.
 | `sdk/c/` | C/C++ SDK: CMake toolchain (wraps wasi-sdk) + `Gasm.cmake` + examples; `gasm_vfile.h` (`FILE*` over assets and storage, used by DOOM and SDL 3) |
 | `guests/` | Rust workspace (`wasm32-unknown-unknown`): `gasm` (SDK + native stub host), `sumo`, `nes` (tetanes-core), `triangle`, `textured` (textures/layouts/offsets test), `inputtest` (raw input tester), `loopdemo` (`gasm::main_loop!`), `assetcheck`, `parity` (native harness) |
 | `guests/test-pattern/` | C guest (wasi-sdk) |
+| `guests/threadtest/` | C guest: cooperative threads (`gasm_thread.h`), deterministic schedule; `mode=many`, `mode=deadlock` |
 | `sdk/c/src/gasm_loop.c`, `sdk/c/include/gasm_loop.h` | loop helper for games with their own main loop (`gasm_main` + `gasm_wait_frame`): exports `gasm_frame` (Asyncify inside the guest) and `gasm_run` (the runner switches stacks); Rust: `gasm::main_loop!`. Used by ScummVM and SDL3 classic `main()`; each builds as `game.wasm` (Asyncify) and `game-run.wasm` (without) |
 | `sdk/sdl3/` | SDL 3 for gasm: SDL as a "private platform" (`SDL_PLATFORM_PRIVATE`), config + drivers (zlib). `scripts/fetch-sdl3.sh` puts SDL in `tools/SDL3-src`; `make sdl3` builds `build/sdl3/` (lib, headers, `find_package` config); `scripts/package-sdl3.sh` bundles it |
 | `guests/scummvm/` | ScummVM: gasm backend (MIT, `backend/` -> `backends/platform/gasm`) + `configure.patch` (`wasm32-gasm` host). `scripts/fetch-scummvm.sh` puts ScummVM (GPL-3.0) in `tools/scummvm-src`; `scripts/build-scummvm-libs.sh` builds zlib, libmad, libogg/libvorbis, libFLAC (pinned release tarballs) into `tools/scummvm-libs`; `make scummvm` builds with wasi-sdk and runs `wasm-opt --asyncify` (`scripts/fetch-binaryen.sh`); `scripts/package-scummvm-src.sh` packs exactly the files the build used plus the library sources (verify: a clean `make scummvm` from the tarball is byte-identical) |
@@ -114,6 +115,13 @@ from the repo root, then
   through the noinline `run_main`; nothing instrumented between an unwind and
   `asyncify_stop_unwind`; `exit` is wrapped (`--wrap=exit`) when static
   destructors could yield. Rust also removelists `gasm_frame`.
+- **Cooperative threads** (`gasm_loop.c` with `-DGASM_LOOP_THREADS`,
+  `gasm_thread.c`): Asyncify leaves `__stack_pointer` alone on unwind and rewind,
+  so the scheduler saves each thread's stack pointer when it unwinds, restores
+  it before rewinding, and runs its own calls on `sched_stack`. Never run
+  scheduler code on a thread's stack, and keep the non-thread build of
+  `gasm_loop.c` unchanged (ScummVM and SDL use it). Threaded builds don't export
+  `gasm_run`. `guests/threadtest` checks all of it.
 - **ScummVM is GPL-3.0** and runs on `gasm_loop` (copied in as `gasm-loop.cpp`).
   Change ScummVM only through `guests/scummvm/configure.patch` or the backend.
   `SOURCE_DATE_EPOCH` keeps builds reproducible (the in-game menu shows the

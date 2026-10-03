@@ -1,4 +1,4 @@
-# gasm_add_game(<target> [LOOP] <sources...>) — build a gasm game (<target>.wasm).
+# gasm_add_game(<target> [LOOP [THREADS]] <sources...>) — build a gasm game (<target>.wasm).
 #
 # Sets the WASI reactor exec model (no main(); _initialize runs constructors),
 # adds gasm.h to the include path and links libm. Export the entry points in your
@@ -10,6 +10,13 @@
 # the module is post-processed with Binaryen's wasm-opt --asyncify (set GASM_WASM_OPT,
 # or have wasm-opt on PATH; GASM_LOOP_STACK_SIZE sets the suspended-stack buffer, per
 # target). wasm-opt optimizes (-O2) except in Debug builds, which keep names (-g).
+# Two modules come out: <target>.wasm (Asyncify, every runner) and <target>-run.wasm
+# (no Asyncify, for runners that switch stacks: gasm_run).
+#
+# LOOP THREADS: also cooperative threads (gasm_thread.h: threads, mutexes,
+# conditions, semaphores, keys). gasm_thread.c is added and gasm_loop.c is built
+# with GASM_LOOP_THREADS; threads switch with Asyncify, so there is no -run.wasm.
+# gasm_thread.c alone (${GASM_THREAD_SOURCE}) gives the primitives without threads.
 #
 # stdio over assets and storage (gasm_vfile.h): target_sources(<target> PRIVATE ${GASM_VFILE_SOURCE}).
 
@@ -31,6 +38,9 @@ if(NOT GASM_LOOP_SOURCE)
     get_filename_component(GASM_LOOP_SOURCE "${CMAKE_CURRENT_LIST_DIR}/../src/gasm_loop.c" ABSOLUTE)
   endif()
 endif()
+if(NOT GASM_THREAD_SOURCE AND EXISTS "${CMAKE_CURRENT_LIST_DIR}/../src/gasm_thread.c")
+  get_filename_component(GASM_THREAD_SOURCE "${CMAKE_CURRENT_LIST_DIR}/../src/gasm_thread.c" ABSOLUTE)
+endif()
 if(NOT GASM_VFILE_SOURCE AND EXISTS "${CMAKE_CURRENT_LIST_DIR}/../src/gasm_vfile.c")
   get_filename_component(GASM_VFILE_SOURCE "${CMAKE_CURRENT_LIST_DIR}/../src/gasm_vfile.c" ABSOLUTE)
 endif()
@@ -38,15 +48,23 @@ endif()
 function(gasm_add_game target)
   set(sources ${ARGN})
   set(loop OFF)
+  set(threads OFF)
   if(sources AND "${ARGV1}" STREQUAL "LOOP")
     set(loop ON)
     list(REMOVE_AT sources 0)
+    if(sources AND "${ARGV2}" STREQUAL "THREADS")
+      set(threads ON)
+      list(REMOVE_AT sources 0)
+    endif()
   endif()
   if(loop)
     if(NOT GASM_LOOP_SOURCE)
       message(FATAL_ERROR "gasm: gasm_loop.c not found; set GASM_LOOP_SOURCE")
     endif()
     list(APPEND sources "${GASM_LOOP_SOURCE}")
+    if(threads)
+      list(APPEND sources "${GASM_THREAD_SOURCE}")
+    endif()
   endif()
   add_executable(${target} ${sources})
   set_target_properties(${target} PROPERTIES SUFFIX ".wasm")
@@ -60,6 +78,9 @@ function(gasm_add_game target)
       target_compile_definitions(${target} PRIVATE "GASM_LOOP_STACK_SIZE=${GASM_LOOP_STACK_SIZE}")
     endif()
     target_link_options(${target} PRIVATE -Wl,--wrap=exit)
+    if(threads)
+      target_compile_definitions(${target} PRIVATE GASM_LOOP_THREADS)
+    endif()
     if(NOT GASM_WASM_OPT)
       find_program(GASM_WASM_OPT wasm-opt)
     endif()
@@ -69,9 +90,13 @@ function(gasm_add_game target)
     # <target>-run.wasm first, without Asyncify: for runners with stack switching
     # (gasm_run; smaller and faster). Then Asyncify before optimizing; the frame
     # export must not be instrumented (gasm_loop.c).
+    if(NOT threads)
+      add_custom_command(TARGET ${target} POST_BUILD
+        COMMAND "${GASM_WASM_OPT}" "$<TARGET_FILE:${target}>" "$<IF:$<CONFIG:Debug>,-g,-O2>"
+                -o "$<TARGET_FILE_DIR:${target}>/${target}-run.wasm"
+        VERBATIM)
+    endif()
     add_custom_command(TARGET ${target} POST_BUILD
-      COMMAND "${GASM_WASM_OPT}" "$<TARGET_FILE:${target}>" "$<IF:$<CONFIG:Debug>,-g,-O2>"
-              -o "$<TARGET_FILE_DIR:${target}>/${target}-run.wasm"
       COMMAND "${GASM_WASM_OPT}" "$<TARGET_FILE:${target}>" --asyncify
               --pass-arg=asyncify-removelist@gasm_loop_frame "$<IF:$<CONFIG:Debug>,-g,-O2>" -o "$<TARGET_FILE:${target}>"
       VERBATIM)

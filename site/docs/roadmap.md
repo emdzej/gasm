@@ -26,7 +26,7 @@ The suggested order, from the most benefit for the least risk:
 
 | Item | What it gives | Status |
 |---|---|---|
-| Cooperative threads | Threads inside the guest (no ABI change, deterministic): a scheduler and C API, an SDL thread backend (`SDL_CreateThread`, `SDL_AddTimer`), a pthreads shim, later a Rust API. | proposal: [design/threads.md](https://github.com/emdzej/gasm/blob/main/design/threads.md) (part A) |
+| Cooperative threads | Threads inside the guest (no ABI change, deterministic). The scheduler and C API (`gasm_thread.h`) are done; left: an SDL thread backend (`SDL_CreateThread`, `SDL_AddTimer`), a pthreads shim, later a Rust API. | in progress: [design/threads.md](https://github.com/emdzej/gasm/blob/main/design/threads.md) (part A) |
 | Stack switching beyond JSPI | Browsers without JSPI (and Node 22) still need the Asyncify builds; wasm's stack-switching proposal would cover them too. | waiting on engines |
 | Real wasm threads | Shared memory and atomics, opt-in, for guests that need parallel CPU (physics, job systems, Godot's worker pool). Not deterministic. | proposal, after cooperative threads: [design/threads.md](https://github.com/emdzej/gasm/blob/main/design/threads.md) (part B) |
 | Guest memory limit | A cap on linear memory growth. Today a guest can grow to the engine maximum (4 GiB for wasm32); needed before running untrusted content. | not started |

@@ -17,6 +17,11 @@ ABI (additive):
   `gasm_frame`.
 
 SDKs:
+- Cooperative threads for games with their own loop (C SDK, `gasm_thread.h`):
+  threads, mutexes, conditions, semaphores, thread-local keys, deterministic
+  scheduling on the guest's one wasm thread (design/threads.md). Build with
+  `gasm_add_game(<target> LOOP THREADS ...)` (gasm_loop.c with
+  `-DGASM_LOOP_THREADS`); Asyncify builds only.
 - The loop helpers (`gasm_loop.h`, `gasm::main_loop!`) export `gasm_run` too.
   Own-loop games now build twice from one link: `game.wasm` with Asyncify
   (every runner) and `game-run.wasm` without (stack switching only): ScummVM
