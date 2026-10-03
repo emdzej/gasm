@@ -16,6 +16,7 @@
 pub mod assets;
 pub mod audio;
 pub mod gfx;
+pub mod gl;
 pub mod headless;
 pub mod host;
 pub mod keys;

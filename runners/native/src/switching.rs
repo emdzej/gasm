@@ -93,6 +93,7 @@ pub(crate) fn add_yield_async(linker: &mut Linker<Host>) -> wasmtime::Result<()>
             let Some(ex) = caller.data().run.clone() else {
                 bail!("gasm.yield_frame: only inside gasm_run");
             };
+            caller.data_mut().frame_index += 1; // the frame ends here
             loop {
                 YieldOnce(false).await;
                 match ex.take() {

@@ -4,6 +4,7 @@
 
 import { AssetTable, isAssetProvider, memoryAssets } from './assets.js';
 import { GfxModel, NullGfx, clampRect } from './gfx.js';
+import { GlHost, glImports } from './gl.js';
 import { GAMEPAD_AXES, GAMEPAD_BUTTONS, GAMEPAD_BYTES, KEY_STATE_BYTES, POINTER_BYTES, framePosition } from './input.js';
 import { NetConnections } from './net.js';
 import { MemoryStorage, StorageError, STORAGE_ERR_IO } from './storage.js';
@@ -71,12 +72,15 @@ export const STACK_SWITCHING = typeof WebAssembly.Suspending === 'function' && t
 export class GasmHost {
   constructor({ assets = {}, params = {}, gfx = new NullGfx(), storage = new MemoryStorage(), allowNet = false,
                 onPresent = () => {}, onAudio = () => {}, onLog = console.log, onTitle = () => {},
-                getPad = () => 0, virtualTime = false, stackSwitching = STACK_SWITCHING } = {}) {
+                getPad = () => 0, virtualTime = false, stackSwitching = STACK_SWITCHING, gl = null } = {}) {
     // GasmAssetProvider ({ size(name), readAt(name, offset, dst), names() }), or a plain
     // { name: Uint8Array } record (wrapped as an in-memory provider).
     this.assets = isAssetProvider(assets) ? assets : memoryAssets(assets);
     this.params = params;            // name -> string
     this.gfx = gfx;
+    // gasm:gl: a WebGL2RenderingContext, or null for the null GL (headless)
+    this.glContext = gl;
+    this.gl = null;
     this.storage = storage;          // MemoryStorage (headless) or IdbStorage (browser)
     this.net = new NetConnections(allowNet, (m) => this.onLog(m));
     this.showFrame = true;           // false during catch-up frames: begin_frame returns 0
@@ -400,8 +404,10 @@ export class GasmHost {
   // ---- lifecycle -----------------------------------------------------------
   /** Instantiate a module (bytes or a compiled WebAssembly.Module) and run its init. */
   async load(wasm) {
+    this.gl = new GlHost(this, this.glContext);
+    this.gl.model.hash = (b) => { if (this.hashing) this.videoHash = fnv32(this.videoHash, b); };
     const known = {
-      gasm: this.gasmImports(), 'gasm:gfx': this.gfxImports(), 'gasm:net': this.netImports(),
+      gasm: this.gasmImports(), 'gasm:gfx': this.gfxImports(), 'gasm:gl': glImports(this.gl), 'gasm:net': this.netImports(),
       'gasm:storage': this.storageImports(),
     };
     for (const [mod, fns] of Object.entries(known)) {
@@ -416,6 +422,9 @@ export class GasmHost {
       get: (t, n) => t[n] ?? (() => { throw new Error(`unsupported import ${String(mod)}.${String(n)}`); }),
     });
     const module = wasm instanceof WebAssembly.Module ? wasm : await WebAssembly.compile(wasm);
+    const gpuModules = new Set(WebAssembly.Module.imports(module).map((i) => i.module).filter((m) => m === 'gasm:gfx' || m === 'gasm:gl'));
+    if (gpuModules.size > 1) throw new Error('a module imports gasm:gfx or gasm:gl, not both');
+    this.usesGl = gpuModules.has('gasm:gl');
     const hasRun = WebAssembly.Module.exports(module).some((e) => e.name === 'gasm_run');
     this.switching = hasRun && this.stackSwitching;
     if (hasRun && !this.switching && WebAssembly.Module.imports(module).some((i) => i.module === 'asyncify')) {

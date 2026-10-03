@@ -365,6 +365,10 @@ impl ApplicationHandler for App {
         };
         let Some(session) = self.session.take() else { return };
         match session.start(audio, gfx, false, false) {
+            // no native GL backend yet (design/gasm-gl.md): browser and headless only
+            Ok(g) if g.uses_gl() => {
+                return self.stop(el, Err("this game uses gasm:gl (OpenGL ES), which gasm-run supports headless only for now; play it in the browser".into()));
+            }
             Ok(g) => self.game = Some(g),
             Err(Stop::Exit(code)) => return self.stop(el, Ok(code)),
             Err(Stop::Trap(e)) => return self.stop(el, Err(e)),

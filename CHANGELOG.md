@@ -15,6 +15,12 @@ ABI (additive):
   whole loop in one call and resume it every frame; the frames, input and
   hashes are those of `gasm_frame`. Runners without it keep calling
   `gasm_frame`.
+- `gasm:gl`: OpenGL ES 3.0 with WebGL 2's rules (224 functions), an optional
+  module next to `gasm:gfx` (a game imports one of them). The browser runner
+  forwards it to WebGL 2; headless runs (native and Node) use a null GL that
+  tracks names, bindings and the pixel store, reports the same GL errors and
+  hashes every buffer, texture and uniform upload (ABI.md, `gasm:gl`).
+  The native window refuses `gasm:gl` games until ANGLE lands (roadmap).
 
 SDKs:
 - Cooperative threads for games with their own loop (C SDK, `gasm_thread.h`):
@@ -31,6 +37,11 @@ SDKs:
   in classic `main()` apps linked with the threaded loop helper
   (`gasm_sdl3_app(<target> LOOP THREADS)`, `lib/gasm_loop_threads.o`). The SDL
   CMake helper now also writes `<target>-run.wasm` for `LOOP` apps.
+- C SDK: drop-in `<GLES3/gl3.h>` / `<GLES2/gl2.h>` and `sdk/c/src/gasm_gl.c`
+  (CMake: `${GASM_GL_SOURCE}`), generated from the Khronos registry: the whole
+  GLES 3.0 API on `gasm:gl`, including string arrays, `glGetString` caching,
+  exact upload lengths from the pixel store and `glMapBufferRange` emulated in
+  guest memory. `guests/gltest` is the example and a determinism case.
 - The loop helpers (`gasm_loop.h`, `gasm::main_loop!`) export `gasm_run` too.
   Own-loop games now build twice from one link: `game.wasm` with Asyncify
   (every runner) and `game-run.wasm` without (stack switching only): ScummVM
@@ -50,6 +61,8 @@ Runners:
   `stackSwitching` option; Worker mode and `gasm-headless`
   (`--no-stack-switching`) use them. The player loads the run builds where the
   browser has JSPI (`?asyncify` forces the Asyncify build).
+- Player: `gasm:gl` games get a WebGL 2 canvas at display size (main thread;
+  Worker mode is a roadmap item).
 - Native release bundles ship ScummVM's run build (`games/scummvm-run.wasm`).
 - CI runs on Node 24.
 

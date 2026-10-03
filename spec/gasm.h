@@ -28,12 +28,14 @@
 #ifdef __wasm__
 #define GASM_IMPORT(name) __attribute__((import_module("gasm"), import_name(name)))
 #define GASM_GFX_IMPORT(name) __attribute__((import_module("gasm:gfx"), import_name(name)))
+#define GASM_GL_IMPORT(name) __attribute__((import_module("gasm:gl"), import_name(name)))
 #define GASM_NET_IMPORT(name) __attribute__((import_module("gasm:net"), import_name(name)))
 #define GASM_STORAGE_IMPORT(name) __attribute__((import_module("gasm:storage"), import_name(name)))
 #define GASM_EXPORT(name) __attribute__((export_name(name)))
 #else
 #define GASM_IMPORT(name)
 #define GASM_GFX_IMPORT(name)
+#define GASM_GL_IMPORT(name)
 #define GASM_NET_IMPORT(name)
 #define GASM_STORAGE_IMPORT(name)
 #define GASM_EXPORT(name)
@@ -455,6 +457,285 @@ GASM_GFX_IMPORT("end_frame") void gasm_gfx_end_frame(void);
  * it stay valid. GPU memory is freed once nothing in a submitted frame uses
  * it. */
 GASM_GFX_IMPORT("destroy") void gasm_gfx_destroy(uint32_t handle);
+
+/* ---- gasm:gl (optional) ----------------------------------------------------------- */
+/* OpenGL ES 3.0 with WebGL 2's rules (design/gasm-gl.md): object names are u32
+ * (0 = none), uniform locations i32 (-1 = none), data (ptr, len) in guest
+ * memory with checked lengths. GL errors are GL's (get_error, the call has no
+ * effect); out-of-bounds pointers and impossible lengths trap. A module
+ * imports gasm:gl or gasm:gfx, not both. */
+
+/* Drawable width in pixels (the default framebuffer follows it). */
+GASM_GL_IMPORT("width") uint32_t gasm_gl_width(void);
+/* Drawable height in pixels. */
+GASM_GL_IMPORT("height") uint32_t gasm_gl_height(void);
+/* 0 during catch-up frames (the guest may skip drawing). */
+GASM_GL_IMPORT("frame_shown") uint32_t gasm_gl_frame_shown(void);
+/* Show the default framebuffer now; otherwise the runner presents at the end
+ * of the frame. */
+GASM_GL_IMPORT("present") void gasm_gl_present(void);
+/* The oldest GL error flag (GL rules: a call with an error has no effect), or
+ * 0. */
+GASM_GL_IMPORT("get_error") uint32_t gasm_gl_get_error(void);
+/* GL_VENDOR, GL_RENDERER, GL_VERSION, GL_SHADING_LANGUAGE_VERSION or
+ * GL_EXTENSIONS (space-separated): its length, copied if it fits; -1 for an
+ * invalid name (GL_INVALID_ENUM). */
+GASM_GL_IMPORT("get_string") int32_t gasm_gl_get_string(uint32_t name, void *dst, uint32_t cap);
+/* Turn on a WebGL extension listed in GL_EXTENSIONS (1), or 0 if it isn't
+ * there. */
+GASM_GL_IMPORT("enable_extension") uint32_t gasm_gl_enable_extension(const char *name, uint32_t name_len);
+/* The parameter's values as i32s: how many it has (copied up to count), or -1
+ * for an invalid pname (GL_INVALID_ENUM). */
+GASM_GL_IMPORT("get_integerv") int32_t gasm_gl_get_integerv(uint32_t pname, void *dst, uint32_t count);
+/* As get_integerv, as f32s. */
+GASM_GL_IMPORT("get_floatv") int32_t gasm_gl_get_floatv(uint32_t pname, void *dst, uint32_t count);
+/* As get_integerv, as i64s. */
+GASM_GL_IMPORT("get_integer64v") int32_t gasm_gl_get_integer64v(uint32_t pname, void *dst, uint32_t count);
+/* Indexed parameters (e.g. GL_UNIFORM_BUFFER_BINDING), as i32s. */
+GASM_GL_IMPORT("get_integeri_v") int32_t gasm_gl_get_integeri_v(uint32_t target, uint32_t index, void *dst, uint32_t count);
+/* GL_SAMPLES or GL_NUM_SAMPLE_COUNTS of a renderbuffer format. */
+GASM_GL_IMPORT("get_internalformativ") int32_t gasm_gl_get_internalformativ(uint32_t target, uint32_t internalformat, uint32_t pname, void *dst, uint32_t count);
+/* Writes 3 i32s: range min, range max, precision. */
+GASM_GL_IMPORT("get_shader_precision_format") void gasm_gl_get_shader_precision_format(uint32_t shadertype, uint32_t precisiontype, void *dst);
+GASM_GL_IMPORT("active_texture") void gasm_gl_active_texture(uint32_t texture);
+GASM_GL_IMPORT("blend_color") void gasm_gl_blend_color(float red, float green, float blue, float alpha);
+GASM_GL_IMPORT("blend_equation") void gasm_gl_blend_equation(uint32_t mode);
+GASM_GL_IMPORT("blend_equation_separate") void gasm_gl_blend_equation_separate(uint32_t mode_rgb, uint32_t mode_alpha);
+GASM_GL_IMPORT("blend_func") void gasm_gl_blend_func(uint32_t sfactor, uint32_t dfactor);
+GASM_GL_IMPORT("blend_func_separate") void gasm_gl_blend_func_separate(uint32_t src_rgb, uint32_t dst_rgb, uint32_t src_alpha, uint32_t dst_alpha);
+GASM_GL_IMPORT("clear") void gasm_gl_clear(uint32_t mask);
+GASM_GL_IMPORT("clear_color") void gasm_gl_clear_color(float red, float green, float blue, float alpha);
+GASM_GL_IMPORT("clear_depthf") void gasm_gl_clear_depthf(float depth);
+GASM_GL_IMPORT("clear_stencil") void gasm_gl_clear_stencil(int32_t s);
+GASM_GL_IMPORT("color_mask") void gasm_gl_color_mask(uint32_t red, uint32_t green, uint32_t blue, uint32_t alpha);
+GASM_GL_IMPORT("cull_face") void gasm_gl_cull_face(uint32_t mode);
+GASM_GL_IMPORT("depth_func") void gasm_gl_depth_func(uint32_t func);
+GASM_GL_IMPORT("depth_mask") void gasm_gl_depth_mask(uint32_t flag);
+GASM_GL_IMPORT("depth_rangef") void gasm_gl_depth_rangef(float near, float far);
+GASM_GL_IMPORT("disable") void gasm_gl_disable(uint32_t cap);
+GASM_GL_IMPORT("enable") void gasm_gl_enable(uint32_t cap);
+GASM_GL_IMPORT("is_enabled") uint32_t gasm_gl_is_enabled(uint32_t cap);
+GASM_GL_IMPORT("front_face") void gasm_gl_front_face(uint32_t mode);
+GASM_GL_IMPORT("hint") void gasm_gl_hint(uint32_t target, uint32_t mode);
+GASM_GL_IMPORT("line_width") void gasm_gl_line_width(float width);
+GASM_GL_IMPORT("pixel_storei") void gasm_gl_pixel_storei(uint32_t pname, int32_t param);
+GASM_GL_IMPORT("polygon_offset") void gasm_gl_polygon_offset(float factor, float units);
+GASM_GL_IMPORT("sample_coverage") void gasm_gl_sample_coverage(float value, uint32_t invert);
+GASM_GL_IMPORT("scissor") void gasm_gl_scissor(int32_t x, int32_t y, int32_t width, int32_t height);
+GASM_GL_IMPORT("viewport") void gasm_gl_viewport(int32_t x, int32_t y, int32_t width, int32_t height);
+GASM_GL_IMPORT("stencil_func") void gasm_gl_stencil_func(uint32_t func, int32_t ref, uint32_t mask);
+GASM_GL_IMPORT("stencil_func_separate") void gasm_gl_stencil_func_separate(uint32_t face, uint32_t func, int32_t ref, uint32_t mask);
+GASM_GL_IMPORT("stencil_mask") void gasm_gl_stencil_mask(uint32_t mask);
+GASM_GL_IMPORT("stencil_mask_separate") void gasm_gl_stencil_mask_separate(uint32_t face, uint32_t mask);
+GASM_GL_IMPORT("stencil_op") void gasm_gl_stencil_op(uint32_t fail, uint32_t zfail, uint32_t zpass);
+GASM_GL_IMPORT("stencil_op_separate") void gasm_gl_stencil_op_separate(uint32_t face, uint32_t sfail, uint32_t dpfail, uint32_t dppass);
+GASM_GL_IMPORT("finish") void gasm_gl_finish(void);
+GASM_GL_IMPORT("flush") void gasm_gl_flush(void);
+/* A new buffer name (glGenBuffers). */
+GASM_GL_IMPORT("create_buffer") uint32_t gasm_gl_create_buffer(void);
+GASM_GL_IMPORT("delete_buffer") void gasm_gl_delete_buffer(uint32_t buffer);
+GASM_GL_IMPORT("is_buffer") uint32_t gasm_gl_is_buffer(uint32_t buffer);
+GASM_GL_IMPORT("bind_buffer") void gasm_gl_bind_buffer(uint32_t target, uint32_t buffer);
+GASM_GL_IMPORT("bind_buffer_base") void gasm_gl_bind_buffer_base(uint32_t target, uint32_t index, uint32_t buffer);
+GASM_GL_IMPORT("bind_buffer_range") void gasm_gl_bind_buffer_range(uint32_t target, uint32_t index, uint32_t buffer, uint32_t offset, uint32_t size);
+/* len bytes from data, or zeros if data is 0. */
+GASM_GL_IMPORT("buffer_data") void gasm_gl_buffer_data(uint32_t target, const void *data, uint32_t len, uint32_t usage);
+GASM_GL_IMPORT("buffer_sub_data") void gasm_gl_buffer_sub_data(uint32_t target, uint32_t offset, const void *data, uint32_t len);
+GASM_GL_IMPORT("copy_buffer_sub_data") void gasm_gl_copy_buffer_sub_data(uint32_t read_target, uint32_t write_target, uint32_t read_offset, uint32_t write_offset, uint32_t size);
+/* Read back len bytes (glMapBufferRange for reading). */
+GASM_GL_IMPORT("get_buffer_sub_data") void gasm_gl_get_buffer_sub_data(uint32_t target, uint32_t offset, void *dst, uint32_t len);
+GASM_GL_IMPORT("get_buffer_parameteriv") int32_t gasm_gl_get_buffer_parameteriv(uint32_t target, uint32_t pname);
+GASM_GL_IMPORT("create_vertex_array") uint32_t gasm_gl_create_vertex_array(void);
+GASM_GL_IMPORT("delete_vertex_array") void gasm_gl_delete_vertex_array(uint32_t array);
+GASM_GL_IMPORT("is_vertex_array") uint32_t gasm_gl_is_vertex_array(uint32_t array);
+GASM_GL_IMPORT("bind_vertex_array") void gasm_gl_bind_vertex_array(uint32_t array);
+GASM_GL_IMPORT("enable_vertex_attrib_array") void gasm_gl_enable_vertex_attrib_array(uint32_t index);
+GASM_GL_IMPORT("disable_vertex_attrib_array") void gasm_gl_disable_vertex_attrib_array(uint32_t index);
+/* offset into the bound GL_ARRAY_BUFFER (no client-side arrays). */
+GASM_GL_IMPORT("vertex_attrib_pointer") void gasm_gl_vertex_attrib_pointer(uint32_t index, int32_t size, uint32_t type, uint32_t normalized, int32_t stride, uint32_t offset);
+GASM_GL_IMPORT("vertex_attrib_ipointer") void gasm_gl_vertex_attrib_ipointer(uint32_t index, int32_t size, uint32_t type, int32_t stride, uint32_t offset);
+GASM_GL_IMPORT("vertex_attrib_divisor") void gasm_gl_vertex_attrib_divisor(uint32_t index, uint32_t divisor);
+GASM_GL_IMPORT("vertex_attrib4f") void gasm_gl_vertex_attrib4f(uint32_t index, float x, float y, float z, float w);
+GASM_GL_IMPORT("vertex_attribi4i") void gasm_gl_vertex_attribi4i(uint32_t index, int32_t x, int32_t y, int32_t z, int32_t w);
+GASM_GL_IMPORT("vertex_attribi4ui") void gasm_gl_vertex_attribi4ui(uint32_t index, uint32_t x, uint32_t y, uint32_t z, uint32_t w);
+GASM_GL_IMPORT("get_vertex_attribiv") int32_t gasm_gl_get_vertex_attribiv(uint32_t index, uint32_t pname);
+/* GL_CURRENT_VERTEX_ATTRIB: 4 f32s. */
+GASM_GL_IMPORT("get_vertex_attribfv") int32_t gasm_gl_get_vertex_attribfv(uint32_t index, uint32_t pname, void *dst, uint32_t count);
+GASM_GL_IMPORT("get_vertex_attrib_offset") uint32_t gasm_gl_get_vertex_attrib_offset(uint32_t index, uint32_t pname);
+GASM_GL_IMPORT("draw_arrays") void gasm_gl_draw_arrays(uint32_t mode, int32_t first, int32_t count);
+/* Indices from the bound GL_ELEMENT_ARRAY_BUFFER at offset. */
+GASM_GL_IMPORT("draw_elements") void gasm_gl_draw_elements(uint32_t mode, int32_t count, uint32_t type, uint32_t offset);
+GASM_GL_IMPORT("draw_arrays_instanced") void gasm_gl_draw_arrays_instanced(uint32_t mode, int32_t first, int32_t count, int32_t instances);
+GASM_GL_IMPORT("draw_elements_instanced") void gasm_gl_draw_elements_instanced(uint32_t mode, int32_t count, uint32_t type, uint32_t offset, int32_t instances);
+GASM_GL_IMPORT("draw_range_elements") void gasm_gl_draw_range_elements(uint32_t mode, uint32_t start, uint32_t end, int32_t count, uint32_t type, uint32_t offset);
+/* count GLenums. */
+GASM_GL_IMPORT("draw_buffers") void gasm_gl_draw_buffers(const void *bufs, uint32_t count);
+/* count i32s (4 for GL_COLOR, 1 for GL_STENCIL). */
+GASM_GL_IMPORT("clear_bufferiv") void gasm_gl_clear_bufferiv(uint32_t buffer, int32_t drawbuffer, const void *value, uint32_t count);
+GASM_GL_IMPORT("clear_bufferuiv") void gasm_gl_clear_bufferuiv(uint32_t buffer, int32_t drawbuffer, const void *value, uint32_t count);
+GASM_GL_IMPORT("clear_bufferfv") void gasm_gl_clear_bufferfv(uint32_t buffer, int32_t drawbuffer, const void *value, uint32_t count);
+GASM_GL_IMPORT("clear_bufferfi") void gasm_gl_clear_bufferfi(uint32_t buffer, int32_t drawbuffer, float depth, int32_t stencil);
+GASM_GL_IMPORT("create_texture") uint32_t gasm_gl_create_texture(void);
+GASM_GL_IMPORT("delete_texture") void gasm_gl_delete_texture(uint32_t texture);
+GASM_GL_IMPORT("is_texture") uint32_t gasm_gl_is_texture(uint32_t texture);
+GASM_GL_IMPORT("bind_texture") void gasm_gl_bind_texture(uint32_t target, uint32_t texture);
+GASM_GL_IMPORT("tex_parameteri") void gasm_gl_tex_parameteri(uint32_t target, uint32_t pname, int32_t param);
+GASM_GL_IMPORT("tex_parameterf") void gasm_gl_tex_parameterf(uint32_t target, uint32_t pname, float param);
+GASM_GL_IMPORT("get_tex_parameteriv") int32_t gasm_gl_get_tex_parameteriv(uint32_t target, uint32_t pname);
+GASM_GL_IMPORT("get_tex_parameterfv") float gasm_gl_get_tex_parameterfv(uint32_t target, uint32_t pname);
+/* pixels 0: no data (or, with a bound GL_PIXEL_UNPACK_BUFFER, len is the
+ * offset into it); otherwise len must cover the image. */
+GASM_GL_IMPORT("tex_image_2d") void gasm_gl_tex_image_2d(uint32_t target, int32_t level, int32_t internalformat, int32_t width, int32_t height, int32_t border, uint32_t format, uint32_t type, const void *pixels, uint32_t len);
+GASM_GL_IMPORT("tex_image_3d") void gasm_gl_tex_image_3d(uint32_t target, int32_t level, int32_t internalformat, int32_t width, int32_t height, int32_t depth, int32_t border, uint32_t format, uint32_t type, const void *pixels, uint32_t len);
+GASM_GL_IMPORT("tex_sub_image_2d") void gasm_gl_tex_sub_image_2d(uint32_t target, int32_t level, int32_t x, int32_t y, int32_t width, int32_t height, uint32_t format, uint32_t type, const void *pixels, uint32_t len);
+GASM_GL_IMPORT("tex_sub_image_3d") void gasm_gl_tex_sub_image_3d(uint32_t target, int32_t level, int32_t x, int32_t y, int32_t z, int32_t width, int32_t height, int32_t depth, uint32_t format, uint32_t type, const void *pixels, uint32_t len);
+GASM_GL_IMPORT("tex_storage_2d") void gasm_gl_tex_storage_2d(uint32_t target, int32_t levels, uint32_t internalformat, int32_t width, int32_t height);
+GASM_GL_IMPORT("tex_storage_3d") void gasm_gl_tex_storage_3d(uint32_t target, int32_t levels, uint32_t internalformat, int32_t width, int32_t height, int32_t depth);
+GASM_GL_IMPORT("compressed_tex_image_2d") void gasm_gl_compressed_tex_image_2d(uint32_t target, int32_t level, uint32_t internalformat, int32_t width, int32_t height, int32_t border, const void *data, uint32_t len);
+GASM_GL_IMPORT("compressed_tex_image_3d") void gasm_gl_compressed_tex_image_3d(uint32_t target, int32_t level, uint32_t internalformat, int32_t width, int32_t height, int32_t depth, int32_t border, const void *data, uint32_t len);
+GASM_GL_IMPORT("compressed_tex_sub_image_2d") void gasm_gl_compressed_tex_sub_image_2d(uint32_t target, int32_t level, int32_t x, int32_t y, int32_t width, int32_t height, uint32_t format, const void *data, uint32_t len);
+GASM_GL_IMPORT("compressed_tex_sub_image_3d") void gasm_gl_compressed_tex_sub_image_3d(uint32_t target, int32_t level, int32_t x, int32_t y, int32_t z, int32_t width, int32_t height, int32_t depth, uint32_t format, const void *data, uint32_t len);
+GASM_GL_IMPORT("copy_tex_image_2d") void gasm_gl_copy_tex_image_2d(uint32_t target, int32_t level, uint32_t internalformat, int32_t x, int32_t y, int32_t width, int32_t height, int32_t border);
+GASM_GL_IMPORT("copy_tex_sub_image_2d") void gasm_gl_copy_tex_sub_image_2d(uint32_t target, int32_t level, int32_t xoffset, int32_t yoffset, int32_t x, int32_t y, int32_t width, int32_t height);
+GASM_GL_IMPORT("copy_tex_sub_image_3d") void gasm_gl_copy_tex_sub_image_3d(uint32_t target, int32_t level, int32_t xoffset, int32_t yoffset, int32_t zoffset, int32_t x, int32_t y, int32_t width, int32_t height);
+/* Runners generate the levels (unlike gasm:gfx). */
+GASM_GL_IMPORT("generate_mipmap") void gasm_gl_generate_mipmap(uint32_t target);
+GASM_GL_IMPORT("create_sampler") uint32_t gasm_gl_create_sampler(void);
+GASM_GL_IMPORT("delete_sampler") void gasm_gl_delete_sampler(uint32_t sampler);
+GASM_GL_IMPORT("is_sampler") uint32_t gasm_gl_is_sampler(uint32_t sampler);
+GASM_GL_IMPORT("bind_sampler") void gasm_gl_bind_sampler(uint32_t unit, uint32_t sampler);
+GASM_GL_IMPORT("sampler_parameteri") void gasm_gl_sampler_parameteri(uint32_t sampler, uint32_t pname, int32_t param);
+GASM_GL_IMPORT("sampler_parameterf") void gasm_gl_sampler_parameterf(uint32_t sampler, uint32_t pname, float param);
+GASM_GL_IMPORT("get_sampler_parameteriv") int32_t gasm_gl_get_sampler_parameteriv(uint32_t sampler, uint32_t pname);
+GASM_GL_IMPORT("get_sampler_parameterfv") float gasm_gl_get_sampler_parameterfv(uint32_t sampler, uint32_t pname);
+GASM_GL_IMPORT("create_framebuffer") uint32_t gasm_gl_create_framebuffer(void);
+GASM_GL_IMPORT("delete_framebuffer") void gasm_gl_delete_framebuffer(uint32_t framebuffer);
+GASM_GL_IMPORT("is_framebuffer") uint32_t gasm_gl_is_framebuffer(uint32_t framebuffer);
+/* 0: the default framebuffer (the window). */
+GASM_GL_IMPORT("bind_framebuffer") void gasm_gl_bind_framebuffer(uint32_t target, uint32_t framebuffer);
+GASM_GL_IMPORT("check_framebuffer_status") uint32_t gasm_gl_check_framebuffer_status(uint32_t target);
+GASM_GL_IMPORT("framebuffer_texture_2d") void gasm_gl_framebuffer_texture_2d(uint32_t target, uint32_t attachment, uint32_t textarget, uint32_t texture, int32_t level);
+GASM_GL_IMPORT("framebuffer_texture_layer") void gasm_gl_framebuffer_texture_layer(uint32_t target, uint32_t attachment, uint32_t texture, int32_t level, int32_t layer);
+GASM_GL_IMPORT("framebuffer_renderbuffer") void gasm_gl_framebuffer_renderbuffer(uint32_t target, uint32_t attachment, uint32_t renderbuffertarget, uint32_t renderbuffer);
+GASM_GL_IMPORT("get_framebuffer_attachment_parameteriv") int32_t gasm_gl_get_framebuffer_attachment_parameteriv(uint32_t target, uint32_t attachment, uint32_t pname);
+GASM_GL_IMPORT("blit_framebuffer") void gasm_gl_blit_framebuffer(int32_t src_x0, int32_t src_y0, int32_t src_x1, int32_t src_y1, int32_t dst_x0, int32_t dst_y0, int32_t dst_x1, int32_t dst_y1, uint32_t mask, uint32_t filter);
+GASM_GL_IMPORT("invalidate_framebuffer") void gasm_gl_invalidate_framebuffer(uint32_t target, const void *attachments, uint32_t count);
+GASM_GL_IMPORT("invalidate_sub_framebuffer") void gasm_gl_invalidate_sub_framebuffer(uint32_t target, const void *attachments, uint32_t count, int32_t x, int32_t y, int32_t width, int32_t height);
+GASM_GL_IMPORT("read_buffer") void gasm_gl_read_buffer(uint32_t src);
+/* len must cover the rectangle; with a bound GL_PIXEL_PACK_BUFFER, dst is the
+ * offset into it. */
+GASM_GL_IMPORT("read_pixels") void gasm_gl_read_pixels(int32_t x, int32_t y, int32_t width, int32_t height, uint32_t format, uint32_t type, void *dst, uint32_t len);
+GASM_GL_IMPORT("create_renderbuffer") uint32_t gasm_gl_create_renderbuffer(void);
+GASM_GL_IMPORT("delete_renderbuffer") void gasm_gl_delete_renderbuffer(uint32_t renderbuffer);
+GASM_GL_IMPORT("is_renderbuffer") uint32_t gasm_gl_is_renderbuffer(uint32_t renderbuffer);
+GASM_GL_IMPORT("bind_renderbuffer") void gasm_gl_bind_renderbuffer(uint32_t target, uint32_t renderbuffer);
+GASM_GL_IMPORT("renderbuffer_storage") void gasm_gl_renderbuffer_storage(uint32_t target, uint32_t internalformat, int32_t width, int32_t height);
+GASM_GL_IMPORT("renderbuffer_storage_multisample") void gasm_gl_renderbuffer_storage_multisample(uint32_t target, int32_t samples, uint32_t internalformat, int32_t width, int32_t height);
+GASM_GL_IMPORT("get_renderbuffer_parameteriv") int32_t gasm_gl_get_renderbuffer_parameteriv(uint32_t target, uint32_t pname);
+GASM_GL_IMPORT("create_shader") uint32_t gasm_gl_create_shader(uint32_t type);
+GASM_GL_IMPORT("delete_shader") void gasm_gl_delete_shader(uint32_t shader);
+GASM_GL_IMPORT("is_shader") uint32_t gasm_gl_is_shader(uint32_t shader);
+/* GLSL ES 3.00 (or 1.00). */
+GASM_GL_IMPORT("shader_source") void gasm_gl_shader_source(uint32_t shader, const char *source, uint32_t source_len);
+GASM_GL_IMPORT("compile_shader") void gasm_gl_compile_shader(uint32_t shader);
+GASM_GL_IMPORT("get_shaderiv") int32_t gasm_gl_get_shaderiv(uint32_t shader, uint32_t pname);
+GASM_GL_IMPORT("get_shader_info_log") int32_t gasm_gl_get_shader_info_log(uint32_t shader, void *dst, uint32_t cap);
+GASM_GL_IMPORT("get_shader_source") int32_t gasm_gl_get_shader_source(uint32_t shader, void *dst, uint32_t cap);
+GASM_GL_IMPORT("create_program") uint32_t gasm_gl_create_program(void);
+GASM_GL_IMPORT("delete_program") void gasm_gl_delete_program(uint32_t program);
+GASM_GL_IMPORT("is_program") uint32_t gasm_gl_is_program(uint32_t program);
+GASM_GL_IMPORT("attach_shader") void gasm_gl_attach_shader(uint32_t program, uint32_t shader);
+GASM_GL_IMPORT("detach_shader") void gasm_gl_detach_shader(uint32_t program, uint32_t shader);
+GASM_GL_IMPORT("link_program") void gasm_gl_link_program(uint32_t program);
+GASM_GL_IMPORT("use_program") void gasm_gl_use_program(uint32_t program);
+GASM_GL_IMPORT("validate_program") void gasm_gl_validate_program(uint32_t program);
+GASM_GL_IMPORT("get_programiv") int32_t gasm_gl_get_programiv(uint32_t program, uint32_t pname);
+GASM_GL_IMPORT("get_program_info_log") int32_t gasm_gl_get_program_info_log(uint32_t program, void *dst, uint32_t cap);
+/* Shader names (u32), copied up to count; returns how many. */
+GASM_GL_IMPORT("get_attached_shaders") int32_t gasm_gl_get_attached_shaders(uint32_t program, void *dst, uint32_t count);
+GASM_GL_IMPORT("bind_attrib_location") void gasm_gl_bind_attrib_location(uint32_t program, uint32_t index, const char *name, uint32_t name_len);
+GASM_GL_IMPORT("get_attrib_location") int32_t gasm_gl_get_attrib_location(uint32_t program, const char *name, uint32_t name_len);
+GASM_GL_IMPORT("get_frag_data_location") int32_t gasm_gl_get_frag_data_location(uint32_t program, const char *name, uint32_t name_len);
+/* info: 2 i32s (size, type). Returns the name's length (copied if it fits), or
+ * -1. */
+GASM_GL_IMPORT("get_active_attrib") int32_t gasm_gl_get_active_attrib(uint32_t program, uint32_t index, void *name, uint32_t cap, void *info);
+GASM_GL_IMPORT("get_active_uniform") int32_t gasm_gl_get_active_uniform(uint32_t program, uint32_t index, void *name, uint32_t cap, void *info);
+/* -1 if the program has no such uniform. */
+GASM_GL_IMPORT("get_uniform_location") int32_t gasm_gl_get_uniform_location(uint32_t program, const char *name, uint32_t name_len);
+/* glGetUniformIndices for one name (GL_INVALID_INDEX if none). */
+GASM_GL_IMPORT("get_uniform_index") uint32_t gasm_gl_get_uniform_index(uint32_t program, const char *name, uint32_t name_len);
+/* count u32 indices in, count i32s out. */
+GASM_GL_IMPORT("get_active_uniformsiv") void gasm_gl_get_active_uniformsiv(uint32_t program, const void *indices, uint32_t count, uint32_t pname, void *dst);
+GASM_GL_IMPORT("get_uniform_block_index") uint32_t gasm_gl_get_uniform_block_index(uint32_t program, const char *name, uint32_t name_len);
+GASM_GL_IMPORT("get_active_uniform_block_name") int32_t gasm_gl_get_active_uniform_block_name(uint32_t program, uint32_t index, void *dst, uint32_t cap);
+GASM_GL_IMPORT("get_active_uniform_blockiv") int32_t gasm_gl_get_active_uniform_blockiv(uint32_t program, uint32_t index, uint32_t pname, void *dst, uint32_t count);
+GASM_GL_IMPORT("uniform_block_binding") void gasm_gl_uniform_block_binding(uint32_t program, uint32_t index, uint32_t binding);
+GASM_GL_IMPORT("get_uniformfv") int32_t gasm_gl_get_uniformfv(uint32_t program, int32_t location, void *dst, uint32_t count);
+GASM_GL_IMPORT("get_uniformiv") int32_t gasm_gl_get_uniformiv(uint32_t program, int32_t location, void *dst, uint32_t count);
+GASM_GL_IMPORT("get_uniformuiv") int32_t gasm_gl_get_uniformuiv(uint32_t program, int32_t location, void *dst, uint32_t count);
+/* count names, each NUL-terminated, in len bytes. */
+GASM_GL_IMPORT("transform_feedback_varyings") void gasm_gl_transform_feedback_varyings(uint32_t program, const void *names, uint32_t len, uint32_t count, uint32_t buffer_mode);
+GASM_GL_IMPORT("get_transform_feedback_varying") int32_t gasm_gl_get_transform_feedback_varying(uint32_t program, uint32_t index, void *name, uint32_t cap, void *info);
+GASM_GL_IMPORT("uniform1f") void gasm_gl_uniform1f(int32_t location, float x);
+GASM_GL_IMPORT("uniform2f") void gasm_gl_uniform2f(int32_t location, float x, float y);
+GASM_GL_IMPORT("uniform3f") void gasm_gl_uniform3f(int32_t location, float x, float y, float z);
+GASM_GL_IMPORT("uniform4f") void gasm_gl_uniform4f(int32_t location, float x, float y, float z, float w);
+GASM_GL_IMPORT("uniform1i") void gasm_gl_uniform1i(int32_t location, int32_t x);
+GASM_GL_IMPORT("uniform2i") void gasm_gl_uniform2i(int32_t location, int32_t x, int32_t y);
+GASM_GL_IMPORT("uniform3i") void gasm_gl_uniform3i(int32_t location, int32_t x, int32_t y, int32_t z);
+GASM_GL_IMPORT("uniform4i") void gasm_gl_uniform4i(int32_t location, int32_t x, int32_t y, int32_t z, int32_t w);
+GASM_GL_IMPORT("uniform1ui") void gasm_gl_uniform1ui(int32_t location, uint32_t x);
+GASM_GL_IMPORT("uniform2ui") void gasm_gl_uniform2ui(int32_t location, uint32_t x, uint32_t y);
+GASM_GL_IMPORT("uniform3ui") void gasm_gl_uniform3ui(int32_t location, uint32_t x, uint32_t y, uint32_t z);
+GASM_GL_IMPORT("uniform4ui") void gasm_gl_uniform4ui(int32_t location, uint32_t x, uint32_t y, uint32_t z, uint32_t w);
+/* count vectors (GL semantics). */
+GASM_GL_IMPORT("uniform1fv") void gasm_gl_uniform1fv(int32_t location, int32_t count, const void *value);
+GASM_GL_IMPORT("uniform2fv") void gasm_gl_uniform2fv(int32_t location, int32_t count, const void *value);
+GASM_GL_IMPORT("uniform3fv") void gasm_gl_uniform3fv(int32_t location, int32_t count, const void *value);
+GASM_GL_IMPORT("uniform4fv") void gasm_gl_uniform4fv(int32_t location, int32_t count, const void *value);
+GASM_GL_IMPORT("uniform1iv") void gasm_gl_uniform1iv(int32_t location, int32_t count, const void *value);
+GASM_GL_IMPORT("uniform2iv") void gasm_gl_uniform2iv(int32_t location, int32_t count, const void *value);
+GASM_GL_IMPORT("uniform3iv") void gasm_gl_uniform3iv(int32_t location, int32_t count, const void *value);
+GASM_GL_IMPORT("uniform4iv") void gasm_gl_uniform4iv(int32_t location, int32_t count, const void *value);
+GASM_GL_IMPORT("uniform1uiv") void gasm_gl_uniform1uiv(int32_t location, int32_t count, const void *value);
+GASM_GL_IMPORT("uniform2uiv") void gasm_gl_uniform2uiv(int32_t location, int32_t count, const void *value);
+GASM_GL_IMPORT("uniform3uiv") void gasm_gl_uniform3uiv(int32_t location, int32_t count, const void *value);
+GASM_GL_IMPORT("uniform4uiv") void gasm_gl_uniform4uiv(int32_t location, int32_t count, const void *value);
+GASM_GL_IMPORT("uniform_matrix2fv") void gasm_gl_uniform_matrix2fv(int32_t location, int32_t count, uint32_t transpose, const void *value);
+GASM_GL_IMPORT("uniform_matrix3fv") void gasm_gl_uniform_matrix3fv(int32_t location, int32_t count, uint32_t transpose, const void *value);
+GASM_GL_IMPORT("uniform_matrix4fv") void gasm_gl_uniform_matrix4fv(int32_t location, int32_t count, uint32_t transpose, const void *value);
+GASM_GL_IMPORT("uniform_matrix2x3fv") void gasm_gl_uniform_matrix2x3fv(int32_t location, int32_t count, uint32_t transpose, const void *value);
+GASM_GL_IMPORT("uniform_matrix3x2fv") void gasm_gl_uniform_matrix3x2fv(int32_t location, int32_t count, uint32_t transpose, const void *value);
+GASM_GL_IMPORT("uniform_matrix2x4fv") void gasm_gl_uniform_matrix2x4fv(int32_t location, int32_t count, uint32_t transpose, const void *value);
+GASM_GL_IMPORT("uniform_matrix4x2fv") void gasm_gl_uniform_matrix4x2fv(int32_t location, int32_t count, uint32_t transpose, const void *value);
+GASM_GL_IMPORT("uniform_matrix3x4fv") void gasm_gl_uniform_matrix3x4fv(int32_t location, int32_t count, uint32_t transpose, const void *value);
+GASM_GL_IMPORT("uniform_matrix4x3fv") void gasm_gl_uniform_matrix4x3fv(int32_t location, int32_t count, uint32_t transpose, const void *value);
+GASM_GL_IMPORT("create_query") uint32_t gasm_gl_create_query(void);
+GASM_GL_IMPORT("delete_query") void gasm_gl_delete_query(uint32_t query);
+GASM_GL_IMPORT("is_query") uint32_t gasm_gl_is_query(uint32_t query);
+GASM_GL_IMPORT("begin_query") void gasm_gl_begin_query(uint32_t target, uint32_t query);
+GASM_GL_IMPORT("end_query") void gasm_gl_end_query(uint32_t target);
+/* GL_CURRENT_QUERY: the active query's name. */
+GASM_GL_IMPORT("get_queryiv") uint32_t gasm_gl_get_queryiv(uint32_t target, uint32_t pname);
+/* Results are available from the next frame on, on every runner. */
+GASM_GL_IMPORT("get_query_objectuiv") uint32_t gasm_gl_get_query_objectuiv(uint32_t query, uint32_t pname);
+/* A sync name (not a pointer). */
+GASM_GL_IMPORT("fence_sync") uint32_t gasm_gl_fence_sync(uint32_t condition, uint32_t flags);
+GASM_GL_IMPORT("is_sync") uint32_t gasm_gl_is_sync(uint32_t sync);
+GASM_GL_IMPORT("delete_sync") void gasm_gl_delete_sync(uint32_t sync);
+/* Signaled from the next frame on; a timeout above 0 that isn't met gives
+ * GL_TIMEOUT_EXPIRED. */
+GASM_GL_IMPORT("client_wait_sync") uint32_t gasm_gl_client_wait_sync(uint32_t sync, uint32_t flags, uint64_t timeout);
+GASM_GL_IMPORT("wait_sync") void gasm_gl_wait_sync(uint32_t sync, uint32_t flags, uint64_t timeout);
+GASM_GL_IMPORT("get_synciv") int32_t gasm_gl_get_synciv(uint32_t sync, uint32_t pname);
+GASM_GL_IMPORT("create_transform_feedback") uint32_t gasm_gl_create_transform_feedback(void);
+GASM_GL_IMPORT("delete_transform_feedback") void gasm_gl_delete_transform_feedback(uint32_t tf);
+GASM_GL_IMPORT("is_transform_feedback") uint32_t gasm_gl_is_transform_feedback(uint32_t tf);
+GASM_GL_IMPORT("bind_transform_feedback") void gasm_gl_bind_transform_feedback(uint32_t target, uint32_t tf);
+GASM_GL_IMPORT("begin_transform_feedback") void gasm_gl_begin_transform_feedback(uint32_t primitive_mode);
+GASM_GL_IMPORT("end_transform_feedback") void gasm_gl_end_transform_feedback(void);
+GASM_GL_IMPORT("pause_transform_feedback") void gasm_gl_pause_transform_feedback(void);
+GASM_GL_IMPORT("resume_transform_feedback") void gasm_gl_resume_transform_feedback(void);
 
 /* ---- gasm:net (optional) ---------------------------------------------------------- */
 /* Message connections with WebSocket semantics (reliable, ordered, binary),

@@ -20,6 +20,9 @@
 # gasm_thread.c alone (${GASM_THREAD_SOURCE}) gives the primitives without threads.
 #
 # stdio over assets and storage (gasm_vfile.h): target_sources(<target> PRIVATE ${GASM_VFILE_SOURCE}).
+#
+# OpenGL ES 3.0 (gasm:gl, <GLES3/gl3.h> and <GLES2/gl2.h> on the include path):
+# target_sources(<target> PRIVATE ${GASM_GL_SOURCE}).
 
 if(NOT GASM_INCLUDE_DIR)
   if(EXISTS "${CMAKE_CURRENT_LIST_DIR}/../include/gasm.h")        # release bundle layout
@@ -44,6 +47,9 @@ if(NOT GASM_THREAD_SOURCE AND EXISTS "${CMAKE_CURRENT_LIST_DIR}/../src/gasm_thre
 endif()
 if(NOT GASM_PTHREAD_SOURCE AND EXISTS "${CMAKE_CURRENT_LIST_DIR}/../src/gasm_pthread.c")
   get_filename_component(GASM_PTHREAD_SOURCE "${CMAKE_CURRENT_LIST_DIR}/../src/gasm_pthread.c" ABSOLUTE)
+endif()
+if(NOT GASM_GL_SOURCE AND EXISTS "${CMAKE_CURRENT_LIST_DIR}/../src/gasm_gl.c")
+  get_filename_component(GASM_GL_SOURCE "${CMAKE_CURRENT_LIST_DIR}/../src/gasm_gl.c" ABSOLUTE)
 endif()
 if(NOT GASM_VFILE_SOURCE AND EXISTS "${CMAKE_CURRENT_LIST_DIR}/../src/gasm_vfile.c")
   get_filename_component(GASM_VFILE_SOURCE "${CMAKE_CURRENT_LIST_DIR}/../src/gasm_vfile.c" ABSOLUTE)

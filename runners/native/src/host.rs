@@ -214,6 +214,10 @@ pub struct Host {
     pub params: HashMap<String, String>,
     pub audio: Option<Box<dyn AudioOut>>,
     pub gfx: Gfx,
+    /// gasm:gl state (the null GL: natively, gl guests run headless)
+    pub gl: crate::gl::Gl,
+    /// frames run so far (gl queries and syncs are ready from the next frame on)
+    pub frame_index: u64,
     pub net: Net,
     pub storage: Storage,
     /// false during catch-up frames: gfx begin_frame returns 0
@@ -264,6 +268,8 @@ impl Host {
             params,
             audio,
             gfx,
+            gl: Default::default(),
+            frame_index: 0,
             net,
             storage,
             show_frame: true,
@@ -953,6 +959,8 @@ pub struct Game {
     exchange: Option<Arc<Exchange>>,
     /// the guest exited or trapped: it is never called again
     ended: bool,
+    /// the guest imports gasm:gl (the native window has no GL backend yet)
+    gl: bool,
 }
 
 impl Game {
@@ -970,6 +978,10 @@ impl Game {
         } else {
             bail!("not a wasm module (a precompiled .cwasm runs as native code: pass --allow-precompiled if you made it yourself)");
         };
+        let gl = module.imports().any(|i| i.module() == "gasm:gl");
+        if gl && module.imports().any(|i| i.module() == "gasm:gfx") {
+            bail!("a module imports gasm:gfx or gasm:gl, not both");
+        }
         // guests that export gasm_run run in one async call (stack switching)
         let has_run = module.get_export("gasm_run").is_some();
         let switching = has_run && opts.stack_switching;
@@ -986,6 +998,7 @@ impl Game {
             switching::add_yield_sync(&mut linker)?;
         }
         add_gfx_imports(&mut linker)?;
+        crate::gl::add_gl_imports(&mut linker)?;
         add_net_imports(&mut linker)?;
         add_storage_imports(&mut linker)?;
         let mut store = Store::new(engine, host);
@@ -1042,7 +1055,12 @@ impl Game {
         let frame = instance.get_typed_func::<(), ()>(&mut store, "gasm_frame")?;
         let exit = instance.get_typed_func::<(), ()>(&mut store, "gasm_exit").ok();
         let run = if switching { Some(instance.get_typed_func::<(), i32>(&mut store, "gasm_run")?) } else { None };
-        Ok(Game { store: Some(store), frame, exit, deadline, run, running: None, exchange, ended: false })
+        Ok(Game { store: Some(store), frame, exit, deadline, run, running: None, exchange, ended: false, gl })
+    }
+
+    /// Whether the guest imports gasm:gl.
+    pub fn uses_gl(&self) -> bool {
+        self.gl
     }
 
     /// Whether the guest runs through `gasm_run` (the runner switches stacks).
@@ -1058,7 +1076,8 @@ impl Game {
         let Some(run) = self.run.clone() else {
             let store = self.store.as_mut().expect("store");
             store.set_epoch_deadline(self.deadline);
-            let r = self.frame.call(store, ()).map_err(classify);
+            let r = self.frame.call(&mut *store, ()).map_err(classify);
+            store.data_mut().frame_index += 1;
             self.ended = r.is_err();
             return r;
         };

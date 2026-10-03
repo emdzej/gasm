@@ -165,11 +165,13 @@ static inline int32_t gasm_net_open_str(const char *url) { return gasm_net_open(
 
 const rustName = (m, f) => `${m.rust_prefix}${f.name}`;
 
+const RUST_KEYWORDS = new Set(['ref', 'type', 'match', 'loop', 'move', 'box', 'in', 'fn', 'impl', 'mod', 'use']);
 function rustParams(fn) {
   return (fn.params ?? []).map((p) => {
+    const name = RUST_KEYWORDS.has(p.name) ? `r#${p.name}` : p.name;
     if (p.type === 'str') return T.str.rust.replaceAll('{name}', p.name);
-    if (p.type === 'ptr') return `${p.name}: ${p.rust}`;
-    return `${p.name}: ${T[p.type].rust}`;
+    if (p.type === 'ptr') return `${name}: ${p.rust}`;
+    return `${name}: ${T[p.type].rust}`;
   }).join(', ');
 }
 
@@ -228,6 +230,49 @@ pub use crate::native::abi::*;
   return out.join('\n');
 }
 
+// ---- gasm:gl tables -------------------------------------------------------------------
+// The native runner links gasm:gl from a signature table (runners/native/src/gl.rs
+// dispatches by name); the SDK's native stub gets trivial functions (no GL natively).
+
+const glModule = abi.modules.find((m) => m.name === 'gasm:gl');
+const wasmChar = { i32: 'i', i64: 'I', f32: 'f', f64: 'F' };
+
+function genGlSigs() {
+  const out = [`//! gasm:gl import signatures: (name, params, result), one char per wasm value
+//! (i = i32, I = i64, f = f32). GENERATED from spec/abi.json by scripts/gen-abi.mjs.
+
+pub(crate) const FUNCTIONS: &[(&str, &str, &str)] = &[`];
+  for (const f of glModule.functions) {
+    const s = wasmSig(f);
+    out.push(`    (${JSON.stringify(f.name)}, "${s.params.map((t) => wasmChar[t]).join('')}", "${s.result ? wasmChar[s.result] : ''}"),`);
+  }
+  out.push('];', '');
+  return out.join('\n');
+}
+
+function genGlStub() {
+  const out = [`// gasm:gl in the native stub host: names count up, everything else is 0 (there is
+// no GL natively). GENERATED from spec/abi.json by scripts/gen-abi.mjs; include!d in native.rs.
+
+static GL_NAMES: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1);
+fn gl_name() -> u32 {
+    GL_NAMES.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+}
+`];
+  for (const f of glModule.functions) {
+    const ps = rustParams(f).replaceAll('r#', '').replace(/(\w+): /g, '_$1: ');
+    const ret = f.result ? ` -> ${T[f.result].rust}` : '';
+    let body = '';
+    if (f.name === 'width') body = '1280';
+    else if (f.name === 'height') body = '720';
+    else if (/^create_/.test(f.name) || f.name === 'fence_sync') body = 'gl_name()';
+    else if (f.result) body = f.result === 'f32' ? '0.0' : '0';
+    out.push(`pub unsafe fn ${rustName(glModule, f)}(${ps})${ret} { ${body} }`.replace('{  }', '{}'));
+  }
+  out.push('');
+  return out.join('\n');
+}
+
 // ---- conformance ---------------------------------------------------------------------
 
 function section(text, start, end) {
@@ -261,7 +306,7 @@ function splitParams(text) {
   return out.map((p) => p.trim()).filter(Boolean);
 }
 
-function conformance() {
+async function conformance() {
   const errors = [];
   const compare = (where, want, have) => {
     for (const n of want) if (!have.has(n)) errors.push(`${where}: missing ${n}`);
@@ -300,7 +345,7 @@ function conformance() {
   const nativeRs = read('guests/gasm/src/native.rs');
   const jsMethod = { gasm: 'gasmImports() {', 'gasm:gfx': 'gfxImports() {', 'gasm:net': 'netImports() {', 'gasm:storage': 'storageImports() {' };
 
-  for (const m of gasmModules) {
+  for (const m of gasmModules.filter((m) => m !== glModule)) {
     const want = new Map(m.functions.map((f) => [f.name, f]));
     // native runner (wasmtime): func_wrap("gasm", "name", ..) or func_wrap(M, "name", ..) after const M
     const rs = m.name === 'gasm'
@@ -312,8 +357,23 @@ function conformance() {
       .map((x) => [x[1], { params: x[3] ? [x[3]] : splitParams(x[2] ?? ''), types: false, result: undefined }]));
     compareSigs(`runners/web (${m.name})`, want, js);
   }
+  // gasm:gl: the native runner dispatches every name (signatures come from gl_sigs.rs);
+  // the JS runner's GlHost has a method per import, with the right arity
+  const glNames = new Set(glModule.functions.map((f) => f.name));
+  const glRs = read('runners/native/src/gl.rs');
+  const dispatched = new Set([...section(glRs, 'use Kind::*;', '\n    }\n    Ok(())').matchAll(/(?:^|\|)\s*"([a-z_0-9]+)"(?=\s*(?:=>|\|))/gm)].map((x) => x[1]));
+  for (const n of glNames) if (!dispatched.has(n) && !/^uniform\d|^uniform_matrix/.test(n)) errors.push(`runners/native (gasm:gl): missing ${n}`);
+  for (const n of dispatched) if (!glNames.has(n)) errors.push(`runners/native (gasm:gl): not in abi.json: ${n}`);
+  const { GlHost, glImports } = await import(join(ROOT, 'runners/web/lib/gl.js'));
+  const jsGl = glImports(new GlHost({}));
+  for (const f of glModule.functions) {
+    if (!jsGl[f.name]) { errors.push(`runners/web (gasm:gl): missing ${f.name}`); continue; }
+    const arity = GlHost.prototype[f.name].length, want = wasmSig(f).params.length;
+    if (arity !== want) errors.push(`runners/web (gasm:gl): ${f.name} takes ${arity} params, abi.json says ${want}`);
+  }
+  for (const n of Object.keys(jsGl)) if (!glNames.has(n)) errors.push(`runners/web (gasm:gl): not in abi.json: ${n}`);
   // native stub host in the Rust SDK implements every function (incl. proc_exit), same signatures
-  const stub = new Map([...section(nativeRs, 'pub mod abi', '\n}\n').matchAll(/pub unsafe fn ([a-z_0-9]+)\(([^)]*)\)(?:\s*->\s*([^{]+?))?\s*\{/g)]
+  const stub = new Map([...(section(nativeRs, 'pub mod abi', '\n}\n') + read('guests/gasm/src/native_gl.rs')).matchAll(/pub unsafe fn ([a-z_0-9]+)\(([^)]*)\)(?:\s*->\s*([^{]+?))?\s*\{/g)]
     .map((x) => [x[1], {
       params: splitParams(x[2]).map((p) => rustWasm(p.split(':').slice(1).join(':'))),
       result: x[3] && x[3].trim() !== '!' ? rustWasm(x[3]) : null,
@@ -369,9 +429,12 @@ async function keymapCheck() {
 
 // ---- main ----------------------------------------------------------------------------------
 
-const outputs = { 'spec/gasm.h': genHeader(), 'guests/gasm/src/sys.rs': genRust() };
+const outputs = {
+  'spec/gasm.h': genHeader(), 'guests/gasm/src/sys.rs': genRust(),
+  'runners/native/src/gl_sigs.rs': genGlSigs(), 'guests/gasm/src/native_gl.rs': genGlStub(),
+};
 if (process.argv.includes('--check')) {
-  const errors = [...conformance(), ...(await keymapCheck())];
+  const errors = [...(await conformance()), ...(await keymapCheck())];
   for (const [p, content] of Object.entries(outputs)) {
     if (read(p) !== content) errors.push(`${p} is out of date: run node scripts/gen-abi.mjs`);
   }

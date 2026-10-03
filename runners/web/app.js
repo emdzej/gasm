@@ -17,7 +17,7 @@ const GAMES = {
   'scummvm.wasm': 'ScummVM',
   'sdl3-snake.wasm': 'SDL3: snake', 'sdl3-woodeneye.wasm': 'SDL3: woodeneye-008', 'sdl3-callbacks.wasm': 'SDL3: callbacks + audio',
   'sdl3-classic.wasm': 'SDL3: classic main loop', 'sdl3-threads.wasm': 'SDL3: threads (cooperative)',
-  'triangle.wasm': 'GPU triangle', 'textured.wasm': 'GPU textures (test)', 'inputtest.wasm': 'input tester', 'test-pattern.wasm': 'test pattern (C)',
+  'triangle.wasm': 'GPU triangle', 'textured.wasm': 'GPU textures (test)', 'inputtest.wasm': 'input tester', 'test-pattern.wasm': 'test pattern (C)', 'gltest.wasm': 'GLES 3 test (C)',
   'assetcheck.wasm': 'asset check (test)',
 };
 // Games that take a content file from roms/ (or an opened/dropped file) as an asset.
@@ -239,6 +239,12 @@ function stopped(e) {
   host?.shutdown(); worker?.exit();
 }
 
+/** gasm:gl: the default framebuffer is the canvas at display size. */
+function fitGl(c) {
+  const [w, h] = canvasSize();
+  if (c.width !== w || c.height !== h) { c.width = w; c.height = h; }
+}
+
 /** Stop the current game: gasm_exit (saves), close its sockets and storage, free the GPU. */
 async function stopGame() {
   cancelAnimationFrame(rafId);
@@ -295,6 +301,7 @@ function tick(now) {
     }
   } else if (due > 0) {
     // one batch: only the last frame is shown; a gfx canvas gets 2D frames as a WebGPU blit
+    if (gpu?.gl) fitGl(gpu.gl.canvas);
     try { host.runFrames(batch(due), true); } catch (e) { return stopped(e); }
     acc -= due * period; fpsN += due;
     draw2d();
@@ -373,14 +380,15 @@ async function start({ romBytes } = {}) {
     const module = await WebAssembly.compile(bytes);
     if (stale()) return;
     const usesGfx = WebAssembly.Module.imports(module).some((i) => i.module === 'gasm:gfx');
+    const usesGl = WebAssembly.Module.imports(module).some((i) => i.module === 'gasm:gl');
     gameName = staticTitle(module) ?? game.split('/').pop().replace(/\.wasm$/, '');
     showTitle(null);
     // gfx guests go to the worker only if the canvas can be transferred (OffscreenCanvas);
     // the worker then needs WebGPU too, otherwise we fall back to the main thread below.
     const offscreenOk = typeof HTMLCanvasElement !== 'undefined' && 'transferControlToOffscreen' in HTMLCanvasElement.prototype;
-    let useWorker = ($('worker').checked || url.has('opfs')) && (!usesGfx || offscreenOk);
+    let useWorker = ($('worker').checked || url.has('opfs')) && (!usesGfx || offscreenOk) && !usesGl;
     let c = freshCanvas();
-    c.classList.toggle('gpu', usesGfx);
+    c.classList.toggle('gpu', usesGfx || usesGl);
     gpu = null;
     const namespace = await namespaceFor(game); // saves: one namespace per game
     const prefix = url.get('prefix') ?? '';
@@ -409,6 +417,7 @@ async function start({ romBytes } = {}) {
     }
     if (!useWorker) {
       if (usesGfx && $('worker').checked && !offscreenOk) log('gasm:gfx games run on the main thread here (no OffscreenCanvas)');
+      if (usesGl && $('worker').checked) log('gasm:gl games run on the main thread');
       let assets = record;
       if (folder) {  // main thread: preload the folder into memory, with progress
         const t = new AssetTable(log);
@@ -418,12 +427,16 @@ async function start({ romBytes } = {}) {
         assets = t;
       }
       const gfx = usesGfx ? await WebGpuGfx.create(c, log) : undefined;
-      gpu = gfx ?? null;
+      // gasm:gl: a WebGL 2 context on the canvas; its drawing buffer follows the display size
+      const gl = usesGl ? c.getContext('webgl2', { alpha: false, antialias: false, depth: true, stencil: true }) : null;
+      if (usesGl && !gl) throw new Error('this game needs WebGL 2 (gasm:gl)');
+      if (gl) fitGl(c);
+      gpu = gfx ?? (gl && { gl, device: { destroy: () => gl.getExtension('WEBGL_lose_context')?.loseContext() } }) ?? null;
       const storage = await IdbStorage.open(namespace).catch((e) => {
         log(`storage unavailable (${e.message}); saves won't persist`);
         return new MemoryStorage();
       });
-      const h = new GasmHost({ assets, params, gfx, storage, allowNet: true, onPresent: present, onAudio, onLog: log, onTitle: showTitle,
+      const h = new GasmHost({ assets, params, gfx, gl, storage, allowNet: true, onPresent: present, onAudio, onLog: log, onTitle: showTitle,
                                virtualTime: hashFrames > 0 });
       h.text = '';     // the page has a keyboard
       if (stale()) { h.shutdown(); gfx?.device.destroy(); return; }

@@ -230,6 +230,10 @@ export interface GasmHostOptions {
   virtualTime?: boolean;
   /** Run guests that export gasm_run that way (JSPI). Default: when the engine has JSPI. */
   stackSwitching?: boolean;
+  /** gasm:gl guests: the WebGL 2 context to draw with (create it with alpha: false,
+   *  antialias: false, depth and stencil; size the canvas to the display). null or
+   *  omitted: the null GL (headless). */
+  gl?: WebGL2RenderingContext | null;
 }
 
 /** One frame of a batch for GasmHost.runFrames / GasmWorker.frames. */

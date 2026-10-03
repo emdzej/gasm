@@ -9,6 +9,7 @@ loopdemo-c frames=261 presented=260 size=160x120 video_fnv32=f49f9dc5 audio_fnv3
 threadtest frames=15 presented=10 size=64x64 video_fnv32=00dcb6bb audio_fnv32=811c9dc5 audio_frames=0 
 threadtest-many frames=6 presented=1 size=64x64 video_fnv32=ecc5e345 audio_fnv32=811c9dc5 audio_frames=0 
 pthreadtest frames=14 presented=7 size=64x64 video_fnv32=ff79a5cd audio_fnv32=811c9dc5 audio_frames=0 
+gltest frames=120 presented=0 size=0x0 video_fnv32=48829178 audio_fnv32=811c9dc5 audio_frames=0 
 sdl3-snake frames=900 presented=900 size=576x432 video_fnv32=d81113c5 audio_fnv32=811c9dc5 audio_frames=0 
 sdl3-woodeneye frames=400 presented=400 size=640x480 video_fnv32=8dab25b4 audio_fnv32=811c9dc5 audio_frames=0 
 sdl3-callbacks frames=281 presented=280 size=320x240 video_fnv32=8debd2d5 audio_fnv32=28c224f5 audio_frames=224800 

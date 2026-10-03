@@ -619,6 +619,40 @@ covered: `pthread_exit`, cancellation, process-shared objects and C11
   who waits for what.
 - Each thread costs its C stack plus a 256 KiB Asyncify buffer.
 
+### OpenGL ES 3
+
+GLES 3 / WebGL 2 renderers build unchanged with the SDK's drop-in headers:
+`#include <GLES3/gl3.h>` (or `<GLES2/gl2.h>`) and link
+[`gasm_gl.c`](https://github.com/emdzej/gasm/blob/main/sdk/c/src/gasm_gl.c)
+(CMake: `target_sources(mygame PRIVATE ${GASM_GL_SOURCE})`). They run on
+[`gasm:gl`](/docs/abi#gasm-gl-optional-opengl-es-3-0): WebGL 2 in the browser,
+a null GL headless (same GL errors, uploads hashed).
+
+```c
+#include <GLES3/gl3.h>
+
+GLuint vbo;
+glGenBuffers(1, &vbo);
+glBindBuffer(GL_ARRAY_BUFFER, vbo);
+glBufferData(GL_ARRAY_BUFFER, sizeof verts, verts, GL_STATIC_DRAW);
+if (glGetError() != GL_NO_ERROR) ...   // GL errors are reported, they don't trap
+```
+
+- WebGL 2's rules: GLSL ES 3.00 (`#version 300 es`), extensions only after
+  finding them in `GL_EXTENSIONS` and calling `gasm_gl_enable_extension`, no
+  program binaries, no client-side vertex arrays.
+- `glMapBufferRange` works on a copy in guest memory, uploaded on
+  `glUnmapBuffer` / `glFlushMappedBufferRange`.
+- Query results and fences are ready from the next frame on, on every runner.
+- Draw into the default framebuffer each frame (it isn't preserved), sized by
+  `gasm_gl_width()` / `gasm_gl_height()`; it has depth and stencil but no
+  alpha and no multisampling.
+- A game uses `gasm:gl` or `gasm:gfx`, not both. `gasm-run`'s window doesn't
+  have `gasm:gl` yet (headless runs do); it's next on the
+  [roadmap](/docs/roadmap).
+
+Example: [`guests/gltest`](https://github.com/emdzej/gasm/blob/main/guests/gltest/main.c).
+
 ### SDL 3
 
 SDL programs build for gasm with their source unchanged:

@@ -25,7 +25,7 @@ for n in node ${NODE24:-} "$HOME"/.nvm/versions/node/v2[4-9]*/bin/node; do
 done
 [ -n "$NODE_JSPI" ] || echo "note: no Node with JSPI (24+): run builds are checked natively only"
 [ -d roms ] && [ -n "$(ls roms/*.nes 2>/dev/null)" ] && [ -f roms/freedoom2.wad ] && [ -f roms/doom1.wad ] && [ -f roms/bass/sky.dnr ] && [ -d roms/scumm/dott-dos-ni-demo-en ] && [ -f roms/drascula/flac/audio/track28.flac ] || scripts/fetch-roms.sh
-for g in nes test-pattern sumo triangle textured inputtest threadtest pthreadtest sdl3-threads loopdemo loopdemo-run loopdemo-c loopdemo-c-run doom scummvm scummvm-run sdl3-snake sdl3-woodeneye sdl3-callbacks sdl3-classic sdl3-classic-run; do "$NATIVE" build/$g.wasm --compile build/$g.cwasm 2>/dev/null; done
+for g in nes test-pattern gltest sumo triangle textured inputtest threadtest pthreadtest sdl3-threads loopdemo loopdemo-run loopdemo-c loopdemo-c-run doom scummvm scummvm-run sdl3-snake sdl3-woodeneye sdl3-callbacks sdl3-classic sdl3-classic-run; do "$NATIVE" build/$g.wasm --compile build/$g.cwasm 2>/dev/null; done
 
 pass=0; fail=0
 run() { "$@" 2>/dev/null | grep -E '^(frames|video)' | tr '\n' ' '; }
@@ -79,6 +79,9 @@ check threadtest-many     threadtest 40 --param mode=many
 # POSIX threads (gasm_pthread.c): timed condition waits, once, keys, recursive mutex,
 # rwlock across frames, semaphores, spinlocks, nanosleep
 check pthreadtest         pthreadtest 60
+# OpenGL ES 3 (gasm:gl via <GLES3/gl3.h>): uploads, uniforms, a mapped buffer, query and
+# fence readiness by frame, and the GL errors of deliberate mistakes (the error log is uploaded)
+check gltest              gltest 120
 # SDL3 (sdk/sdl3): SDL's own demos unchanged (snake; woodeneye: WASD, relative mouse, shooting),
 # a callbacks app (audio stream, gamepad events) and a classic main() loop (Asyncify:
 # keyboard state, text input, SDL_Delay, a save file in the pref path)

@@ -16,12 +16,15 @@ at 0 (older runners trap only if a guest calls something they lack, see
 The suggested order, from the most benefit for the least risk:
 
 Done recently: stack switching (`gasm_run`,
-[design/stack-switching.md](https://github.com/emdzej/gasm/blob/main/design/stack-switching.md))
-and cooperative threads in C, POSIX and SDL 3
-([design/threads.md](https://github.com/emdzej/gasm/blob/main/design/threads.md)).
+[design/stack-switching.md](https://github.com/emdzej/gasm/blob/main/design/stack-switching.md)),
+cooperative threads in C, POSIX and SDL 3
+([design/threads.md](https://github.com/emdzej/gasm/blob/main/design/threads.md))
+and `gasm:gl` in the browser and headless
+([design/gasm-gl.md](https://github.com/emdzej/gasm/blob/main/design/gasm-gl.md)).
 
-1. **`gasm:gl`.** The largest payoff (GLES/WebGL engines, Godot, ScummVM's 3D
-   engines) and the most work, mostly building and shipping ANGLE natively.
+1. **`gasm:gl` natively.** ANGLE in `gasm-run`'s window (phase 3 of the plan):
+   mostly building and shipping ANGLE for macOS, Windows and Linux. Then the
+   Rust `glow` backend, then a Godot port.
 
 ## Runtime and ABI
 
@@ -40,7 +43,10 @@ and cooperative threads in C, POSIX and SDL 3
 
 | Item | What it gives | Status |
 |---|---|---|
-| `gasm:gl` | OpenGL ES 3.0 with WebGL 2's rules: WebGL 2 in browsers, ANGLE natively, a null GL headless. Phases: ABI, browser and headless, ANGLE, SDKs and docs, then a Godot port. | proposal: [design/gasm-gl.md](https://github.com/emdzej/gasm/blob/main/design/gasm-gl.md) |
+| `gasm:gl` natively | OpenGL ES 3.0 in `gasm-run`'s window through ANGLE (Metal, D3D11, Vulkan). The ABI, the browser runner (WebGL 2), the null GL of headless runs and the C headers are done; the native window refuses `gasm:gl` games until then. | next: [design/gasm-gl.md](https://github.com/emdzej/gasm/blob/main/design/gasm-gl.md), phase 3 |
+| `gasm:gl` in Worker mode | WebGL 2 on a transferred `OffscreenCanvas`; `gasm:gl` games run on the main thread for now. | not started |
+| `gasm:gl` for Rust | A `glow::HasContext` implementation over `gasm::sys::gl_*` (egui_glow and other glow code). | not started |
+| Godot | A `platform/gasm` port on `gasm:gl`. | after native `gasm:gl` |
 | `gasm:gfx` render targets | Render-to-texture. | not started |
 | `gasm:gfx` cube maps, render bundles | Skyboxes and environment maps; cheaper repeated draws. | not started |
 | Batched gfx commands | One call per frame for draw-heavy guests instead of one per command. | not started |

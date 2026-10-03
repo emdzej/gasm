@@ -1,8 +1,24 @@
 # `gasm:gl`: OpenGL ES 3.0 for guests
 
-> **Status: proposed.** Nothing implemented yet. This is the feature description
-> and the plan; the ABI details land in `spec/abi.json` and `spec/ABI.md` when
-> the work starts.
+> **Status: phases 1 and 2 implemented** (the ABI, the browser runner on
+> WebGL 2, the null GL of both headless runners, the C drop-in headers,
+> `guests/gltest`). The normative description is the
+> [`gasm:gl` section of ABI.md](https://github.com/emdzej/gasm/blob/main/spec/ABI.md).
+> Next is phase 3 (ANGLE natively); until then the native window refuses
+> `gasm:gl` games. Where the implementation differs from the plan below:
+>
+> - The null GL's limits and strings are tables in the two runners
+>   (`runners/web/lib/gl.js`, `runners/native/src/gl.rs`), not in `abi.json`.
+> - The native runner links the 224 imports from a generated signature table
+>   (`gl_sigs.rs`) and dispatches by name; `gen-abi.mjs --check` checks that both
+>   runners handle every function (JS: arity too).
+> - Worker mode isn't done: `gasm:gl` games run on the main thread.
+> - gltest is smaller than described (a textured, instanced quad, a uniform
+>   block, render to texture + blit, a mapped buffer, a query and a fence) and
+>   uploads the GL errors of 15 deliberate mistakes each frame, so the hash
+>   checks error parity: Chrome's WebGL 2 and both null GLs give the same hash.
+> - Chrome (ANGLE on Metal) drops a clear-only framebuffer's contents when it is
+>   blitted without a draw in between; gltest draws into its framebuffer.
 
 ## Summary
 
@@ -196,9 +212,6 @@ is needed:
   them in CI: Chrome, native ANGLE (SwiftShader), and both null GLs. The null
   GL only claims parity for the cases on that list; growing the list is part
   of each phase.
-- **Hashing:** headless runners fold every upload into the video hash: buffer
-  data, texture data (header + payload, as `write_texture`), uniform values.
-  Draw calls and state aren't hashed, as in `gasm:gfx`.
 - **Hashing:** headless runners fold every upload into the video hash: buffer
   data, texture data (header + payload, as `write_texture`), uniform values.
   Draw calls and state aren't hashed, as in `gasm:gfx`.

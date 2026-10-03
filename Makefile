@@ -55,7 +55,7 @@ $(FLAGS_DIR)/$(1): FORCE
 	@echo '$(2)' | cmp -s - $$@ || echo '$(2)' > $$@
 endef
 
-GUESTS   := $(BUILD)/test-pattern.wasm $(BUILD)/nes.wasm $(BUILD)/sumo.wasm $(BUILD)/triangle.wasm $(BUILD)/textured.wasm $(BUILD)/inputtest.wasm $(BUILD)/loopdemo.wasm $(BUILD)/loopdemo-c.wasm $(BUILD)/threadtest.wasm $(BUILD)/pthreadtest.wasm $(BUILD)/assetcheck.wasm $(BUILD)/doom.wasm $(BUILD)/scummvm.wasm \
+GUESTS   := $(BUILD)/test-pattern.wasm $(BUILD)/gltest.wasm $(BUILD)/nes.wasm $(BUILD)/sumo.wasm $(BUILD)/triangle.wasm $(BUILD)/textured.wasm $(BUILD)/inputtest.wasm $(BUILD)/loopdemo.wasm $(BUILD)/loopdemo-c.wasm $(BUILD)/threadtest.wasm $(BUILD)/pthreadtest.wasm $(BUILD)/assetcheck.wasm $(BUILD)/doom.wasm $(BUILD)/scummvm.wasm \
   $(BUILD)/sdl3-snake.wasm $(BUILD)/sdl3-woodeneye.wasm $(BUILD)/sdl3-callbacks.wasm $(BUILD)/sdl3-classic.wasm \
   $(BUILD)/sdl3-threads.wasm
 # made by the same recipes as the Asyncify builds
@@ -288,6 +288,12 @@ $(BUILD)/sdl3-classic.wasm: sdk/sdl3/examples/classic/main.c $(SDL_LIB) $(WASM_O
 $(BUILD)/sdl3-threads.wasm: sdk/sdl3/examples/threads/main.c $(SDL_LIB) $(SDL_LOOP_THREADS) $(WASM_OPT)
 	$(call SDL_LINK,$< $(SDL_LOOP_THREADS))
 	$(call wasm_opt,$(ASYNCIFY))
+
+# GLES 3 on gasm:gl through the C SDK's drop-in headers
+$(BUILD)/gltest.wasm: guests/gltest/main.c sdk/c/src/gasm_gl.c sdk/c/include/GLES3/gl3.h spec/gasm.h $(CLANG) $(WASM_OPT)
+	@mkdir -p $(@D)
+	$(CC) $(TARGET) $(REACTOR) $(OPT) -Ispec -Isdk/c/include guests/gltest/main.c sdk/c/src/gasm_gl.c -o $@.raw -lm
+	$(call wasm_opt)
 
 $(BUILD)/test-pattern.wasm: guests/test-pattern/main.c spec/gasm.h $(CLANG) $(WASM_OPT)
 	@mkdir -p $(@D)

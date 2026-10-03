@@ -12,6 +12,8 @@ src/gasm_thread.c           (with gasm_loop.c built with -DGASM_LOOP_THREADS)
 src/gasm_pthread.c          optional: POSIX threads (pthread_*, sem_*) on the same threads
 include/gasm_vfile.h        optional: stdio FILE* over assets and gasm:storage
 src/gasm_vfile.c
+include/GLES3/gl3.h         optional: OpenGL ES 3.0 on gasm:gl (also GLES2/gl2.h, gl2ext.h)
+src/gasm_gl.c               (generated from the Khronos registry)
 cmake/gasm-toolchain.cmake  wasm32 toolchain (wraps wasi-sdk's)
 cmake/Gasm.cmake            gasm_add_game(<target> [LOOP [THREADS]] <sources...>)
 example/                    a minimal game
@@ -57,6 +59,13 @@ FILE *sav = gasm_vfile_open(GASM_VFILE_STORAGE, "save1.dat", "wb");     // store
 
 Compile `src/gasm_vfile.c` with the game (it needs `_GNU_SOURCE` for
 `fopencookie`); with CMake: `target_sources(mygame PRIVATE ${GASM_VFILE_SOURCE})`.
+
+OpenGL ES 3.0 code builds unchanged with `#include <GLES3/gl3.h>` and
+`src/gasm_gl.c` (CMake: `target_sources(mygame PRIVATE ${GASM_GL_SOURCE})`).
+WebGL 2's rules apply (GLSL ES 3.00, no program binaries); `glMapBufferRange`
+works on a copy in guest memory. A game uses `gasm:gl` or `gasm:gfx`, not both.
+`gasm:gl` runs in the browser (WebGL 2) and headless; `gasm-run`'s window
+doesn't support it yet.
 
 Newer imports can be probed before use: `gasm_has_str("gasm:gfx.destroy")`.
 `gasm_set_title_str(title)` and `gasm_video_aspect(num, den)` probe for

@@ -24,8 +24,8 @@ features:
     details: A game is a single .wasm file. The same bytes run in a native window (wasmtime + wgpu), in any WebGPU browser, and headless in Node for CI.
   - title: A small, stable ABI
     details: A small core (video, audio, input, assets, params), plus optional GPU, network and storage modules. A new runner is weeks of work, not years.
-  - title: 3D via WebGPU
-    details: gasm:gfx is a compact WebGPU subset with WGSL shaders, textures and samplers. Browsers forward it almost 1:1; natively it runs on Metal, Vulkan and D3D12 through wgpu.
+  - title: 3D via WebGPU or OpenGL ES
+    details: gasm:gfx is a compact WebGPU subset with WGSL shaders; natively it runs on Metal, Vulkan and D3D12 through wgpu. gasm:gl is OpenGL ES 3.0 with WebGL 2's rules for existing GL code (browser and headless for now).
   - title: Online multiplayer
     details: gasm:net gives every runner WebSocket-style messaging. The sumo demo plays lockstep matches between native and browser players through a tiny relay.
   - title: Bit-exact determinism

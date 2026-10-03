@@ -135,6 +135,495 @@ mod imports {
         pub fn gfx_destroy(handle: u32);
     }
 
+    #[link(wasm_import_module = "gasm:gl")]
+    unsafe extern "C" {
+        /// Drawable width in pixels (the default framebuffer follows it).
+        #[link_name = "width"]
+        pub fn gl_width() -> u32;
+        /// Drawable height in pixels.
+        #[link_name = "height"]
+        pub fn gl_height() -> u32;
+        /// 0 during catch-up frames (the guest may skip drawing).
+        #[link_name = "frame_shown"]
+        pub fn gl_frame_shown() -> u32;
+        /// Show the default framebuffer now; otherwise the runner presents at the end of the frame.
+        #[link_name = "present"]
+        pub fn gl_present();
+        /// The oldest GL error flag (GL rules: a call with an error has no effect), or 0.
+        #[link_name = "get_error"]
+        pub fn gl_get_error() -> u32;
+        /// GL_VENDOR, GL_RENDERER, GL_VERSION, GL_SHADING_LANGUAGE_VERSION or GL_EXTENSIONS (space-separated): its length, copied if it fits; -1 for an invalid name (GL_INVALID_ENUM).
+        #[link_name = "get_string"]
+        pub fn gl_get_string(name: u32, dst: *mut u8, cap: u32) -> i32;
+        /// Turn on a WebGL extension listed in GL_EXTENSIONS (1), or 0 if it isn't there.
+        #[link_name = "enable_extension"]
+        pub fn gl_enable_extension(name: *const u8, name_len: u32) -> u32;
+        /// The parameter's values as i32s: how many it has (copied up to count), or -1 for an invalid pname (GL_INVALID_ENUM).
+        #[link_name = "get_integerv"]
+        pub fn gl_get_integerv(pname: u32, dst: *mut u8, count: u32) -> i32;
+        /// As get_integerv, as f32s.
+        #[link_name = "get_floatv"]
+        pub fn gl_get_floatv(pname: u32, dst: *mut u8, count: u32) -> i32;
+        /// As get_integerv, as i64s.
+        #[link_name = "get_integer64v"]
+        pub fn gl_get_integer64v(pname: u32, dst: *mut u8, count: u32) -> i32;
+        /// Indexed parameters (e.g. GL_UNIFORM_BUFFER_BINDING), as i32s.
+        #[link_name = "get_integeri_v"]
+        pub fn gl_get_integeri_v(target: u32, index: u32, dst: *mut u8, count: u32) -> i32;
+        /// GL_SAMPLES or GL_NUM_SAMPLE_COUNTS of a renderbuffer format.
+        #[link_name = "get_internalformativ"]
+        pub fn gl_get_internalformativ(target: u32, internalformat: u32, pname: u32, dst: *mut u8, count: u32) -> i32;
+        /// Writes 3 i32s: range min, range max, precision.
+        #[link_name = "get_shader_precision_format"]
+        pub fn gl_get_shader_precision_format(shadertype: u32, precisiontype: u32, dst: *mut u8);
+        #[link_name = "active_texture"]
+        pub fn gl_active_texture(texture: u32);
+        #[link_name = "blend_color"]
+        pub fn gl_blend_color(red: f32, green: f32, blue: f32, alpha: f32);
+        #[link_name = "blend_equation"]
+        pub fn gl_blend_equation(mode: u32);
+        #[link_name = "blend_equation_separate"]
+        pub fn gl_blend_equation_separate(mode_rgb: u32, mode_alpha: u32);
+        #[link_name = "blend_func"]
+        pub fn gl_blend_func(sfactor: u32, dfactor: u32);
+        #[link_name = "blend_func_separate"]
+        pub fn gl_blend_func_separate(src_rgb: u32, dst_rgb: u32, src_alpha: u32, dst_alpha: u32);
+        #[link_name = "clear"]
+        pub fn gl_clear(mask: u32);
+        #[link_name = "clear_color"]
+        pub fn gl_clear_color(red: f32, green: f32, blue: f32, alpha: f32);
+        #[link_name = "clear_depthf"]
+        pub fn gl_clear_depthf(depth: f32);
+        #[link_name = "clear_stencil"]
+        pub fn gl_clear_stencil(s: i32);
+        #[link_name = "color_mask"]
+        pub fn gl_color_mask(red: u32, green: u32, blue: u32, alpha: u32);
+        #[link_name = "cull_face"]
+        pub fn gl_cull_face(mode: u32);
+        #[link_name = "depth_func"]
+        pub fn gl_depth_func(func: u32);
+        #[link_name = "depth_mask"]
+        pub fn gl_depth_mask(flag: u32);
+        #[link_name = "depth_rangef"]
+        pub fn gl_depth_rangef(near: f32, far: f32);
+        #[link_name = "disable"]
+        pub fn gl_disable(cap: u32);
+        #[link_name = "enable"]
+        pub fn gl_enable(cap: u32);
+        #[link_name = "is_enabled"]
+        pub fn gl_is_enabled(cap: u32) -> u32;
+        #[link_name = "front_face"]
+        pub fn gl_front_face(mode: u32);
+        #[link_name = "hint"]
+        pub fn gl_hint(target: u32, mode: u32);
+        #[link_name = "line_width"]
+        pub fn gl_line_width(width: f32);
+        #[link_name = "pixel_storei"]
+        pub fn gl_pixel_storei(pname: u32, param: i32);
+        #[link_name = "polygon_offset"]
+        pub fn gl_polygon_offset(factor: f32, units: f32);
+        #[link_name = "sample_coverage"]
+        pub fn gl_sample_coverage(value: f32, invert: u32);
+        #[link_name = "scissor"]
+        pub fn gl_scissor(x: i32, y: i32, width: i32, height: i32);
+        #[link_name = "viewport"]
+        pub fn gl_viewport(x: i32, y: i32, width: i32, height: i32);
+        #[link_name = "stencil_func"]
+        pub fn gl_stencil_func(func: u32, r#ref: i32, mask: u32);
+        #[link_name = "stencil_func_separate"]
+        pub fn gl_stencil_func_separate(face: u32, func: u32, r#ref: i32, mask: u32);
+        #[link_name = "stencil_mask"]
+        pub fn gl_stencil_mask(mask: u32);
+        #[link_name = "stencil_mask_separate"]
+        pub fn gl_stencil_mask_separate(face: u32, mask: u32);
+        #[link_name = "stencil_op"]
+        pub fn gl_stencil_op(fail: u32, zfail: u32, zpass: u32);
+        #[link_name = "stencil_op_separate"]
+        pub fn gl_stencil_op_separate(face: u32, sfail: u32, dpfail: u32, dppass: u32);
+        #[link_name = "finish"]
+        pub fn gl_finish();
+        #[link_name = "flush"]
+        pub fn gl_flush();
+        /// A new buffer name (glGenBuffers).
+        #[link_name = "create_buffer"]
+        pub fn gl_create_buffer() -> u32;
+        #[link_name = "delete_buffer"]
+        pub fn gl_delete_buffer(buffer: u32);
+        #[link_name = "is_buffer"]
+        pub fn gl_is_buffer(buffer: u32) -> u32;
+        #[link_name = "bind_buffer"]
+        pub fn gl_bind_buffer(target: u32, buffer: u32);
+        #[link_name = "bind_buffer_base"]
+        pub fn gl_bind_buffer_base(target: u32, index: u32, buffer: u32);
+        #[link_name = "bind_buffer_range"]
+        pub fn gl_bind_buffer_range(target: u32, index: u32, buffer: u32, offset: u32, size: u32);
+        /// len bytes from data, or zeros if data is 0.
+        #[link_name = "buffer_data"]
+        pub fn gl_buffer_data(target: u32, data: *const u8, len: u32, usage: u32);
+        #[link_name = "buffer_sub_data"]
+        pub fn gl_buffer_sub_data(target: u32, offset: u32, data: *const u8, len: u32);
+        #[link_name = "copy_buffer_sub_data"]
+        pub fn gl_copy_buffer_sub_data(read_target: u32, write_target: u32, read_offset: u32, write_offset: u32, size: u32);
+        /// Read back len bytes (glMapBufferRange for reading).
+        #[link_name = "get_buffer_sub_data"]
+        pub fn gl_get_buffer_sub_data(target: u32, offset: u32, dst: *mut u8, len: u32);
+        #[link_name = "get_buffer_parameteriv"]
+        pub fn gl_get_buffer_parameteriv(target: u32, pname: u32) -> i32;
+        #[link_name = "create_vertex_array"]
+        pub fn gl_create_vertex_array() -> u32;
+        #[link_name = "delete_vertex_array"]
+        pub fn gl_delete_vertex_array(array: u32);
+        #[link_name = "is_vertex_array"]
+        pub fn gl_is_vertex_array(array: u32) -> u32;
+        #[link_name = "bind_vertex_array"]
+        pub fn gl_bind_vertex_array(array: u32);
+        #[link_name = "enable_vertex_attrib_array"]
+        pub fn gl_enable_vertex_attrib_array(index: u32);
+        #[link_name = "disable_vertex_attrib_array"]
+        pub fn gl_disable_vertex_attrib_array(index: u32);
+        /// offset into the bound GL_ARRAY_BUFFER (no client-side arrays).
+        #[link_name = "vertex_attrib_pointer"]
+        pub fn gl_vertex_attrib_pointer(index: u32, size: i32, r#type: u32, normalized: u32, stride: i32, offset: u32);
+        #[link_name = "vertex_attrib_ipointer"]
+        pub fn gl_vertex_attrib_ipointer(index: u32, size: i32, r#type: u32, stride: i32, offset: u32);
+        #[link_name = "vertex_attrib_divisor"]
+        pub fn gl_vertex_attrib_divisor(index: u32, divisor: u32);
+        #[link_name = "vertex_attrib4f"]
+        pub fn gl_vertex_attrib4f(index: u32, x: f32, y: f32, z: f32, w: f32);
+        #[link_name = "vertex_attribi4i"]
+        pub fn gl_vertex_attribi4i(index: u32, x: i32, y: i32, z: i32, w: i32);
+        #[link_name = "vertex_attribi4ui"]
+        pub fn gl_vertex_attribi4ui(index: u32, x: u32, y: u32, z: u32, w: u32);
+        #[link_name = "get_vertex_attribiv"]
+        pub fn gl_get_vertex_attribiv(index: u32, pname: u32) -> i32;
+        /// GL_CURRENT_VERTEX_ATTRIB: 4 f32s.
+        #[link_name = "get_vertex_attribfv"]
+        pub fn gl_get_vertex_attribfv(index: u32, pname: u32, dst: *mut u8, count: u32) -> i32;
+        #[link_name = "get_vertex_attrib_offset"]
+        pub fn gl_get_vertex_attrib_offset(index: u32, pname: u32) -> u32;
+        #[link_name = "draw_arrays"]
+        pub fn gl_draw_arrays(mode: u32, first: i32, count: i32);
+        /// Indices from the bound GL_ELEMENT_ARRAY_BUFFER at offset.
+        #[link_name = "draw_elements"]
+        pub fn gl_draw_elements(mode: u32, count: i32, r#type: u32, offset: u32);
+        #[link_name = "draw_arrays_instanced"]
+        pub fn gl_draw_arrays_instanced(mode: u32, first: i32, count: i32, instances: i32);
+        #[link_name = "draw_elements_instanced"]
+        pub fn gl_draw_elements_instanced(mode: u32, count: i32, r#type: u32, offset: u32, instances: i32);
+        #[link_name = "draw_range_elements"]
+        pub fn gl_draw_range_elements(mode: u32, start: u32, end: u32, count: i32, r#type: u32, offset: u32);
+        /// count GLenums.
+        #[link_name = "draw_buffers"]
+        pub fn gl_draw_buffers(bufs: *const u8, count: u32);
+        /// count i32s (4 for GL_COLOR, 1 for GL_STENCIL).
+        #[link_name = "clear_bufferiv"]
+        pub fn gl_clear_bufferiv(buffer: u32, drawbuffer: i32, value: *const u8, count: u32);
+        #[link_name = "clear_bufferuiv"]
+        pub fn gl_clear_bufferuiv(buffer: u32, drawbuffer: i32, value: *const u8, count: u32);
+        #[link_name = "clear_bufferfv"]
+        pub fn gl_clear_bufferfv(buffer: u32, drawbuffer: i32, value: *const u8, count: u32);
+        #[link_name = "clear_bufferfi"]
+        pub fn gl_clear_bufferfi(buffer: u32, drawbuffer: i32, depth: f32, stencil: i32);
+        #[link_name = "create_texture"]
+        pub fn gl_create_texture() -> u32;
+        #[link_name = "delete_texture"]
+        pub fn gl_delete_texture(texture: u32);
+        #[link_name = "is_texture"]
+        pub fn gl_is_texture(texture: u32) -> u32;
+        #[link_name = "bind_texture"]
+        pub fn gl_bind_texture(target: u32, texture: u32);
+        #[link_name = "tex_parameteri"]
+        pub fn gl_tex_parameteri(target: u32, pname: u32, param: i32);
+        #[link_name = "tex_parameterf"]
+        pub fn gl_tex_parameterf(target: u32, pname: u32, param: f32);
+        #[link_name = "get_tex_parameteriv"]
+        pub fn gl_get_tex_parameteriv(target: u32, pname: u32) -> i32;
+        #[link_name = "get_tex_parameterfv"]
+        pub fn gl_get_tex_parameterfv(target: u32, pname: u32) -> f32;
+        /// pixels 0: no data (or, with a bound GL_PIXEL_UNPACK_BUFFER, len is the offset into it); otherwise len must cover the image.
+        #[link_name = "tex_image_2d"]
+        pub fn gl_tex_image_2d(target: u32, level: i32, internalformat: i32, width: i32, height: i32, border: i32, format: u32, r#type: u32, pixels: *const u8, len: u32);
+        #[link_name = "tex_image_3d"]
+        pub fn gl_tex_image_3d(target: u32, level: i32, internalformat: i32, width: i32, height: i32, depth: i32, border: i32, format: u32, r#type: u32, pixels: *const u8, len: u32);
+        #[link_name = "tex_sub_image_2d"]
+        pub fn gl_tex_sub_image_2d(target: u32, level: i32, x: i32, y: i32, width: i32, height: i32, format: u32, r#type: u32, pixels: *const u8, len: u32);
+        #[link_name = "tex_sub_image_3d"]
+        pub fn gl_tex_sub_image_3d(target: u32, level: i32, x: i32, y: i32, z: i32, width: i32, height: i32, depth: i32, format: u32, r#type: u32, pixels: *const u8, len: u32);
+        #[link_name = "tex_storage_2d"]
+        pub fn gl_tex_storage_2d(target: u32, levels: i32, internalformat: u32, width: i32, height: i32);
+        #[link_name = "tex_storage_3d"]
+        pub fn gl_tex_storage_3d(target: u32, levels: i32, internalformat: u32, width: i32, height: i32, depth: i32);
+        #[link_name = "compressed_tex_image_2d"]
+        pub fn gl_compressed_tex_image_2d(target: u32, level: i32, internalformat: u32, width: i32, height: i32, border: i32, data: *const u8, len: u32);
+        #[link_name = "compressed_tex_image_3d"]
+        pub fn gl_compressed_tex_image_3d(target: u32, level: i32, internalformat: u32, width: i32, height: i32, depth: i32, border: i32, data: *const u8, len: u32);
+        #[link_name = "compressed_tex_sub_image_2d"]
+        pub fn gl_compressed_tex_sub_image_2d(target: u32, level: i32, x: i32, y: i32, width: i32, height: i32, format: u32, data: *const u8, len: u32);
+        #[link_name = "compressed_tex_sub_image_3d"]
+        pub fn gl_compressed_tex_sub_image_3d(target: u32, level: i32, x: i32, y: i32, z: i32, width: i32, height: i32, depth: i32, format: u32, data: *const u8, len: u32);
+        #[link_name = "copy_tex_image_2d"]
+        pub fn gl_copy_tex_image_2d(target: u32, level: i32, internalformat: u32, x: i32, y: i32, width: i32, height: i32, border: i32);
+        #[link_name = "copy_tex_sub_image_2d"]
+        pub fn gl_copy_tex_sub_image_2d(target: u32, level: i32, xoffset: i32, yoffset: i32, x: i32, y: i32, width: i32, height: i32);
+        #[link_name = "copy_tex_sub_image_3d"]
+        pub fn gl_copy_tex_sub_image_3d(target: u32, level: i32, xoffset: i32, yoffset: i32, zoffset: i32, x: i32, y: i32, width: i32, height: i32);
+        /// Runners generate the levels (unlike gasm:gfx).
+        #[link_name = "generate_mipmap"]
+        pub fn gl_generate_mipmap(target: u32);
+        #[link_name = "create_sampler"]
+        pub fn gl_create_sampler() -> u32;
+        #[link_name = "delete_sampler"]
+        pub fn gl_delete_sampler(sampler: u32);
+        #[link_name = "is_sampler"]
+        pub fn gl_is_sampler(sampler: u32) -> u32;
+        #[link_name = "bind_sampler"]
+        pub fn gl_bind_sampler(unit: u32, sampler: u32);
+        #[link_name = "sampler_parameteri"]
+        pub fn gl_sampler_parameteri(sampler: u32, pname: u32, param: i32);
+        #[link_name = "sampler_parameterf"]
+        pub fn gl_sampler_parameterf(sampler: u32, pname: u32, param: f32);
+        #[link_name = "get_sampler_parameteriv"]
+        pub fn gl_get_sampler_parameteriv(sampler: u32, pname: u32) -> i32;
+        #[link_name = "get_sampler_parameterfv"]
+        pub fn gl_get_sampler_parameterfv(sampler: u32, pname: u32) -> f32;
+        #[link_name = "create_framebuffer"]
+        pub fn gl_create_framebuffer() -> u32;
+        #[link_name = "delete_framebuffer"]
+        pub fn gl_delete_framebuffer(framebuffer: u32);
+        #[link_name = "is_framebuffer"]
+        pub fn gl_is_framebuffer(framebuffer: u32) -> u32;
+        /// 0: the default framebuffer (the window).
+        #[link_name = "bind_framebuffer"]
+        pub fn gl_bind_framebuffer(target: u32, framebuffer: u32);
+        #[link_name = "check_framebuffer_status"]
+        pub fn gl_check_framebuffer_status(target: u32) -> u32;
+        #[link_name = "framebuffer_texture_2d"]
+        pub fn gl_framebuffer_texture_2d(target: u32, attachment: u32, textarget: u32, texture: u32, level: i32);
+        #[link_name = "framebuffer_texture_layer"]
+        pub fn gl_framebuffer_texture_layer(target: u32, attachment: u32, texture: u32, level: i32, layer: i32);
+        #[link_name = "framebuffer_renderbuffer"]
+        pub fn gl_framebuffer_renderbuffer(target: u32, attachment: u32, renderbuffertarget: u32, renderbuffer: u32);
+        #[link_name = "get_framebuffer_attachment_parameteriv"]
+        pub fn gl_get_framebuffer_attachment_parameteriv(target: u32, attachment: u32, pname: u32) -> i32;
+        #[link_name = "blit_framebuffer"]
+        pub fn gl_blit_framebuffer(src_x0: i32, src_y0: i32, src_x1: i32, src_y1: i32, dst_x0: i32, dst_y0: i32, dst_x1: i32, dst_y1: i32, mask: u32, filter: u32);
+        #[link_name = "invalidate_framebuffer"]
+        pub fn gl_invalidate_framebuffer(target: u32, attachments: *const u8, count: u32);
+        #[link_name = "invalidate_sub_framebuffer"]
+        pub fn gl_invalidate_sub_framebuffer(target: u32, attachments: *const u8, count: u32, x: i32, y: i32, width: i32, height: i32);
+        #[link_name = "read_buffer"]
+        pub fn gl_read_buffer(src: u32);
+        /// len must cover the rectangle; with a bound GL_PIXEL_PACK_BUFFER, dst is the offset into it.
+        #[link_name = "read_pixels"]
+        pub fn gl_read_pixels(x: i32, y: i32, width: i32, height: i32, format: u32, r#type: u32, dst: *mut u8, len: u32);
+        #[link_name = "create_renderbuffer"]
+        pub fn gl_create_renderbuffer() -> u32;
+        #[link_name = "delete_renderbuffer"]
+        pub fn gl_delete_renderbuffer(renderbuffer: u32);
+        #[link_name = "is_renderbuffer"]
+        pub fn gl_is_renderbuffer(renderbuffer: u32) -> u32;
+        #[link_name = "bind_renderbuffer"]
+        pub fn gl_bind_renderbuffer(target: u32, renderbuffer: u32);
+        #[link_name = "renderbuffer_storage"]
+        pub fn gl_renderbuffer_storage(target: u32, internalformat: u32, width: i32, height: i32);
+        #[link_name = "renderbuffer_storage_multisample"]
+        pub fn gl_renderbuffer_storage_multisample(target: u32, samples: i32, internalformat: u32, width: i32, height: i32);
+        #[link_name = "get_renderbuffer_parameteriv"]
+        pub fn gl_get_renderbuffer_parameteriv(target: u32, pname: u32) -> i32;
+        #[link_name = "create_shader"]
+        pub fn gl_create_shader(r#type: u32) -> u32;
+        #[link_name = "delete_shader"]
+        pub fn gl_delete_shader(shader: u32);
+        #[link_name = "is_shader"]
+        pub fn gl_is_shader(shader: u32) -> u32;
+        /// GLSL ES 3.00 (or 1.00).
+        #[link_name = "shader_source"]
+        pub fn gl_shader_source(shader: u32, source: *const u8, source_len: u32);
+        #[link_name = "compile_shader"]
+        pub fn gl_compile_shader(shader: u32);
+        #[link_name = "get_shaderiv"]
+        pub fn gl_get_shaderiv(shader: u32, pname: u32) -> i32;
+        #[link_name = "get_shader_info_log"]
+        pub fn gl_get_shader_info_log(shader: u32, dst: *mut u8, cap: u32) -> i32;
+        #[link_name = "get_shader_source"]
+        pub fn gl_get_shader_source(shader: u32, dst: *mut u8, cap: u32) -> i32;
+        #[link_name = "create_program"]
+        pub fn gl_create_program() -> u32;
+        #[link_name = "delete_program"]
+        pub fn gl_delete_program(program: u32);
+        #[link_name = "is_program"]
+        pub fn gl_is_program(program: u32) -> u32;
+        #[link_name = "attach_shader"]
+        pub fn gl_attach_shader(program: u32, shader: u32);
+        #[link_name = "detach_shader"]
+        pub fn gl_detach_shader(program: u32, shader: u32);
+        #[link_name = "link_program"]
+        pub fn gl_link_program(program: u32);
+        #[link_name = "use_program"]
+        pub fn gl_use_program(program: u32);
+        #[link_name = "validate_program"]
+        pub fn gl_validate_program(program: u32);
+        #[link_name = "get_programiv"]
+        pub fn gl_get_programiv(program: u32, pname: u32) -> i32;
+        #[link_name = "get_program_info_log"]
+        pub fn gl_get_program_info_log(program: u32, dst: *mut u8, cap: u32) -> i32;
+        /// Shader names (u32), copied up to count; returns how many.
+        #[link_name = "get_attached_shaders"]
+        pub fn gl_get_attached_shaders(program: u32, dst: *mut u8, count: u32) -> i32;
+        #[link_name = "bind_attrib_location"]
+        pub fn gl_bind_attrib_location(program: u32, index: u32, name: *const u8, name_len: u32);
+        #[link_name = "get_attrib_location"]
+        pub fn gl_get_attrib_location(program: u32, name: *const u8, name_len: u32) -> i32;
+        #[link_name = "get_frag_data_location"]
+        pub fn gl_get_frag_data_location(program: u32, name: *const u8, name_len: u32) -> i32;
+        /// info: 2 i32s (size, type). Returns the name's length (copied if it fits), or -1.
+        #[link_name = "get_active_attrib"]
+        pub fn gl_get_active_attrib(program: u32, index: u32, name: *mut u8, cap: u32, info: *mut u8) -> i32;
+        #[link_name = "get_active_uniform"]
+        pub fn gl_get_active_uniform(program: u32, index: u32, name: *mut u8, cap: u32, info: *mut u8) -> i32;
+        /// -1 if the program has no such uniform.
+        #[link_name = "get_uniform_location"]
+        pub fn gl_get_uniform_location(program: u32, name: *const u8, name_len: u32) -> i32;
+        /// glGetUniformIndices for one name (GL_INVALID_INDEX if none).
+        #[link_name = "get_uniform_index"]
+        pub fn gl_get_uniform_index(program: u32, name: *const u8, name_len: u32) -> u32;
+        /// count u32 indices in, count i32s out.
+        #[link_name = "get_active_uniformsiv"]
+        pub fn gl_get_active_uniformsiv(program: u32, indices: *const u8, count: u32, pname: u32, dst: *mut u8);
+        #[link_name = "get_uniform_block_index"]
+        pub fn gl_get_uniform_block_index(program: u32, name: *const u8, name_len: u32) -> u32;
+        #[link_name = "get_active_uniform_block_name"]
+        pub fn gl_get_active_uniform_block_name(program: u32, index: u32, dst: *mut u8, cap: u32) -> i32;
+        #[link_name = "get_active_uniform_blockiv"]
+        pub fn gl_get_active_uniform_blockiv(program: u32, index: u32, pname: u32, dst: *mut u8, count: u32) -> i32;
+        #[link_name = "uniform_block_binding"]
+        pub fn gl_uniform_block_binding(program: u32, index: u32, binding: u32);
+        #[link_name = "get_uniformfv"]
+        pub fn gl_get_uniformfv(program: u32, location: i32, dst: *mut u8, count: u32) -> i32;
+        #[link_name = "get_uniformiv"]
+        pub fn gl_get_uniformiv(program: u32, location: i32, dst: *mut u8, count: u32) -> i32;
+        #[link_name = "get_uniformuiv"]
+        pub fn gl_get_uniformuiv(program: u32, location: i32, dst: *mut u8, count: u32) -> i32;
+        /// count names, each NUL-terminated, in len bytes.
+        #[link_name = "transform_feedback_varyings"]
+        pub fn gl_transform_feedback_varyings(program: u32, names: *const u8, len: u32, count: u32, buffer_mode: u32);
+        #[link_name = "get_transform_feedback_varying"]
+        pub fn gl_get_transform_feedback_varying(program: u32, index: u32, name: *mut u8, cap: u32, info: *mut u8) -> i32;
+        #[link_name = "uniform1f"]
+        pub fn gl_uniform1f(location: i32, x: f32);
+        #[link_name = "uniform2f"]
+        pub fn gl_uniform2f(location: i32, x: f32, y: f32);
+        #[link_name = "uniform3f"]
+        pub fn gl_uniform3f(location: i32, x: f32, y: f32, z: f32);
+        #[link_name = "uniform4f"]
+        pub fn gl_uniform4f(location: i32, x: f32, y: f32, z: f32, w: f32);
+        #[link_name = "uniform1i"]
+        pub fn gl_uniform1i(location: i32, x: i32);
+        #[link_name = "uniform2i"]
+        pub fn gl_uniform2i(location: i32, x: i32, y: i32);
+        #[link_name = "uniform3i"]
+        pub fn gl_uniform3i(location: i32, x: i32, y: i32, z: i32);
+        #[link_name = "uniform4i"]
+        pub fn gl_uniform4i(location: i32, x: i32, y: i32, z: i32, w: i32);
+        #[link_name = "uniform1ui"]
+        pub fn gl_uniform1ui(location: i32, x: u32);
+        #[link_name = "uniform2ui"]
+        pub fn gl_uniform2ui(location: i32, x: u32, y: u32);
+        #[link_name = "uniform3ui"]
+        pub fn gl_uniform3ui(location: i32, x: u32, y: u32, z: u32);
+        #[link_name = "uniform4ui"]
+        pub fn gl_uniform4ui(location: i32, x: u32, y: u32, z: u32, w: u32);
+        /// count vectors (GL semantics).
+        #[link_name = "uniform1fv"]
+        pub fn gl_uniform1fv(location: i32, count: i32, value: *const u8);
+        #[link_name = "uniform2fv"]
+        pub fn gl_uniform2fv(location: i32, count: i32, value: *const u8);
+        #[link_name = "uniform3fv"]
+        pub fn gl_uniform3fv(location: i32, count: i32, value: *const u8);
+        #[link_name = "uniform4fv"]
+        pub fn gl_uniform4fv(location: i32, count: i32, value: *const u8);
+        #[link_name = "uniform1iv"]
+        pub fn gl_uniform1iv(location: i32, count: i32, value: *const u8);
+        #[link_name = "uniform2iv"]
+        pub fn gl_uniform2iv(location: i32, count: i32, value: *const u8);
+        #[link_name = "uniform3iv"]
+        pub fn gl_uniform3iv(location: i32, count: i32, value: *const u8);
+        #[link_name = "uniform4iv"]
+        pub fn gl_uniform4iv(location: i32, count: i32, value: *const u8);
+        #[link_name = "uniform1uiv"]
+        pub fn gl_uniform1uiv(location: i32, count: i32, value: *const u8);
+        #[link_name = "uniform2uiv"]
+        pub fn gl_uniform2uiv(location: i32, count: i32, value: *const u8);
+        #[link_name = "uniform3uiv"]
+        pub fn gl_uniform3uiv(location: i32, count: i32, value: *const u8);
+        #[link_name = "uniform4uiv"]
+        pub fn gl_uniform4uiv(location: i32, count: i32, value: *const u8);
+        #[link_name = "uniform_matrix2fv"]
+        pub fn gl_uniform_matrix2fv(location: i32, count: i32, transpose: u32, value: *const u8);
+        #[link_name = "uniform_matrix3fv"]
+        pub fn gl_uniform_matrix3fv(location: i32, count: i32, transpose: u32, value: *const u8);
+        #[link_name = "uniform_matrix4fv"]
+        pub fn gl_uniform_matrix4fv(location: i32, count: i32, transpose: u32, value: *const u8);
+        #[link_name = "uniform_matrix2x3fv"]
+        pub fn gl_uniform_matrix2x3fv(location: i32, count: i32, transpose: u32, value: *const u8);
+        #[link_name = "uniform_matrix3x2fv"]
+        pub fn gl_uniform_matrix3x2fv(location: i32, count: i32, transpose: u32, value: *const u8);
+        #[link_name = "uniform_matrix2x4fv"]
+        pub fn gl_uniform_matrix2x4fv(location: i32, count: i32, transpose: u32, value: *const u8);
+        #[link_name = "uniform_matrix4x2fv"]
+        pub fn gl_uniform_matrix4x2fv(location: i32, count: i32, transpose: u32, value: *const u8);
+        #[link_name = "uniform_matrix3x4fv"]
+        pub fn gl_uniform_matrix3x4fv(location: i32, count: i32, transpose: u32, value: *const u8);
+        #[link_name = "uniform_matrix4x3fv"]
+        pub fn gl_uniform_matrix4x3fv(location: i32, count: i32, transpose: u32, value: *const u8);
+        #[link_name = "create_query"]
+        pub fn gl_create_query() -> u32;
+        #[link_name = "delete_query"]
+        pub fn gl_delete_query(query: u32);
+        #[link_name = "is_query"]
+        pub fn gl_is_query(query: u32) -> u32;
+        #[link_name = "begin_query"]
+        pub fn gl_begin_query(target: u32, query: u32);
+        #[link_name = "end_query"]
+        pub fn gl_end_query(target: u32);
+        /// GL_CURRENT_QUERY: the active query's name.
+        #[link_name = "get_queryiv"]
+        pub fn gl_get_queryiv(target: u32, pname: u32) -> u32;
+        /// Results are available from the next frame on, on every runner.
+        #[link_name = "get_query_objectuiv"]
+        pub fn gl_get_query_objectuiv(query: u32, pname: u32) -> u32;
+        /// A sync name (not a pointer).
+        #[link_name = "fence_sync"]
+        pub fn gl_fence_sync(condition: u32, flags: u32) -> u32;
+        #[link_name = "is_sync"]
+        pub fn gl_is_sync(sync: u32) -> u32;
+        #[link_name = "delete_sync"]
+        pub fn gl_delete_sync(sync: u32);
+        /// Signaled from the next frame on; a timeout above 0 that isn't met gives GL_TIMEOUT_EXPIRED.
+        #[link_name = "client_wait_sync"]
+        pub fn gl_client_wait_sync(sync: u32, flags: u32, timeout: u64) -> u32;
+        #[link_name = "wait_sync"]
+        pub fn gl_wait_sync(sync: u32, flags: u32, timeout: u64);
+        #[link_name = "get_synciv"]
+        pub fn gl_get_synciv(sync: u32, pname: u32) -> i32;
+        #[link_name = "create_transform_feedback"]
+        pub fn gl_create_transform_feedback() -> u32;
+        #[link_name = "delete_transform_feedback"]
+        pub fn gl_delete_transform_feedback(tf: u32);
+        #[link_name = "is_transform_feedback"]
+        pub fn gl_is_transform_feedback(tf: u32) -> u32;
+        #[link_name = "bind_transform_feedback"]
+        pub fn gl_bind_transform_feedback(target: u32, tf: u32);
+        #[link_name = "begin_transform_feedback"]
+        pub fn gl_begin_transform_feedback(primitive_mode: u32);
+        #[link_name = "end_transform_feedback"]
+        pub fn gl_end_transform_feedback();
+        #[link_name = "pause_transform_feedback"]
+        pub fn gl_pause_transform_feedback();
+        #[link_name = "resume_transform_feedback"]
+        pub fn gl_resume_transform_feedback();
+    }
+
     #[link(wasm_import_module = "gasm:net")]
     unsafe extern "C" {
         /// Open a ws:// or wss:// URL. Handle > 0, or -1 if denied/invalid.
@@ -187,7 +676,7 @@ pub use imports::*;
 pub use crate::native::abi::*;
 
 /// Every import module and `module.function` of this ABI version (what `gasm::has` can report).
-pub const IMPORTS: [&str; 65] = [
+pub const IMPORTS: [&str; 290] = [
     "gasm", "gasm.log", "gasm.has", "gasm.time_ms",
     "gasm.set_frame_rate", "gasm.video_present", "gasm.video_set_aspect", "gasm.audio_config",
     "gasm.audio_push", "gasm.input_pad", "gasm.text_input", "gasm.input_mode",
@@ -200,11 +689,67 @@ pub const IMPORTS: [&str; 65] = [
     "gasm:gfx.write_texture", "gasm:gfx.create_sampler", "gasm:gfx.write_buffer", "gasm:gfx.begin_frame",
     "gasm:gfx.set_pipeline", "gasm:gfx.set_bind_group", "gasm:gfx.set_bind_group_offsets", "gasm:gfx.set_viewport",
     "gasm:gfx.set_scissor_rect", "gasm:gfx.set_vertex_buffer", "gasm:gfx.set_index_buffer", "gasm:gfx.draw",
-    "gasm:gfx.draw_indexed", "gasm:gfx.end_frame", "gasm:gfx.destroy", "gasm:net",
-    "gasm:net.open", "gasm:net.state", "gasm:net.send", "gasm:net.recv",
-    "gasm:net.close", "gasm:storage", "gasm:storage.get", "gasm:storage.set",
-    "gasm:storage.delete", "gasm:storage.count", "gasm:storage.key", "wasi_snapshot_preview1",
-    "wasi_snapshot_preview1.proc_exit",
+    "gasm:gfx.draw_indexed", "gasm:gfx.end_frame", "gasm:gfx.destroy", "gasm:gl",
+    "gasm:gl.width", "gasm:gl.height", "gasm:gl.frame_shown", "gasm:gl.present",
+    "gasm:gl.get_error", "gasm:gl.get_string", "gasm:gl.enable_extension", "gasm:gl.get_integerv",
+    "gasm:gl.get_floatv", "gasm:gl.get_integer64v", "gasm:gl.get_integeri_v", "gasm:gl.get_internalformativ",
+    "gasm:gl.get_shader_precision_format", "gasm:gl.active_texture", "gasm:gl.blend_color", "gasm:gl.blend_equation",
+    "gasm:gl.blend_equation_separate", "gasm:gl.blend_func", "gasm:gl.blend_func_separate", "gasm:gl.clear",
+    "gasm:gl.clear_color", "gasm:gl.clear_depthf", "gasm:gl.clear_stencil", "gasm:gl.color_mask",
+    "gasm:gl.cull_face", "gasm:gl.depth_func", "gasm:gl.depth_mask", "gasm:gl.depth_rangef",
+    "gasm:gl.disable", "gasm:gl.enable", "gasm:gl.is_enabled", "gasm:gl.front_face",
+    "gasm:gl.hint", "gasm:gl.line_width", "gasm:gl.pixel_storei", "gasm:gl.polygon_offset",
+    "gasm:gl.sample_coverage", "gasm:gl.scissor", "gasm:gl.viewport", "gasm:gl.stencil_func",
+    "gasm:gl.stencil_func_separate", "gasm:gl.stencil_mask", "gasm:gl.stencil_mask_separate", "gasm:gl.stencil_op",
+    "gasm:gl.stencil_op_separate", "gasm:gl.finish", "gasm:gl.flush", "gasm:gl.create_buffer",
+    "gasm:gl.delete_buffer", "gasm:gl.is_buffer", "gasm:gl.bind_buffer", "gasm:gl.bind_buffer_base",
+    "gasm:gl.bind_buffer_range", "gasm:gl.buffer_data", "gasm:gl.buffer_sub_data", "gasm:gl.copy_buffer_sub_data",
+    "gasm:gl.get_buffer_sub_data", "gasm:gl.get_buffer_parameteriv", "gasm:gl.create_vertex_array", "gasm:gl.delete_vertex_array",
+    "gasm:gl.is_vertex_array", "gasm:gl.bind_vertex_array", "gasm:gl.enable_vertex_attrib_array", "gasm:gl.disable_vertex_attrib_array",
+    "gasm:gl.vertex_attrib_pointer", "gasm:gl.vertex_attrib_ipointer", "gasm:gl.vertex_attrib_divisor", "gasm:gl.vertex_attrib4f",
+    "gasm:gl.vertex_attribi4i", "gasm:gl.vertex_attribi4ui", "gasm:gl.get_vertex_attribiv", "gasm:gl.get_vertex_attribfv",
+    "gasm:gl.get_vertex_attrib_offset", "gasm:gl.draw_arrays", "gasm:gl.draw_elements", "gasm:gl.draw_arrays_instanced",
+    "gasm:gl.draw_elements_instanced", "gasm:gl.draw_range_elements", "gasm:gl.draw_buffers", "gasm:gl.clear_bufferiv",
+    "gasm:gl.clear_bufferuiv", "gasm:gl.clear_bufferfv", "gasm:gl.clear_bufferfi", "gasm:gl.create_texture",
+    "gasm:gl.delete_texture", "gasm:gl.is_texture", "gasm:gl.bind_texture", "gasm:gl.tex_parameteri",
+    "gasm:gl.tex_parameterf", "gasm:gl.get_tex_parameteriv", "gasm:gl.get_tex_parameterfv", "gasm:gl.tex_image_2d",
+    "gasm:gl.tex_image_3d", "gasm:gl.tex_sub_image_2d", "gasm:gl.tex_sub_image_3d", "gasm:gl.tex_storage_2d",
+    "gasm:gl.tex_storage_3d", "gasm:gl.compressed_tex_image_2d", "gasm:gl.compressed_tex_image_3d", "gasm:gl.compressed_tex_sub_image_2d",
+    "gasm:gl.compressed_tex_sub_image_3d", "gasm:gl.copy_tex_image_2d", "gasm:gl.copy_tex_sub_image_2d", "gasm:gl.copy_tex_sub_image_3d",
+    "gasm:gl.generate_mipmap", "gasm:gl.create_sampler", "gasm:gl.delete_sampler", "gasm:gl.is_sampler",
+    "gasm:gl.bind_sampler", "gasm:gl.sampler_parameteri", "gasm:gl.sampler_parameterf", "gasm:gl.get_sampler_parameteriv",
+    "gasm:gl.get_sampler_parameterfv", "gasm:gl.create_framebuffer", "gasm:gl.delete_framebuffer", "gasm:gl.is_framebuffer",
+    "gasm:gl.bind_framebuffer", "gasm:gl.check_framebuffer_status", "gasm:gl.framebuffer_texture_2d", "gasm:gl.framebuffer_texture_layer",
+    "gasm:gl.framebuffer_renderbuffer", "gasm:gl.get_framebuffer_attachment_parameteriv", "gasm:gl.blit_framebuffer", "gasm:gl.invalidate_framebuffer",
+    "gasm:gl.invalidate_sub_framebuffer", "gasm:gl.read_buffer", "gasm:gl.read_pixels", "gasm:gl.create_renderbuffer",
+    "gasm:gl.delete_renderbuffer", "gasm:gl.is_renderbuffer", "gasm:gl.bind_renderbuffer", "gasm:gl.renderbuffer_storage",
+    "gasm:gl.renderbuffer_storage_multisample", "gasm:gl.get_renderbuffer_parameteriv", "gasm:gl.create_shader", "gasm:gl.delete_shader",
+    "gasm:gl.is_shader", "gasm:gl.shader_source", "gasm:gl.compile_shader", "gasm:gl.get_shaderiv",
+    "gasm:gl.get_shader_info_log", "gasm:gl.get_shader_source", "gasm:gl.create_program", "gasm:gl.delete_program",
+    "gasm:gl.is_program", "gasm:gl.attach_shader", "gasm:gl.detach_shader", "gasm:gl.link_program",
+    "gasm:gl.use_program", "gasm:gl.validate_program", "gasm:gl.get_programiv", "gasm:gl.get_program_info_log",
+    "gasm:gl.get_attached_shaders", "gasm:gl.bind_attrib_location", "gasm:gl.get_attrib_location", "gasm:gl.get_frag_data_location",
+    "gasm:gl.get_active_attrib", "gasm:gl.get_active_uniform", "gasm:gl.get_uniform_location", "gasm:gl.get_uniform_index",
+    "gasm:gl.get_active_uniformsiv", "gasm:gl.get_uniform_block_index", "gasm:gl.get_active_uniform_block_name", "gasm:gl.get_active_uniform_blockiv",
+    "gasm:gl.uniform_block_binding", "gasm:gl.get_uniformfv", "gasm:gl.get_uniformiv", "gasm:gl.get_uniformuiv",
+    "gasm:gl.transform_feedback_varyings", "gasm:gl.get_transform_feedback_varying", "gasm:gl.uniform1f", "gasm:gl.uniform2f",
+    "gasm:gl.uniform3f", "gasm:gl.uniform4f", "gasm:gl.uniform1i", "gasm:gl.uniform2i",
+    "gasm:gl.uniform3i", "gasm:gl.uniform4i", "gasm:gl.uniform1ui", "gasm:gl.uniform2ui",
+    "gasm:gl.uniform3ui", "gasm:gl.uniform4ui", "gasm:gl.uniform1fv", "gasm:gl.uniform2fv",
+    "gasm:gl.uniform3fv", "gasm:gl.uniform4fv", "gasm:gl.uniform1iv", "gasm:gl.uniform2iv",
+    "gasm:gl.uniform3iv", "gasm:gl.uniform4iv", "gasm:gl.uniform1uiv", "gasm:gl.uniform2uiv",
+    "gasm:gl.uniform3uiv", "gasm:gl.uniform4uiv", "gasm:gl.uniform_matrix2fv", "gasm:gl.uniform_matrix3fv",
+    "gasm:gl.uniform_matrix4fv", "gasm:gl.uniform_matrix2x3fv", "gasm:gl.uniform_matrix3x2fv", "gasm:gl.uniform_matrix2x4fv",
+    "gasm:gl.uniform_matrix4x2fv", "gasm:gl.uniform_matrix3x4fv", "gasm:gl.uniform_matrix4x3fv", "gasm:gl.create_query",
+    "gasm:gl.delete_query", "gasm:gl.is_query", "gasm:gl.begin_query", "gasm:gl.end_query",
+    "gasm:gl.get_queryiv", "gasm:gl.get_query_objectuiv", "gasm:gl.fence_sync", "gasm:gl.is_sync",
+    "gasm:gl.delete_sync", "gasm:gl.client_wait_sync", "gasm:gl.wait_sync", "gasm:gl.get_synciv",
+    "gasm:gl.create_transform_feedback", "gasm:gl.delete_transform_feedback", "gasm:gl.is_transform_feedback", "gasm:gl.bind_transform_feedback",
+    "gasm:gl.begin_transform_feedback", "gasm:gl.end_transform_feedback", "gasm:gl.pause_transform_feedback", "gasm:gl.resume_transform_feedback",
+    "gasm:net", "gasm:net.open", "gasm:net.state", "gasm:net.send",
+    "gasm:net.recv", "gasm:net.close", "gasm:storage", "gasm:storage.get",
+    "gasm:storage.set", "gasm:storage.delete", "gasm:storage.count", "gasm:storage.key",
+    "wasi_snapshot_preview1", "wasi_snapshot_preview1.proc_exit",
 ];
 
 // ---- buttons

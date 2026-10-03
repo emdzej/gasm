@@ -11,12 +11,13 @@ No threads, SIMD or exception handling. A runner is any host that implements the
 imports below. The ABI is intentionally core wasm (no Component Model), so it runs
 unmodified in browsers, wasmtime, WAMR, wasm2c, etc.
 
-It has four import modules:
+It has five import modules:
 
 | Module | Status | Contents |
 |---|---|---|
 | `gasm` | core | log, time, frame rate, 2D video, audio, input (pads, text, raw keyboard, pointer, gamepads), assets, params |
 | `gasm:gfx` | optional | GPU rendering: a WebGPU subset |
+| `gasm:gl` | optional | GPU rendering: OpenGL ES 3.0 with WebGL 2's rules (a game uses `gasm:gfx` or `gasm:gl`) |
 | `gasm:net` | optional | message connections (WebSocket semantics) |
 | `gasm:storage` | optional | persistent per-game key/value store (saves, settings) |
 
@@ -46,7 +47,7 @@ each release added.
 | export | `gasm_run() -> i32`                 | no       | a game with its own loop, run by runners that switch stacks; see [Stack switching](#stack-switching) |
 | export | `_initialize()`                     | no       | WASI reactor ctor hook; called first if present |
 | export | `gasm_exit()`                       | no       | the player is quitting: flush saves (best effort) |
-| import | `gasm.*`, `gasm:gfx.*`, `gasm:net.*`, `gasm:storage.*` | — | see below |
+| import | `gasm.*`, `gasm:gfx.*` or `gasm:gl.*`, `gasm:net.*`, `gasm:storage.*` | — | see below |
 | import | `wasi_snapshot_preview1.*`          | —        | libc support subset, see below |
 | custom section | `gasm.title`                 | no       | the game's name (UTF-8), the default title before `set_title`; see [Window title](#window-title) |
 
@@ -289,6 +290,89 @@ so deterministic GPU games get checked too, without comparing pixels (GPU
 output isn't bit-exact across vendors). Handles are numbered 1, 2, 3, … in
 creation order on every runner. Draw calls, offsets, viewports and scissors
 aren't hashed.
+
+## `gasm:gl` (optional): OpenGL ES 3.0
+
+OpenGL ES 3.0 with WebGL 2's rules, for code written against GLES 3 / WebGL 2.
+The browser runner forwards it to a WebGL 2 context; headless runners (native
+and Node) implement it with a null GL. The native window has no GL backend yet
+and refuses `gasm:gl` guests. A module imports `gasm:gfx` or `gasm:gl`, not both
+(runners refuse it). The full list (224 functions) is in
+[`spec/abi.json`](https://github.com/emdzej/gasm/blob/main/spec/abi.json);
+C and C++ games use the drop-in `<GLES3/gl3.h>` of the C SDK instead (below).
+
+**Conventions.** The imports are the WebGL 2 API with C types:
+
+- Object names are `u32`, numbered per kind from 1 in creation order and never
+  reused; `0` is "none". `create_buffer()` etc. make one name (`glGen*` loops in
+  the C SDK). Uniform locations are `i32`, numbered per program in the order the
+  guest asks for them; `-1` is "none" (uniform calls with it are ignored).
+- Data is `(ptr, len)` in guest memory. Lengths are exact: an image upload's
+  `len` must cover the image under the current unpack state (`pixel_storei`),
+  `read_pixels`' `len` the rectangle under the pack state. With a pixel unpack
+  (pack) buffer bound, `len` (`dst`) is the offset into it.
+- Queries for one value return it (`get_shaderiv(shader, pname) -> i32`);
+  queries for several write up to `count` values and return how many there are
+  (`get_integerv(pname, dst, count) -> i32`). Text comes back with the "copied
+  if it fits" convention: the length is returned, the text copied only if it
+  fits in `cap` (`get_string`, `get_shader_info_log`, ...).
+- **GL errors are GL's.** A call that fails a GL rule records an error for
+  `get_error` and has no effect; the guest continues. **Boundary violations
+  trap**, as everywhere: out-of-bounds pointers, lengths too short for the
+  data, strings that aren't UTF-8.
+- Shaders are GLSL ES 3.00 (`#version 300 es`). Extensions are WebGL's:
+  listed in `get_string(GL_EXTENSIONS)`, enabled with `enable_extension(name)`.
+- Results that WebGL delivers asynchronously are ready **from the next frame
+  on**, on every runner: `GL_QUERY_RESULT_AVAILABLE` and `client_wait_sync` /
+  `GL_SYNC_STATUS` (`GL_TIMEOUT_EXPIRED` / `GL_UNSIGNALED` in the frame of the
+  query or fence). The values themselves (an occlusion result) come from the GPU.
+
+**Frames and the default framebuffer.**
+
+| Import | Signature | Semantics |
+|---|---|---|
+| `width` / `height` | `() -> u32` | Drawable size; the default framebuffer follows it on resize. |
+| `frame_shown` | `() -> u32` | `0` during catch-up frames (the guest may skip drawing). |
+| `present` | `()` | Show the default framebuffer now; otherwise the runner presents at the end of the frame. |
+
+The default framebuffer has depth 24 + stencil 8, no alpha and no
+multisampling (games multisample with their own renderbuffers); it isn't
+preserved between frames.
+
+**Null GL** (headless runs): object names, bindings, the pixel store and every
+GL error a guest can cause through names, targets, enums and sizes are tracked
+exactly as in the browser runner (both runners share the model:
+`runners/web/lib/gl.js`, `runners/native/src/gl.rs`). Everything a guest may
+branch on is fixed:
+
+- `GL_MAX_*` limits are WebGL 2's minimums; no extensions; the strings name the
+  null GL (`GL_VERSION` "OpenGL ES 3.0 (gasm null GL)").
+- Shaders compile and programs link; every uniform name gets a location,
+  attribute and frag-data locations are 0, uniform indices and block indices
+  0; `GL_ACTIVE_*` counts are 0.
+- `read_pixels` and `get_buffer_sub_data` return zeros, occlusion queries
+  "passed" (1), framebuffers are complete.
+
+**Hashing.** Headless runners fold uploads into the video hash (FNV-1a 32, as
+`write_buffer`): a header of little-endian `u32`s, then the payload.
+
+| Upload | Header | Payload |
+|---|---|---|
+| `buffer_data`, `buffer_sub_data` | `1, target, offset, len` (`offset` 0 for `buffer_data`) | the bytes (none for `buffer_data` with no data) |
+| `tex_image_2d/3d`, `tex_sub_image_2d/3d` | `2, target, level, internalformat (0 for sub), x, y, z, w, h, d, format, type, len (0 without data)` | the bytes (none from an unpack buffer) |
+| `compressed_tex_*` | the same, `format` = internalformat (sub: format) and `type` 0 | the bytes |
+| `uniform*` | `3, location, kind, count` (matrices: `, transpose`); kind 1–4 float, 11–14 int, 21–24 uint, 32–40 the matrices in ABI order | the values as stored (`f32` bits) |
+
+Calls that fail a GL check hash nothing; draws and state aren't hashed (as in
+`gasm:gfx`).
+
+**C SDK.** `#include <GLES3/gl3.h>` (or `<GLES2/gl2.h>`) and link
+`sdk/c/src/gasm_gl.c` (CMake: `${GASM_GL_SOURCE}`). Both are generated from the
+Khronos registry by `scripts/gen-gl-headers.py` and give the whole GLES 3.0 API:
+gen/delete loops, `glShaderSource` string arrays, `glGetString` /
+`glGetStringi` (cached), the pixel store mirrored to compute exact lengths, and
+`glMapBufferRange` emulated in guest memory (uploaded on unmap or flush). Program
+binaries and `glShaderBinary` aren't available (`GL_INVALID_ENUM`, as WebGL).
 
 ## `gasm:net` (optional): message connections
 
@@ -561,7 +645,6 @@ imports never return `-1` there, and the cursor modes count as achieved.
 
 ## Roadmap
 
-What is planned beyond this (`gasm_run` with runner-side stack switching,
-threads, `gasm:gl`, render targets, rollback netplay, packages, a capabilities
-manifest, ...) is on the
+What is planned beyond this (`gasm:gl` natively, render targets, rollback
+netplay, packages, a capabilities manifest, ...) is on the
 [roadmap](https://github.com/emdzej/gasm/blob/main/site/docs/roadmap.md).

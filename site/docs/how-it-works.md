@@ -37,6 +37,7 @@ optional modules on top.
 | gasm-relay | `runners/native/relay/` | WebSocket room relay for online play |
 | gasm-host.js | `runners/web/gasm-host.js`, `runners/web/lib/` | JS runner core, shared by browser and Node |
 | webgpu-gfx.js | `runners/web/webgpu-gfx.js` | `gasm:gfx` on the browser's WebGPU |
+| lib/gl.js | `runners/web/lib/gl.js` | `gasm:gl`: the shared model, WebGL 2 forwarding, the null GL |
 | gasm-present.js | `runners/web/gasm-present.js` | 2D frames on WebGL 2: letterbox and upscaling filters (natively `runners/native/src/present.rs`) |
 | web runner | `runners/web/index.html`, `app.js` | Canvas, AudioWorklet, keyboard/Gamepad API, WebSocket |
 | headless Node | `runners/web/headless.mjs` | CI/hash/network runner using the same JS core |
@@ -50,6 +51,7 @@ memory                           gasm.log / time_ms / set_frame_rate / param
 gasm_abi_version() -> 0          gasm.video_present / audio_config / audio_push
 gasm_init() -> 0 = ok            gasm.input_pad / text_input / asset_size / asset_read / has
 gasm_frame()                     gasm:gfx.*   (optional: WebGPU subset)
+                                 gasm:gl.*    (optional: OpenGL ES 3.0; or gasm:gfx)
 _initialize()  (optional)        gasm:net.*   (optional: message connections)
 gasm_exit()    (optional)        gasm:storage.* (optional: saves)
                                  wasi_snapshot_preview1.proc_exit (and libc subset)
@@ -175,6 +177,34 @@ covers the whole visible scene without comparing GPU pixels (which differ
 slightly across vendors). With `--screenshot`, the native runner renders the
 last frame on a real GPU into an offscreen texture instead. The Node runner has
 no GPU, so its screenshots only show `video_present` frames.
+
+## OpenGL ES path (`gasm:gl`)
+
+For code written against GLES 3 / WebGL 2, `gasm:gl` is the GLES 3.0 API with
+WebGL 2's rules: integer names, `GLenum`s, GLSL ES 3.00 shaders. C and C++
+games include the SDK's drop-in `<GLES3/gl3.h>` and link `gasm_gl.c`, which
+turn GL's C conventions (name arrays, string arrays, `glMapBufferRange`,
+`glGetString` pointers) into imports with explicit lengths.
+
+```
+guest (GLES 3 C)             gasm_gl.c                runner
+────────────────             ─────────                ──────
+glGenBuffers(2, b)      ───► create_buffer() × 2 ───► model: name 1, 2 (+ WebGL objects)
+glTexImage2D(..., px)   ───► tex_image_2d(..., px, len) model: target, binding, len vs
+                             (len from the pixel store)  the unpack state → WebGL 2 /
+                                                         null GL; hashed headless
+glMapBufferRange(...)   ───► guest memory; unmap ───► buffer_sub_data
+glGetError()            ◄─── GL errors of the model first, then WebGL's
+```
+
+Both runners keep the same model of names, bindings and the pixel store and
+check every call against it before WebGL sees it, so a mistake gives the same
+GL error in Chrome and in headless runs (gltest uploads its error log, so the
+hashes compare it). GL errors don't trap (GL code checks `glGetError` and
+carries on); bad pointers and short lengths do. Headless runs use a null GL
+with WebGL 2's minimum limits and no extensions, and hash every buffer, texture
+and uniform upload. The native window doesn't have a GL backend yet (ANGLE is
+next on the roadmap).
 
 ## Audio path
 

@@ -466,6 +466,12 @@ pub mod abi {
     pub unsafe fn net_recv(h: i32, _: *mut u8, _: u32) -> i32 { panic!("gasm:net: invalid connection handle {h}") }
     pub unsafe fn net_close(h: i32) { panic!("gasm:net: invalid connection handle {h}") }
 
+    #[allow(clippy::too_many_arguments)]
+    mod gl {
+        include!("native_gl.rs");
+    }
+    pub use gl::*;
+
     pub unsafe fn proc_exit(code: i32) -> ! {
         std::process::exit(code)
     }
