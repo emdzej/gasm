@@ -11,6 +11,7 @@
 | `scripts/asset-test.sh` | File-backed assets and folders: `--asset-dir` == `--asset` list == Node (lazy and in-memory); prefix form, hidden files, precedence; a 200 MB asset streamed at random offsets has the in-memory hash, with max RSS measured against a tiny asset (`LARGE_MB=0` skips) | ~10 s |
 | `node scripts/opfs-test.mjs [MB]` | Headless Chrome: csfs imports a data set into OPFS, `assetcheck` runs from it in **Worker mode** with lazy OPFS reads; hash == Node `--asset-dir`; renderer memory sampled while streaming 10 GB of random reads | ~60 s |
 | `node scripts/gfx-model-test.mjs` | gasm:gfx validation on the JS runner: the cases in `tests/gfx-cases.json`, which `cargo test --lib gfx` replays natively (both must accept and reject the same calls) | < 1 s |
+| `scripts/gl-native-test.sh [--gl-software]` | `gasm:gl` on ANGLE in gasm-run (fetches ANGLE): gltest's hashes equal the null GL's golden ones, and the frame isn't blank | ~5 s |
 | `node scripts/web-smoke.mjs <url> <out.png> [secs]` | The browser runner loads and runs in headless Chrome (including WebGPU); prints status, fps and console, saves a screenshot | ~10 s |
 
 ### Linux locally (Apple `container`)

@@ -49,7 +49,9 @@ impl Report {
 pub fn run(session: Session, opts: &Options) -> Result<Report, String> {
     // Render on the GPU only when a screenshot is wanted; otherwise a null backend.
     let gpu = opts.screenshot.is_some() || opts.screenshot_filtered.is_some();
-    let gfx = match gpu {
+    // a gasm:gl game can't use gasm:gfx: no wgpu for it (ANGLE renders below)
+    let uses_gl = session.uses_gl();
+    let gfx = match gpu && !uses_gl {
         true => Gfx::offscreen(HEADLESS_SIZE.0, HEADLESS_SIZE.1).unwrap_or_else(|e| {
             eprintln!("[gasm] no GPU for screenshots ({e}); gfx output will be blank");
             Gfx::null()
@@ -59,7 +61,12 @@ pub fn run(session: Session, opts: &Options) -> Result<Report, String> {
     if let Some(t) = crate::host::static_title(&session.wasm) {
         eprintln!("[gasm] title: {t} (gasm.title)");
     }
-    let mut game = match session.start(None, gfx, true, opts.hash) {
+    // gasm:gl games render with ANGLE offscreen for screenshots (the hashes don't change)
+    let gl = match gpu && uses_gl {
+        true => session.open_gl(None, HEADLESS_SIZE).map_err(|e| eprintln!("[gasm] no GL for screenshots ({e}); gl output will be blank")).ok(),
+        false => None,
+    };
+    let mut game = match session.start(None, gfx, gl, true, opts.hash) {
         Ok(g) => g,
         Err(Stop::Exit(code)) => {
             return Ok(Report { frames: 0, presented: 0, size: (0, 0), video_hash: 0x811c_9dc5, audio_hash: 0x811c_9dc5, audio_frames: 0, frame_rate: 60.0, seconds: 0.0, exit: Some(code) });
@@ -85,6 +92,7 @@ pub fn run(session: Session, opts: &Options) -> Result<Report, String> {
         });
         ran = i + 1;
         let result = game.frame();
+        game.with_host(|h| { let show = h.show_frame; h.gl.end_frame(show) });
         if let Some(t) = game.with_host(|host| std::mem::take(&mut host.title_changed).then(|| host.title.clone())) {
             eprintln!("[gasm] title: {}", t.as_deref().unwrap_or("(default)"));
         }
@@ -109,6 +117,7 @@ pub fn run(session: Session, opts: &Options) -> Result<Report, String> {
     if let Some(path) = &opts.screenshot_filtered {
         let h = game.host_mut();
         let img = match h.gfx.used {
+            _ if h.gl.has_backend() => h.gl.read_frame(),
             true => h.gfx.read_offscreen(), // gfx guests render at drawable size: no filter
             false if h.width > 0 => {
                 let rgba = std::mem::take(&mut h.rgba);
@@ -127,6 +136,7 @@ pub fn run(session: Session, opts: &Options) -> Result<Report, String> {
     let h = game.host();
     if let Some(path) = &opts.screenshot {
         let (w, hgt, rgba) = match h.gfx.read_offscreen() {
+            _ if h.gl.has_backend() => h.gl.read_frame().unwrap_or_default(),
             Some(img) if h.gfx.used => img,
             _ => (h.width as u32, h.height as u32, h.rgba.clone()),
         };

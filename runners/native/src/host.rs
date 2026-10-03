@@ -303,6 +303,68 @@ impl Host {
     }
 }
 
+/// Whether a module imports anything from `module` (e.g. "gasm:gl"), read before
+/// loading it. A .cwasm is checked only with `allow_precompiled` (it is native code).
+pub fn imports_module(wasm: &[u8], module: &str, allow_precompiled: bool) -> bool {
+    if !wasm.starts_with(b"\0asm") {
+        if !allow_precompiled {
+            return false;
+        }
+        return unsafe { Module::deserialize(engine(), wasm) }.is_ok_and(|m| m.imports().any(|i| i.module() == module));
+    }
+    fn leb(b: &[u8], p: &mut usize) -> Option<u32> {
+        let (mut v, mut shift) = (0u32, 0);
+        loop {
+            let byte = *b.get(*p)?;
+            *p += 1;
+            v |= ((byte & 0x7f) as u32) << shift;
+            if byte & 0x80 == 0 {
+                return Some(v);
+            }
+            shift += 7;
+            if shift > 28 {
+                return None;
+            }
+        }
+    }
+    fn name<'a>(b: &'a [u8], p: &mut usize) -> Option<&'a [u8]> {
+        let n = leb(b, p)? as usize;
+        let s = b.get(*p..*p + n)?;
+        *p += n;
+        Some(s)
+    }
+    let scan = || -> Option<bool> {
+        let mut p = 8;
+        while p < wasm.len() {
+            let id = wasm[p];
+            p += 1;
+            let size = leb(wasm, &mut p)? as usize;
+            let end = p.checked_add(size)?;
+            if id == 2 {
+                let mut q = p;
+                for _ in 0..leb(wasm, &mut q)? {
+                    if name(wasm, &mut q)? == module.as_bytes() {
+                        return Some(true);
+                    }
+                    name(wasm, &mut q)?;
+                    match *wasm.get(q)? {
+                        0 => { q += 1; leb(wasm, &mut q)?; }                       // func: type index
+                        1 => { q += 2; let f = wasm[q - 1]; leb(wasm, &mut q)?; if f & 1 != 0 { leb(wasm, &mut q)?; } } // table
+                        2 => { q += 1; let f = *wasm.get(q)?; q += 1; leb(wasm, &mut q)?; if f & 1 != 0 { leb(wasm, &mut q)?; } } // memory
+                        3 => q += 3,                                                 // global: type, mutability
+                        4 => { q += 2; leb(wasm, &mut q)?; }                         // tag
+                        _ => return None,
+                    }
+                }
+                return Some(false);
+            }
+            p = end;
+        }
+        Some(false)
+    };
+    scan().unwrap_or(false)
+}
+
 /// Borrow `len` bytes at guest offset `ptr`, trapping the guest if out of bounds.
 pub(crate) fn guest_slice(mem: &[u8], ptr: u32, len: u64) -> wasmtime::Result<&[u8]> {
     let start = ptr as u64;

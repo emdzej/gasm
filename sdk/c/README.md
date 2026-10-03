@@ -64,8 +64,8 @@ OpenGL ES 3.0 code builds unchanged with `#include <GLES3/gl3.h>` and
 `src/gasm_gl.c` (CMake: `target_sources(mygame PRIVATE ${GASM_GL_SOURCE})`).
 WebGL 2's rules apply (GLSL ES 3.00, no program binaries); `glMapBufferRange`
 works on a copy in guest memory. A game uses `gasm:gl` or `gasm:gfx`, not both.
-`gasm:gl` runs in the browser (WebGL 2) and headless; `gasm-run`'s window
-doesn't support it yet.
+`gasm:gl` runs on WebGL 2 in browsers and on ANGLE in `gasm-run` (shipped with
+the release bundles; `scripts/fetch-angle.sh` in the repository).
 
 Newer imports can be probed before use: `gasm_has_str("gasm:gfx.destroy")`.
 `gasm_set_title_str(title)` and `gasm_video_aspect(num, den)` probe for

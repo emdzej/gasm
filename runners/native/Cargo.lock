@@ -1037,6 +1037,7 @@ dependencies = [
  "cpal",
  "getrandom 0.3.4",
  "gilrs",
+ "libloading",
  "png",
  "pollster",
  "rustls",

@@ -203,8 +203,10 @@ GL error in Chrome and in headless runs (gltest uploads its error log, so the
 hashes compare it). GL errors don't trap (GL code checks `glGetError` and
 carries on); bad pointers and short lengths do. Headless runs use a null GL
 with WebGL 2's minimum limits and no extensions, and hash every buffer, texture
-and uniform upload. The native window doesn't have a GL backend yet (ANGLE is
-next on the roadmap).
+and uniform upload. Natively the calls that pass go to ANGLE, Chrome's GLES
+implementation, in the same WebGL compatibility mode Chrome uses (Metal,
+Direct3D 11 or Vulkan; SwiftShader without a GPU). gasm-run loads it at run
+time, so games without `gasm:gl` never need it.
 
 ## Audio path
 

@@ -19,12 +19,11 @@ Done recently: stack switching (`gasm_run`,
 [design/stack-switching.md](https://github.com/emdzej/gasm/blob/main/design/stack-switching.md)),
 cooperative threads in C, POSIX and SDL 3
 ([design/threads.md](https://github.com/emdzej/gasm/blob/main/design/threads.md))
-and `gasm:gl` in the browser and headless
+and `gasm:gl` on every runner: WebGL 2 in browsers, ANGLE natively
 ([design/gasm-gl.md](https://github.com/emdzej/gasm/blob/main/design/gasm-gl.md)).
 
-1. **`gasm:gl` natively.** ANGLE in `gasm-run`'s window (phase 3 of the plan):
-   mostly building and shipping ANGLE for macOS, Windows and Linux. Then the
-   Rust `glow` backend, then a Godot port.
+1. **`gasm:gl` for Rust** (`glow`), then **Godot** on `gasm:gl`.
+2. **Cooperative threads in Rust.**
 
 ## Runtime and ABI
 
@@ -43,7 +42,9 @@ and `gasm:gl` in the browser and headless
 
 | Item | What it gives | Status |
 |---|---|---|
-| `gasm:gl` natively | OpenGL ES 3.0 in `gasm-run`'s window through ANGLE (Metal, D3D11, Vulkan). The ABI, the browser runner (WebGL 2), the null GL of headless runs and the C headers are done; the native window refuses `gasm:gl` games until then. | next: [design/gasm-gl.md](https://github.com/emdzej/gasm/blob/main/design/gasm-gl.md), phase 3 |
+| `gasm:gl` on Wayland | ANGLE draws into X11 windows, so `gasm:gl` games use XWayland on Wayland desktops. | not started |
+| `gasm:gl` on SwiftShader on macOS | `--gl-software` needs a Vulkan loader there (Electron doesn't ship one); Metal is always available, so it only matters for tests. | not planned |
+| ANGLE built from source | The libraries come from Electron 43, the last release that ships them as separate files; a newer ANGLE means building it (depot_tools) or another distribution. | when needed |
 | `gasm:gl` in Worker mode | WebGL 2 on a transferred `OffscreenCanvas`; `gasm:gl` games run on the main thread for now. | not started |
 | `gasm:gl` for Rust | A `glow::HasContext` implementation over `gasm::sys::gl_*` (egui_glow and other glow code). | not started |
 | Godot | A `platform/gasm` port on `gasm:gl`. | after native `gasm:gl` |

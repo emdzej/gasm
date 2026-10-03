@@ -14,6 +14,7 @@ use winit::keyboard::{Key, KeyCode, NamedKey, PhysicalKey};
 use winit::window::{CursorGrabMode, Window, WindowId};
 
 use crate::audio::{AudioOut, AudioSink, AudioStream};
+use crate::angle::NativeWindow;
 use crate::gfx::Gfx;
 use crate::host::{self, Game, Gamepad, KEY_STATE_BYTES, Pointer, RawInput, Stop};
 use crate::keymap;
@@ -27,12 +28,37 @@ pub struct Options {
     pub mute: bool,
     /// how 2D frames are shown
     pub present: Present,
+    /// write frame N as the window shows it and quit (gasm:gl games; for tests)
+    pub screenshot: Option<(u64, String)>,
+}
+
+/// The platform window handle ANGLE draws into.
+fn native_window(window: &Window) -> Result<NativeWindow, String> {
+    use winit::raw_window_handle::{HasDisplayHandle, HasWindowHandle, RawDisplayHandle, RawWindowHandle};
+    let w = window.window_handle().map_err(|e| e.to_string())?.as_raw();
+    let d = window.display_handle().map_err(|e| e.to_string())?.as_raw();
+    Ok(match (w, d) {
+        (RawWindowHandle::AppKit(h), _) => NativeWindow::AppKit(h.ns_view.as_ptr()),
+        (RawWindowHandle::Win32(h), _) => NativeWindow::Win32(h.hwnd.get() as *mut std::ffi::c_void),
+        (RawWindowHandle::Xlib(h), RawDisplayHandle::Xlib(d)) => {
+            NativeWindow::Xlib(d.display.map_or(std::ptr::null_mut(), |p| p.as_ptr()), h.window)
+        }
+        (RawWindowHandle::Wayland(_), RawDisplayHandle::Wayland(d)) => NativeWindow::Wayland(d.display.as_ptr()),
+        _ => return Err("gasm:gl: this kind of window isn't supported".into()),
+    })
 }
 
 /// Open a window and play until the guest exits, traps or the player quits.
 /// Returns the guest's exit code (0 when the player quit).
 pub fn run(session: Session, opts: Options) -> Result<i32, String> {
-    let event_loop = EventLoop::new().map_err(|e| e.to_string())?;
+    let mut builder = EventLoop::builder();
+    // gasm:gl draws with ANGLE, which needs an X11 window here (XWayland on Wayland desktops)
+    #[cfg(all(unix, not(target_os = "macos")))]
+    if session.uses_gl() {
+        use winit::platform::x11::EventLoopBuilderExtX11;
+        builder.with_x11();
+    }
+    let event_loop = builder.build().map_err(|e| e.to_string())?;
     // default title: the module file name without .wasm (set_title replaces it)
     let default_title = host::static_title(&session.wasm).unwrap_or_else(|| {
         std::path::Path::new(&session.name).file_stem().map_or(session.name.clone(), |s| s.to_string_lossy().into_owned())
@@ -57,6 +83,7 @@ pub fn run(session: Session, opts: Options) -> Result<i32, String> {
         fps_t: Instant::now(),
         fps_n: 0,
         result: Ok(0),
+        frames_run: 0,
         audio_stream: None,
     };
     event_loop.run_app(&mut app).map_err(|e| e.to_string())?;
@@ -155,6 +182,8 @@ fn gamepads_raw(gilrs: &Gilrs) -> [Gamepad; 4] {
 }
 
 struct App {
+    /// frames run so far (--window-screenshot)
+    frames_run: u64,
     /// what the window shows before " — gasm": set_title, else `default_title`
     title: String,
     default_title: String,
@@ -258,7 +287,7 @@ impl App {
                     *p |= k;
                 }
             }
-            let drawable = game.with_host(|h| h.gfx.size());
+            let drawable = game.with_host(|h| h.gl.size().unwrap_or_else(|| h.gfx.size()));
             for k in 0..steps {
                 game.with_host(|host| {
                 host.pads = pads;
@@ -292,7 +321,26 @@ impl App {
                 host.show_frame = k + 1 == steps;
                 host.gfx.used = false;
                 });
-                match game.frame() {
+                let r = game.frame();
+                self.frames_run += 1;
+                let shot = self.opts.screenshot.as_ref().filter(|(n, _)| *n == self.frames_run).map(|(_, p)| p.clone());
+                let img = game.with_host(|h| {
+                    let img = shot.as_ref().and_then(|_| h.gl.read_frame());
+                    let show = h.show_frame;
+                    h.gl.end_frame(show);
+                    img
+                });
+                if let Some(path) = shot {
+                    let r = match img {
+                        Some((w, h, rgba)) => crate::headless::write_png(&path, w, h, &rgba).map(|_| eprintln!("[gasm] wrote {path}")),
+                        None => Err("--window-screenshot: only gasm:gl games".into()),
+                    };
+                    return match r {
+                        Ok(()) => self.quit(el),
+                        Err(e) => self.stop(el, Err(e)),
+                    };
+                }
+                match r {
                     Ok(()) => {}
                     Err(Stop::Exit(code)) => return self.stop(el, Ok(code)),
                     Err(Stop::Trap(e)) => return self.stop(el, Err(e)),
@@ -341,12 +389,28 @@ impl ApplicationHandler for App {
             Ok(w) => Arc::new(w),
             Err(e) => return self.stop(el, Err(format!("cannot create window: {e}"))),
         };
-        let gfx = match Gfx::for_window(window.clone()) {
-            Ok(mut g) => {
-                g.present = self.opts.present;
-                g
+        // gasm:gl games draw with ANGLE into the window; everything else with wgpu
+        let uses_gl = self.session.as_ref().is_some_and(|s| s.uses_gl());
+        let mut gl = None;
+        let gfx = if uses_gl {
+            let native = match native_window(&window) {
+                Ok(n) => n,
+                Err(e) => return self.stop(el, Err(e)),
+            };
+            match self.session.as_ref().map(|s| s.open_gl(Some(native), (0, 0))) {
+                Some(Ok(a)) => gl = Some(a),
+                Some(Err(e)) => return self.stop(el, Err(format!("cannot initialise OpenGL ES (gasm:gl): {e}"))),
+                None => return,
             }
-            Err(e) => return self.stop(el, Err(format!("cannot initialise GPU: {e}"))),
+            Gfx::null()
+        } else {
+            match Gfx::for_window(window.clone()) {
+                Ok(mut g) => {
+                    g.present = self.opts.present;
+                    g
+                }
+                Err(e) => return self.stop(el, Err(format!("cannot initialise GPU: {e}"))),
+            }
         };
         let audio: Option<Box<dyn AudioOut>> = if self.opts.mute {
             None
@@ -364,11 +428,7 @@ impl ApplicationHandler for App {
             }
         };
         let Some(session) = self.session.take() else { return };
-        match session.start(audio, gfx, false, false) {
-            // no native GL backend yet (design/gasm-gl.md): browser and headless only
-            Ok(g) if g.uses_gl() => {
-                return self.stop(el, Err("this game uses gasm:gl (OpenGL ES), which gasm-run supports headless only for now; play it in the browser".into()));
-            }
+        match session.start(audio, gfx, gl, false, false) {
             Ok(g) => self.game = Some(g),
             Err(Stop::Exit(code)) => return self.stop(el, Ok(code)),
             Err(Stop::Trap(e)) => return self.stop(el, Err(e)),

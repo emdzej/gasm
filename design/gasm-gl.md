@@ -1,11 +1,31 @@
 # `gasm:gl`: OpenGL ES 3.0 for guests
 
-> **Status: phases 1 and 2 implemented** (the ABI, the browser runner on
+> **Status: phases 1 to 3 implemented** (the ABI, the browser runner on
 > WebGL 2, the null GL of both headless runners, the C drop-in headers,
-> `guests/gltest`). The normative description is the
+> `guests/gltest`, ANGLE in gasm-run). Left: the Rust `glow` backend, Worker
+> mode and the Godot port ([roadmap](https://github.com/emdzej/gasm/blob/main/site/docs/roadmap.md)).
+> The normative description is the
 > [`gasm:gl` section of ABI.md](https://github.com/emdzej/gasm/blob/main/spec/ABI.md).
-> Next is phase 3 (ANGLE natively); until then the native window refuses
-> `gasm:gl` games. Where the implementation differs from the plan below:
+> Where the implementation differs from the plan below:
+>
+> - ANGLE isn't built here: the libraries come from an Electron release
+>   (43.7.7, the last that ships `libEGL`/`libGLESv2` as separate files, with
+>   SwiftShader and the Vulkan loader). Official, checksummed, the same ANGLE as
+>   Chrome's; `scripts/fetch-angle.sh` pins and fetches them, `package-angle.sh`
+>   puts them in the bundles (macOS: lipo + ad-hoc re-sign). No `angle.yml`.
+> - The context is created in ANGLE's WebGL compatibility mode
+>   (`EGL_ANGLE_create_context_webgl_compatibility`, extensions through
+>   `glRequestExtensionANGLE`), with robust access and resource
+>   initialisation: natively a game gets the validation Chrome gives WebGL 2.
+> - No `glow` and no `khronos-egl`: `gles.rs` (the GLES 3.0 function table,
+>   generated from gl.xml by `scripts/gen-gl-headers.py`) and a small EGL loader
+>   (`angle.rs`, `libloading`). The model runs every call first; the backend
+>   (`gl_backend.rs`) executes only calls that recorded no GL error, as WebGL
+>   does in the browser runner, so hashes don't depend on the backend.
+> - Linux windows are X11 (XWayland on Wayland); `--gl-software` (SwiftShader)
+>   works on Linux and Windows, and is the automatic fallback when the GPU path
+>   fails. CI checks gltest on ANGLE on all four platforms
+>   (`scripts/gl-native-test.sh`: the hashes equal the null GL's).
 >
 > - The null GL's limits and strings are tables in the two runners
 >   (`runners/web/lib/gl.js`, `runners/native/src/gl.rs`), not in `abi.json`.

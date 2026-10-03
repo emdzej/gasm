@@ -41,6 +41,11 @@ options:
   --allow-precompiled      accept a .cwasm: native code, so only files you compiled yourself
   --call-timeout <secs>    trap a guest call (init, a frame) that runs longer (default 30, 0 = never)
   --no-stack-switching     call gasm_frame even if the game exports gasm_run (its Asyncify path)
+  --gl-lib <dir>           where ANGLE's libEGL/libGLESv2 are, for gasm:gl games (default: next
+                           to gasm-run, ../Frameworks in a .app, or $GASM_ANGLE_DIR)
+  --gl-software            gasm:gl on SwiftShader (software Vulkan) instead of the GPU
+  --window-screenshot <frames>:<out.png>
+                           (window) write that frame as shown, then quit (gasm:gl games; tests)
   --headless <frames>      run N frames without window/audio, print hashes
   --screenshot <out.png>   (headless) write the last frame as PNG (renders gfx on the GPU)
   --screenshot-filtered <out.png>
@@ -87,6 +92,9 @@ struct Args {
     allow_precompiled: bool,
     call_timeout: Option<Duration>,
     stack_switching: bool,
+    gl_lib: Option<String>,
+    gl_software: bool,
+    window_screenshot: Option<(u64, String)>,
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -114,6 +122,9 @@ fn parse_args() -> Result<Args, String> {
         allow_precompiled: false,
         call_timeout: Some(Duration::from_secs(30)),
         stack_switching: true,
+        gl_lib: None,
+        gl_software: false,
+        window_screenshot: None,
     };
     while let Some(a) = it.next() {
         let mut val = |name: &str| it.next().ok_or(format!("{name} needs a value"));
@@ -156,6 +167,12 @@ fn parse_args() -> Result<Args, String> {
                 args.headless = Some(val("--headless")?.parse().map_err(|_| "--headless expects a number")?)
             }
             "--screenshot" => args.screenshot = Some(val("--screenshot")?),
+            "--window-screenshot" => {
+                let v = val("--window-screenshot")?;
+                let (n, path) = v.split_once(':').ok_or("--window-screenshot expects <frames>:<out.png>")?;
+                let n: u64 = n.parse().map_err(|_| "--window-screenshot expects <frames>:<out.png>")?;
+                args.window_screenshot = Some((n.max(1), path.to_owned()));
+            }
             "--screenshot-filtered" => args.screenshot_filtered = Some(val("--screenshot-filtered")?),
             "--compile" => args.compile = Some(val("--compile")?),
             "--input" => args.script = script::Script::parse(&val("--input")?)?,
@@ -164,6 +181,8 @@ fn parse_args() -> Result<Args, String> {
             "--no-hash" => args.no_hash = true,
             "--allow-precompiled" => args.allow_precompiled = true,
             "--no-stack-switching" => args.stack_switching = false,
+            "--gl-lib" => args.gl_lib = Some(val("--gl-lib")?),
+            "--gl-software" => args.gl_software = true,
             "--call-timeout" => {
                 let secs: f64 = val("--call-timeout")?.parse().map_err(|_| "--call-timeout expects seconds")?;
                 if !(secs >= 0.0 && secs.is_finite()) {
@@ -280,6 +299,8 @@ fn run(args: Args) -> Result<i32, String> {
         allow_net: args.allow_net,
         storage: open_storage(&args)?,
         load: LoadOptions { allow_precompiled: args.allow_precompiled, call_timeout: args.call_timeout, stack_switching: args.stack_switching },
+        gl_lib: args.gl_lib.as_ref().map(std::path::PathBuf::from),
+        gl_software: args.gl_software,
     };
     match args.headless {
         Some(frames) => {
@@ -314,7 +335,7 @@ fn run(args: Args) -> Result<i32, String> {
         None => {
             let (keymap, _, source) = load_keymap(&args)?;
             eprintln!("[gasm] keyboard layout: {source}");
-            gasm_host::window::run(session, gasm_host::window::Options { size: args.window, keymap, mute: args.mute, present: args.present })
+            gasm_host::window::run(session, gasm_host::window::Options { size: args.window, keymap, mute: args.mute, present: args.present, screenshot: args.window_screenshot.clone() })
         }
         #[cfg(not(feature = "window"))]
         None => Err("this gasm-run was built without the window feature: use --headless".into()),

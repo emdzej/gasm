@@ -25,7 +25,7 @@ features:
   - title: A small, stable ABI
     details: A small core (video, audio, input, assets, params), plus optional GPU, network and storage modules. A new runner is weeks of work, not years.
   - title: 3D via WebGPU or OpenGL ES
-    details: gasm:gfx is a compact WebGPU subset with WGSL shaders; natively it runs on Metal, Vulkan and D3D12 through wgpu. gasm:gl is OpenGL ES 3.0 with WebGL 2's rules for existing GL code (browser and headless for now).
+    details: gasm:gfx is a compact WebGPU subset with WGSL shaders; natively it runs on Metal, Vulkan and D3D12 through wgpu. gasm:gl is OpenGL ES 3.0 with WebGL 2's rules for existing GL code, on WebGL 2 in browsers and ANGLE natively.
   - title: Online multiplayer
     details: gasm:net gives every runner WebSocket-style messaging. The sumo demo plays lockstep matches between native and browser players through a tiny relay.
   - title: Bit-exact determinism

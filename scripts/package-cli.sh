@@ -9,8 +9,10 @@ EXE=""; [[ "$PLATFORM" == windows* ]] && EXE=".exe"
 PKG="dist/gasm-$VERSION-$PLATFORM"
 rm -rf "$PKG"; mkdir -p "$PKG/games"
 cp "$BIN/gasm-run$EXE" "$BIN/gasm-relay$EXE" "$PKG/"
+# ANGLE next to gasm-run, for gasm:gl games (with its license notices)
+scripts/package-angle.sh "$PLATFORM" "$PKG"
 cp build/sumo.wasm build/nes.wasm build/doom.wasm build/triangle.wasm build/test-pattern.wasm build/inputtest.wasm build/scummvm-run.wasm \
-  build/sdl3-snake.wasm build/sdl3-woodeneye.wasm "$PKG/games/"
+  build/sdl3-snake.wasm build/sdl3-woodeneye.wasm build/gltest.wasm "$PKG/games/"
 # license notices of the third-party code in the games (scripts/third-party-notices.sh)
 [ -f build/THIRD-PARTY.txt ] && cp build/THIRD-PARTY.txt "$PKG/games/"
 cat > "$PKG/games/scummvm-LICENSE.txt" <<TXT
@@ -30,7 +32,7 @@ The game data (WAD files) is not included and has its own license.
 TXT
 
 if [ -z "$EXE" ]; then
-  for g in triangle test-pattern inputtest sdl3-snake sdl3-woodeneye; do
+  for g in triangle test-pattern inputtest sdl3-snake sdl3-woodeneye gltest; do
     printf '#!/bin/sh\ncd "$(dirname "$0")"\nexec ./gasm-run games/%s.wasm "$@"\n' "$g" > "$PKG/run-$g.sh"
   done
   cat > "$PKG/run-sumo.sh" <<'SH'
@@ -74,7 +76,7 @@ cd "$(dirname "$0")" && exec ./gasm-relay "${1:-0.0.0.0:9000}"
 SH
   chmod +x "$PKG"/*.sh "$PKG/gasm-run" "$PKG/gasm-relay"
 else
-  for g in triangle test-pattern inputtest sdl3-snake sdl3-woodeneye; do
+  for g in triangle test-pattern inputtest sdl3-snake sdl3-woodeneye gltest; do
     printf '@echo off\r\ncd /d "%%~dp0"\r\ngasm-run.exe games\\%s.wasm %%*\r\n' "$g" > "$PKG/run-$g.cmd"
   done
   printf '@echo off\r\nrem Sumo vs. the bot: run-sumo.cmd    Online: run-sumo.cmd ws://HOST:9000 [room]\r\ncd /d "%%~dp0"\r\nif "%%~1"=="" (gasm-run.exe games\\sumo.wasm) else (if "%%~2"=="" (gasm-run.exe games\\sumo.wasm --allow-net --param relay=%%1 --param room=sumo) else (gasm-run.exe games\\sumo.wasm --allow-net --param relay=%%1 --param room=%%2))\r\n' > "$PKG/run-sumo.cmd"
@@ -94,7 +96,10 @@ https://gasm.emdzej.pl
                    doom.wasm (DOOM, GPL-2.0), triangle.wasm, test-pattern.wasm,
                    inputtest.wasm (shows keyboard, mouse, gamepads),
                    scummvm-run.wasm (ScummVM, GPL-3.0; bring your own games),
-                   sdl3-snake.wasm, sdl3-woodeneye.wasm (SDL 3's demos, unchanged)
+                   sdl3-snake.wasm, sdl3-woodeneye.wasm (SDL 3's demos, unchanged),
+                   gltest.wasm (OpenGL ES 3 on gasm:gl)
+  libEGL, libGLESv2 ANGLE (OpenGL ES for gasm:gl games), with SwiftShader for
+                   machines without a GPU; licenses in ANGLE-NOTICES.txt
 
 Quick start: run-sumo (vs. bot), run-sumo ws://HOST:9000 (online, start
 run-relay somewhere first), run-nes <rom.nes>, run-doom <doom1.wad>,

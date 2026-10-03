@@ -242,6 +242,10 @@ gasm-run <game.wasm|game.cwasm> [options]
 --compile <out.cwasm>    ahead-of-time compile to native code and exit
 --allow-precompiled      accept a .cwasm (native code: only files you compiled yourself)
 --call-timeout <secs>    trap a game call (init, a frame) that runs longer (default 30, 0 = never)
+--gl-lib <dir>           where ANGLE is, for OpenGL ES (gasm:gl) games (default: next to gasm-run)
+--gl-software            gasm:gl on SwiftShader (software) instead of the GPU
+--window-screenshot <frames>:<out.png>
+                         write that frame as the window shows it, then quit (gasm:gl games)
 --headless <N>           run N frames with no window or audio; print hashes
 --screenshot <out.png>   (headless) save the last frame (GPU games render offscreen)
 --screenshot-filtered <out.png>
@@ -381,6 +385,8 @@ your own copies.
 | sumo: *room is full* | Two players are already in that room; pick another room name. |
 | Web: `WebGPU is not available` | Use a WebGPU-capable browser, or enable it (Firefox: `dom.webgpu.enabled`; Linux Chrome: `--enable-unsafe-webgpu`). |
 | Web: `HTTP 404` for `build/*.wasm` | Serve the **repo root** (`make web`), not `runners/web/`. Build the games first. |
+| `ANGLE (libEGL…) not found` | An OpenGL ES (`gasm:gl`) game needs ANGLE next to `gasm-run`: it is in the release bundles; in a repository build run `scripts/fetch-angle.sh`, or pass `--gl-lib DIR`. |
+| OpenGL ES game: `no display` / `eglInitialize failed` | No usable GPU driver: gasm-run tries SwiftShader next (`--gl-software` forces it). |
 | No sound (native) | Check `[gasm] audio:` on stderr; `audio disabled: …` explains why. |
 | No sound (web) | Click the page / **start** button; autoplay policies block audio before interaction. |
 | `.cwasm` is refused | Add `--allow-precompiled` (only for files you compiled yourself). |

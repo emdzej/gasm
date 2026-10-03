@@ -100,6 +100,14 @@ jobs:
       - name: Parity (NES native vs wasm)
         run: make parity ROM=roms/cpu_instr_test.nes FRAMES=600
 
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: tools/angle
+          key: angle-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/fetch-angle.sh') }}
+
+      - name: gasm:gl on ANGLE (SwiftShader; hashes == null GL)
+        run: scripts/gl-native-test.sh --gl-software
+
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: games-ci
@@ -165,3 +173,12 @@ jobs:
 
       - name: Asset providers
         run: LARGE_MB=50 scripts/asset-test.sh
+
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: tools/angle
+          key: angle-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/fetch-angle.sh') }}
+
+      # Metal on macOS, Direct3D 11 on Windows (falls back to SwiftShader), SwiftShader on Linux
+      - name: gasm:gl on ANGLE (hashes == null GL)
+        run: scripts/gl-native-test.sh ${{ runner.os == 'Linux' && '--gl-software' || '' }}

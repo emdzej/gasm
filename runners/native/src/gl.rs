@@ -17,6 +17,10 @@ use crate::host::{Host, guest_slice, guest_slice_mut, memory};
 #[path = "gl_sigs.rs"]
 mod sigs;
 
+#[path = "gl_backend.rs"]
+mod backend;
+pub use backend::Backend;
+
 const INVALID_ENUM: u32 = 0x0500;
 const INVALID_VALUE: u32 = 0x0501;
 const INVALID_OPERATION: u32 = 0x0502;
@@ -214,6 +218,10 @@ pub struct Gl {
     active: HashMap<u32, u32>,
     query_ended: HashMap<u32, u64>,
     sync_made: HashMap<u32, u64>,
+    /// GL errors the model has recorded so far: a call that adds none reaches the backend
+    error_count: u64,
+    /// the GL that executes calls (ANGLE); None: the null GL
+    backend: Option<Box<Backend>>,
 }
 
 impl Default for Gl {
@@ -237,12 +245,15 @@ impl Default for Gl {
             active: HashMap::new(),
             query_ended: HashMap::new(),
             sync_made: HashMap::new(),
+            error_count: 0,
+            backend: None,
         }
     }
 }
 
 impl Gl {
     fn error(&mut self, e: u32) -> bool {
+        self.error_count += 1;
         if self.errors.len() < 32 {
             self.errors.push(e);
         }
@@ -473,8 +484,26 @@ fn guest_str(mem: &[u8], ptr: u32, len: u32) -> wasmtime::Result<String> {
         .map_err(|_| wasmtime::format_err!("string argument is not UTF-8"))
 }
 
-/// One gasm:gl call. `a(i)` is argument i as the i32 the guest passed (`u(i)` as u32).
-fn call(
+/// One gasm:gl call: the model checks it (and answers what it can); if it recorded
+/// no GL error and didn't trap, the backend (if any) executes it, as WebGL does in
+/// the browser runner.
+fn call(c: &mut Caller<'_, Host>, name: &str, f32_result: bool, args: &[Val], results: &mut [Val]) -> wasmtime::Result<()> {
+    let before = c.data().gl.error_count;
+    model_call(c, name, f32_result, args, results)?;
+    if c.data().gl.backend.is_none() || c.data().gl.error_count != before {
+        return Ok(());
+    }
+    let mem = memory(c)?;
+    let (mem, host) = mem.data_and_store_mut(c);
+    let gl = &mut host.gl;
+    let mut be = gl.backend.take().expect("backend");
+    let r = backend::forward(&mut be, gl, name, args, results, mem);
+    gl.backend = Some(be);
+    r
+}
+
+/// The model's part of a call. `a(i)` is argument i as the i32 the guest passed (`u(i)` as u32).
+fn model_call(
     c: &mut Caller<'_, Host>,
     name: &str,
     f32_result: bool,

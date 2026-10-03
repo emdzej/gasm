@@ -8,7 +8,7 @@ Guidance for coding agents working in this repository. Humans: see
 gasm is a portable game runtime on WebAssembly. **Guests** (games) are single
 `.wasm` modules. **Runners** (native Rust, browser JS, headless Node) implement
 the ABI in [`spec/ABI.md`](spec/ABI.md): the core `gasm` module plus optional
-`gasm:gfx` (WebGPU subset), `gasm:net` (WebSocket-style messages) and
+`gasm:gfx` (WebGPU subset), `gasm:gl` (OpenGL ES 3.0, WebGL 2 rules: WebGL 2 / ANGLE / null GL), `gasm:net` (WebSocket-style messages) and
 `gasm:storage` (per-game key/value). Determinism across runners is the core
 property: most tests assert bit-identical hashes.
 
@@ -30,6 +30,7 @@ property: most tests assert bit-identical hashes.
 | `guests/doom/` | DOOM: gasm platform layer (MIT) for doomgeneric. `scripts/fetch-doom.sh` puts the GPL-2.0 engine (+ chocolate-doom OPL music) in `tools/doom-src` and applies `engine.patch`; `scripts/package-doom-src.sh` packs the complete source shipped with releases and the site |
 | `runners/native/` | crate `gasm-host` (workspace root; one `target/`): the library has the host (`host.rs`, `switching.rs` stack switching for `gasm_run`, `wasi.rs` WASI subset, `gfx.rs`, `present.rs` 2D filters, `net.rs`, `storage.rs`, `assets.rs`) and both runners (`headless.rs`, `window.rs` + `keymap.rs` behind the default `window` feature); `src/main.rs` (`gasm-run`) only parses arguments. `relay/`: crate `gasm-relay` (no runtime deps, not on crates.io); `relay.Dockerfile` |
 | `runners/web/` | npm package `@emdzej/gasm-host`: `gasm-host.js` re-exports `lib/` (`host.js`, `wasi.js`, `gfx.js` GfxModel + NullGfx, `net.js`, `storage.js`, `assets.js`, `input.js` keys/keymap/BrowserInput, `audio.js`) + `.d.ts`; `gasm-worker.js`: Worker mode; `webgpu-gfx.js`; `gasm-present.js` (2D frames on WebGL 2: letterbox + upscaling filters, GLSL ports of `runners/native/src/present.rs`); `headless.mjs` = `gasm-headless`. Not published: `app.js`/`index.html` (the player), `opfs.html`/`opfs.js` (csfs OPFS import; csfs is a devDependency vendored by `scripts/vendor-web.sh`), `testdata.js` |
+| `runners/native/src/gl.rs`, `gl_backend.rs`, `angle.rs`, `gles.rs` | `gasm:gl` natively: the model (mirrors `runners/web/lib/gl.js`, null GL), the ANGLE backend it forwards passing calls to, the EGL loader, the generated GLES function table (`scripts/gen-gl-headers.py`, which also writes the C SDK's `GLES3/gl3.h` + `gasm_gl.c`). ANGLE comes from Electron 43.7.7 (`scripts/fetch-angle.sh` → `tools/angle/<platform>`, `package-angle.sh` for bundles) |
 | `runners/native/src/assets.rs`, `keymap.rs` | file-backed assets, `--asset-dir`, case-insensitive lookup; keyboard layouts (`default-keymap.txt` must equal the JS `DEFAULT_KEYMAP`, checked by `gen-abi.mjs --check`) |
 | `tests/golden/determinism.txt` | golden hashes of every determinism case; the same on every platform |
 | `scripts/` | toolchain/ROM fetchers (`lib.sh`: shared checksum helpers), test suites, packaging (`third-party-notices.sh`: license notices shipped with the games), site build, Linux container |
@@ -47,6 +48,7 @@ scripts/determinism-test.sh   # 26 cases: wasmtime JIT == AOT == V8 == golden ha
                               # UPDATE_GOLDEN=1 re-records after a change meant to alter output
 scripts/net-test.sh           # lockstep sumo via gasm-relay, 3 runner pairs + TLS (must pass)
 scripts/asset-test.sh         # folders, case-insensitive names, 200 MB streaming + RSS (must pass)
+scripts/gl-native-test.sh     # gasm:gl on ANGLE: gltest hashes == null GL, frame drawn
 node scripts/opfs-test.mjs    # Chrome: OPFS + Worker mode == Node, memory flat
 make parity                   # NES native Rust build == wasm build
 node scripts/present-test.mjs # Chrome: 2D filters, WebGL 2 == native wgpu == tests/golden/present (skips without a GPU)
@@ -151,6 +153,16 @@ from the repo root, then
 - **`.cwasm` files are native code:** `gasm-run` loads them only with
   `--allow-precompiled`, and they must come from the same `host::engine()`
   configuration (epoch interruption on).
+- **gasm:gl natively = model first, ANGLE second.** `gl.rs` checks every call
+  and answers what every runner answers the same way; `gl_backend.rs` runs only
+  calls that recorded no GL error (as WebGL in the browser). Hashes come from
+  the model, so ANGLE never changes them (`scripts/gl-native-test.sh`). ANGLE
+  is loaded at run time (never link it); the context is WebGL-compatible
+  (`EGL_CONTEXT_WEBGL_COMPATIBILITY_ANGLE`). SwiftShader needs the Vulkan
+  loader shipped next to ANGLE and `VK_ICD_FILENAMES` set before ANGLE starts;
+  headless gl games never start wgpu (its Vulkan instance would come first).
+  `c_char` is `u8` on arm64 Linux: use `c_char`, not `i8`. Electron 44+ no
+  longer ships ANGLE as separate libraries.
 - **wasm checks indirect call signatures.** C that calls through a mismatched
   function pointer traps with "indirect call type mismatch"; fix it with a
   typed wrapper (see `engine.patch`).

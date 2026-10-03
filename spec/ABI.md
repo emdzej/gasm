@@ -294,9 +294,11 @@ aren't hashed.
 ## `gasm:gl` (optional): OpenGL ES 3.0
 
 OpenGL ES 3.0 with WebGL 2's rules, for code written against GLES 3 / WebGL 2.
-The browser runner forwards it to a WebGL 2 context; headless runners (native
-and Node) implement it with a null GL. The native window has no GL backend yet
-and refuses `gasm:gl` guests. A module imports `gasm:gfx` or `gasm:gl`, not both
+The browser runner forwards it to a WebGL 2 context; the native runner to
+[ANGLE](https://chromium.googlesource.com/angle/angle) (Metal, Direct3D 11 or
+Vulkan, SwiftShader without a GPU) in a WebGL compatibility context, the
+validation Chrome uses for WebGL 2. Headless runs use a null GL (natively ANGLE
+draws too when a screenshot is wanted; the hashes don't change). A module imports `gasm:gfx` or `gasm:gl`, not both
 (runners refuse it). The full list (224 functions) is in
 [`spec/abi.json`](https://github.com/emdzej/gasm/blob/main/spec/abi.json);
 C and C++ games use the drop-in `<GLES3/gl3.h>` of the C SDK instead (below).
@@ -338,6 +340,10 @@ C and C++ games use the drop-in `<GLES3/gl3.h>` of the C SDK instead (below).
 The default framebuffer has depth 24 + stencil 8, no alpha and no
 multisampling (games multisample with their own renderbuffers); it isn't
 preserved between frames.
+
+Every runner checks a call against the shared model first (below); only calls
+that pass reach WebGL or ANGLE, so the model's GL errors come first and
+`get_error` then reports the backend's.
 
 **Null GL** (headless runs): object names, bindings, the pixel store and every
 GL error a guest can cause through names, targets, enums and sizes are tracked

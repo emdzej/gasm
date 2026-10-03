@@ -13,10 +13,12 @@
 //!
 //! ABI: <https://gasm.emdzej.pl/docs/abi> (machine-readable: `spec/abi.json`).
 
+pub mod angle;
 pub mod assets;
 pub mod audio;
 pub mod gfx;
 pub mod gl;
+pub mod gles;
 pub mod headless;
 pub mod host;
 pub mod keys;

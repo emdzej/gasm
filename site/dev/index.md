@@ -78,7 +78,7 @@ Full details: [ABI v0 specification](/docs/abi). What each release added:
 Larger features get a design document with a phased plan before the work
 starts. In progress:
 
-- [`gasm:gl`](https://github.com/emdzej/gasm/blob/main/design/gasm-gl.md): OpenGL ES 3.0 with WebGL 2 rules (browser and headless in 0.7.0; ANGLE natively next)
+- [`gasm:gl`](https://github.com/emdzej/gasm/blob/main/design/gasm-gl.md): OpenGL ES 3.0 with WebGL 2 rules (browser and headless in 0.7.0, ANGLE natively after it)
 - [Threads](https://github.com/emdzej/gasm/blob/main/design/threads.md): cooperative threads in C, POSIX and SDL 3 (0.7.0); Rust and real wasm threads later
 
 Implemented (kept as a record of the decisions):

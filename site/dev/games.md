@@ -626,7 +626,7 @@ GLES 3 / WebGL 2 renderers build unchanged with the SDK's drop-in headers:
 [`gasm_gl.c`](https://github.com/emdzej/gasm/blob/main/sdk/c/src/gasm_gl.c)
 (CMake: `target_sources(mygame PRIVATE ${GASM_GL_SOURCE})`). They run on
 [`gasm:gl`](/docs/abi#gasm-gl-optional-opengl-es-3-0): WebGL 2 in the browser,
-a null GL headless (same GL errors, uploads hashed).
+ANGLE natively, a null GL headless (same GL errors, uploads hashed).
 
 ```c
 #include <GLES3/gl3.h>
@@ -647,9 +647,12 @@ if (glGetError() != GL_NO_ERROR) ...   // GL errors are reported, they don't tra
 - Draw into the default framebuffer each frame (it isn't preserved), sized by
   `gasm_gl_width()` / `gasm_gl_height()`; it has depth and stencil but no
   alpha and no multisampling.
-- A game uses `gasm:gl` or `gasm:gfx`, not both. `gasm-run`'s window doesn't
-  have `gasm:gl` yet (headless runs do); it's next on the
-  [roadmap](/docs/roadmap).
+- A game uses `gasm:gl` or `gasm:gfx`, not both.
+- `gasm-run` draws with ANGLE (Metal, Direct3D 11 or Vulkan; SwiftShader
+  without a GPU), shipped next to it in the release bundles. In the repository,
+  `scripts/fetch-angle.sh` fetches it; `--gl-lib DIR` points elsewhere.
+  Both runners validate calls the same way, WebGL 2's way, so a game behaves
+  the same in Chrome and natively.
 
 Example: [`guests/gltest`](https://github.com/emdzej/gasm/blob/main/guests/gltest/main.c).
 

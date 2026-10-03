@@ -6,6 +6,26 @@ embedders. The ABI version is still 0: additions keep it (see
 guests can probe for newer imports with `gasm.has`. Versions are the git tags and
 the package versions (`gasm-sdk`, `gasm-host`, `@emdzej/gasm-host`).
 
+## Unreleased
+
+Runners:
+- Native `gasm:gl`: gasm-run draws OpenGL ES games with ANGLE (Metal on macOS,
+  Direct3D 11 on Windows, Vulkan on Linux, SwiftShader without a GPU or with
+  `--gl-software`), in a WebGL compatibility context: the validation Chrome
+  uses for WebGL 2. Calls pass the same model as in the browser first, so GL
+  errors and hashes don't change. ANGLE is loaded at run time from next to
+  gasm-run (`--gl-lib DIR`, `$GASM_ANGLE_DIR`); the release bundles ship it
+  (from Electron 43.7.7, licenses in `ANGLE-NOTICES.txt`), and
+  `scripts/fetch-angle.sh` fetches it for builds from the repository.
+- Headless `--screenshot` renders `gasm:gl` games with ANGLE offscreen.
+  `--window-screenshot <frames>:<out.png>` writes a frame as the window shows
+  it and quits (gasm:gl games; for tests).
+- Linux: gasm:gl games open X11 windows (XWayland on Wayland desktops).
+- `gasm-host` library: `Session::start` takes the GL backend
+  (`Option<angle::Angle>`; `Session::open_gl` makes one), `Session` has
+  `gl_lib` and `gl_software`.
+- The release bundles include `gltest.wasm` (`run-gltest`).
+
 ## 0.7.0 (2026-10-03)
 
 ABI (additive):

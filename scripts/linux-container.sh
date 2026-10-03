@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Build and test gasm on Linux in an Apple `container` (Apple silicon, macOS 26+).
-#   scripts/linux-container.sh [test|build|shell]      (default: test)
+#   scripts/linux-container.sh [test|build|shell|gl]   (default: test; gl: only gasm:gl on ANGLE)
 #   scripts/linux-container.sh clean     remove what this leaves behind (several GB):
 #                                        the volumes, the image, the builder container
 #                                        and its image, then stop the container system
