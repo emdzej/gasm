@@ -119,9 +119,11 @@ make web
 3. Click **▶ start**. Browsers only allow audio after a click, so the first
    start must be a click.
 
+<figure class="shot-wide"><img src="/screenshots/player.webp" alt="The browser player running ScummVM" loading="lazy"><figcaption>The browser player: game, files, Worker mode, keyboard layout and the 2D filter at the top.</figcaption></figure>
+
 URL parameters are passed to the game: `?game=sumo.wasm&relay=ws://host:9000&room=abc&autostart`.
 `game`, `autostart`, `wasm`, `worker`, `opfs`, `prefix`, `rom`, `filter`,
-`integer` and `hashframes` are used by the page itself; everything else becomes
+`integer`, `asyncify` and `hashframes` are used by the page itself; everything else becomes
 a game parameter.
 
 **Scaling 2D games:** the filter drop-down (or `?filter=`) picks how frames
@@ -133,6 +135,8 @@ upscaling with sharpening, for rendered or dithered games such as DOOM) or
 (or `?integer`) scales by whole multiples only. The choice is remembered.
 Filters other than `nearest` need WebGL 2 (without it the page falls back to
 `nearest`); 3D games aren't affected.
+
+<figure class="shot-wide"><img src="/screenshots/filters.webp" alt="sharp, xbr, fsr and crt" loading="lazy"><figcaption>The same DOOM frame with sharp, xbr, fsr and crt.</figcaption></figure>
 
 **Folders and big data sets in the browser:**
 

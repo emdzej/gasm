@@ -39,8 +39,21 @@ features:
 | | |
 |---|---|
 | **Runners** | `gasm-run`: native (Rust: wasmtime, wgpu, winit, cpal, gilrs), with AOT compilation for no-JIT platforms. Browser runner: WebAssembly, WebGPU, AudioWorklet, Gamepad API. Headless Node runner. |
-| **Games** | **Sumo**: 3D two-player arena with lockstep netcode. **NES**: a complete emulator (tetanes-core) passing the blargg CPU, timing and APU tests. **DOOM**: doomgeneric in C, with OPL music and saves, playing any IWAD. **ScummVM**: point-and-click adventures, starting with the freeware Beneath a Steel Sky. **SDL 3**: SDL programs build unchanged; SDL's own snake and woodeneye demos. **Triangle** and **test pattern**: minimal examples in Rust and C. |
+| **Games** | **Sumo**: 3D two-player arena with lockstep netcode. **NES**: a complete emulator (tetanes-core) passing the blargg CPU, timing and APU tests. **DOOM**: doomgeneric in C, with OPL music and saves, playing any IWAD. **ScummVM**: point-and-click adventures, starting with the freeware Beneath a Steel Sky. **SDL 3**: SDL programs build unchanged, threads included; SDL's own snake and woodeneye demos. **GLES 3**: OpenGL ES code through drop-in headers. **Triangle** and **test pattern**: minimal examples in Rust and C. |
 | **Tools** | `gasm-relay` (WebSocket rooms), the `gasm-sdk` Rust crate (library `gasm`), `gasm.h` and the C/C++ SDK, SDL 3 for gasm, cross-runner determinism and network test suites with golden hashes. |
+
+## Screenshots
+
+<div class="shots">
+  <figure><img src="/screenshots/doom.webp" alt="DOOM in gasm-run" loading="lazy"><figcaption>DOOM (doomgeneric in C) with OPL music, at 4:3 with the sharp filter.</figcaption></figure>
+  <figure><img src="/screenshots/sky.webp" alt="Beneath a Steel Sky in ScummVM" loading="lazy"><figcaption>ScummVM playing Beneath a Steel Sky, upscaled with xBR.</figcaption></figure>
+  <figure><img src="/screenshots/sumo.webp" alt="Sumo, the 3D demo" loading="lazy"><figcaption>Sumo: gasm:gfx (WebGPU) with lockstep netplay.</figcaption></figure>
+  <figure><img src="/screenshots/textured.webp" alt="GPU texture test" loading="lazy"><figcaption>Mipmapped textures, samplers, instancing and dynamic offsets on gasm:gfx.</figcaption></figure>
+  <figure><img src="/screenshots/gltest.webp" alt="GLES 3 test in the browser player" loading="lazy"><figcaption>OpenGL ES 3 C code on gasm:gl, in the browser player (WebGL 2).</figcaption></figure>
+  <figure><img src="/screenshots/woodeneye.webp" alt="SDL 3 woodeneye-008" loading="lazy"><figcaption>SDL 3's woodeneye-008, source unchanged, on SDL for gasm.</figcaption></figure>
+</div>
+
+<figure class="shot-wide"><img src="/screenshots/filters.webp" alt="The same DOOM frame with the sharp, xbr, fsr and crt filters" loading="lazy"><figcaption>One 2D frame, four ways to scale it up: sharp, xBR, FSR and CRT (the player's filter menu, <code>gasm-run --filter</code>).</figcaption></figure>
 
 ## Performance
 
@@ -52,5 +65,5 @@ built natively. That's about 9× faster than the console itself. Sumo holds
 ## Status
 
 gasm is a **proof of concept**. ABI v0 is experimental and will change. See the
-[roadmap](/docs/roadmap): threads, `gasm:gl`, rollback netplay, `.gasm`
+[roadmap](/docs/roadmap): `gasm:gl` natively, rollback netplay, `.gasm`
 packages.

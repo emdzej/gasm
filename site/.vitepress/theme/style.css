@@ -42,6 +42,25 @@
 .demo-card strong { display: block; font-size: 1.05em; margin-bottom: 6px; }
 .demo-card span { color: var(--vp-c-text-2); font-size: 0.9em; line-height: 1.5; }
 
+/* screenshots */
+.shots {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 16px;
+  margin: 24px 0;
+}
+.shots figure { margin: 0; }
+.shots img, .shot-wide img {
+  display: block;
+  width: 100%;
+  border: 1px solid var(--vp-c-divider);
+  border-radius: 10px;
+  background: #0e1116;
+}
+.shots img { aspect-ratio: 4 / 3; object-fit: cover; }
+.shots figcaption, .shot-wide figcaption { color: var(--vp-c-text-2); font-size: 0.85em; margin-top: 6px; line-height: 1.4; }
+.shot-wide { margin: 24px 0; }
+
 /* badge page */
 .badge-preview {
   display: grid;
