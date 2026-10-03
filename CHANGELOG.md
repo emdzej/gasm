@@ -22,6 +22,10 @@ SDKs:
   scheduling on the guest's one wasm thread (design/threads.md). Build with
   `gasm_add_game(<target> LOOP THREADS ...)` (gasm_loop.c with
   `-DGASM_LOOP_THREADS`); Asyncify builds only.
+- POSIX threads on the same scheduler (`sdk/c/src/gasm_pthread.c`, added by
+  `LOOP THREADS`): pthread code builds unchanged against wasi-libc's headers
+  (threads, mutexes, conditions, rwlocks, once, keys, semaphores, spinlocks,
+  `nanosleep`).
 - SDL 3: threads work (`SDL_CreateThread`, `SDL_AddTimer`, mutexes,
   conditions, semaphores, read/write locks, TLS) on those cooperative threads,
   in classic `main()` apps linked with the threaded loop helper

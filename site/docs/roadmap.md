@@ -15,18 +15,19 @@ at 0 (older runners trap only if a guest calls something they lack, see
 
 The suggested order, from the most benefit for the least risk:
 
-1. **Cooperative threads.** Removes the most common porting blocker
-   (`SDL_CreateThread`, `SDL_AddTimer`, pthreads) and keeps runs deterministic.
-   Builds on stack switching (done: `gasm_run`, see
-   [design/stack-switching.md](https://github.com/emdzej/gasm/blob/main/design/stack-switching.md)).
-2. **`gasm:gl`.** The largest payoff (GLES/WebGL engines, Godot, ScummVM's 3D
+Done recently: stack switching (`gasm_run`,
+[design/stack-switching.md](https://github.com/emdzej/gasm/blob/main/design/stack-switching.md))
+and cooperative threads in C, POSIX and SDL 3
+([design/threads.md](https://github.com/emdzej/gasm/blob/main/design/threads.md)).
+
+1. **`gasm:gl`.** The largest payoff (GLES/WebGL engines, Godot, ScummVM's 3D
    engines) and the most work, mostly building and shipping ANGLE natively.
 
 ## Runtime and ABI
 
 | Item | What it gives | Status |
 |---|---|---|
-| Cooperative threads | Threads inside the guest (no ABI change, deterministic). The scheduler, C API (`gasm_thread.h`) and SDL thread backend (`SDL_CreateThread`, `SDL_AddTimer`) are done; left: a pthreads shim, later a Rust API. | in progress: [design/threads.md](https://github.com/emdzej/gasm/blob/main/design/threads.md) (part A) |
+| Cooperative threads in Rust | `gasm::thread::spawn` and locks on the same scheduler (the C API, POSIX threads and SDL threads are done: [design/threads.md](https://github.com/emdzej/gasm/blob/main/design/threads.md), part A). `std::thread` on `wasm32-unknown-unknown` can't be redirected. | not started |
 | Stack switching beyond JSPI | Browsers without JSPI (and Node 22) still need the Asyncify builds; wasm's stack-switching proposal would cover them too. | waiting on engines |
 | Real wasm threads | Shared memory and atomics, opt-in, for guests that need parallel CPU (physics, job systems, Godot's worker pool). Not deterministic. | proposal, after cooperative threads: [design/threads.md](https://github.com/emdzej/gasm/blob/main/design/threads.md) (part B) |
 | Guest memory limit | A cap on linear memory growth. Today a guest can grow to the engine maximum (4 GiB for wasm32); needed before running untrusted content. | not started |

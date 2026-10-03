@@ -1,7 +1,7 @@
 # Threads for guests
 
-Status: **part A in progress** (phase 1, the scheduler and C API, is
-implemented: see "As built" below); part B is a proposal. Two designs that
+Status: **part A implemented** for C, POSIX threads and SDL 3 (see "As
+built" and "Plan"; a Rust API is still to do); part B is a proposal. Two designs that
 complement each other:
 **cooperative threads** inside the guest (no ABI change, deterministic), and
 **real wasm threads** as an optional capability later (parallel, not
@@ -154,8 +154,17 @@ driven inside the guest.
    `SDL_AddTimer`'s timer thread posting a semaphore, TLS), in the determinism
    suite and checked in Chrome. SDL's own test programs need SDL_test, which
    isn't part of this build.
-3. pthreads shim; port one pthread-using program as the example.
-4. Docs (site dev guide), Rust API later.
+3. pthreads shim; port one pthread-using program as the example. **Done**:
+   `sdk/c/src/gasm_pthread.c` replaces wasi-libc's single-thread stubs (weak,
+   or alone in their archive members) and keeps musl's object layouts, so
+   wasi-libc's `pthread_mutex_init`, attribute functions and
+   `pthread_cond_init` stay in use. Spinlocks yield instead of spinning, and
+   `nanosleep`/`usleep`/`sleep` sleep the thread on the frame's time (WASI's
+   `poll_oneoff` isn't available). Not covered: `pthread_exit`, cancellation,
+   C11 `<threads.h>` (musl calls internal pthread names there). Example and
+   test: `guests/pthreadtest`, plain POSIX code, in the determinism suite.
+4. Docs (site dev guide), Rust API later. **Docs done**; the Rust API is on the
+   roadmap.
 
 ### As built (phase 1)
 

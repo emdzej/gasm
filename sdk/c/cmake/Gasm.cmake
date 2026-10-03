@@ -14,8 +14,9 @@
 # (no Asyncify, for runners that switch stacks: gasm_run).
 #
 # LOOP THREADS: also cooperative threads (gasm_thread.h: threads, mutexes,
-# conditions, semaphores, keys). gasm_thread.c is added and gasm_loop.c is built
-# with GASM_LOOP_THREADS; threads switch with Asyncify, so there is no -run.wasm.
+# conditions, semaphores, keys) and POSIX threads (gasm_pthread.c: pthread code
+# builds unchanged). gasm_thread.c and gasm_pthread.c are added and gasm_loop.c is
+# built with GASM_LOOP_THREADS; threads switch with Asyncify, so there is no -run.wasm.
 # gasm_thread.c alone (${GASM_THREAD_SOURCE}) gives the primitives without threads.
 #
 # stdio over assets and storage (gasm_vfile.h): target_sources(<target> PRIVATE ${GASM_VFILE_SOURCE}).
@@ -41,6 +42,9 @@ endif()
 if(NOT GASM_THREAD_SOURCE AND EXISTS "${CMAKE_CURRENT_LIST_DIR}/../src/gasm_thread.c")
   get_filename_component(GASM_THREAD_SOURCE "${CMAKE_CURRENT_LIST_DIR}/../src/gasm_thread.c" ABSOLUTE)
 endif()
+if(NOT GASM_PTHREAD_SOURCE AND EXISTS "${CMAKE_CURRENT_LIST_DIR}/../src/gasm_pthread.c")
+  get_filename_component(GASM_PTHREAD_SOURCE "${CMAKE_CURRENT_LIST_DIR}/../src/gasm_pthread.c" ABSOLUTE)
+endif()
 if(NOT GASM_VFILE_SOURCE AND EXISTS "${CMAKE_CURRENT_LIST_DIR}/../src/gasm_vfile.c")
   get_filename_component(GASM_VFILE_SOURCE "${CMAKE_CURRENT_LIST_DIR}/../src/gasm_vfile.c" ABSOLUTE)
 endif()
@@ -63,7 +67,7 @@ function(gasm_add_game target)
     endif()
     list(APPEND sources "${GASM_LOOP_SOURCE}")
     if(threads)
-      list(APPEND sources "${GASM_THREAD_SOURCE}")
+      list(APPEND sources "${GASM_THREAD_SOURCE}" "${GASM_PTHREAD_SOURCE}")
     endif()
   endif()
   add_executable(${target} ${sources})

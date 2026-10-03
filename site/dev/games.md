@@ -595,8 +595,19 @@ int gasm_main(void) {
 ```
 
 Build with `gasm_add_game(mygame LOOP THREADS main.c)` (by hand: add
-`src/gasm_thread.c` and compile `gasm_loop.c` with `-DGASM_LOOP_THREADS`).
-Threads switch with Asyncify, so such games only come as the Asyncify build.
+`src/gasm_thread.c` and `src/gasm_pthread.c`, and compile `gasm_loop.c` with
+`-DGASM_LOOP_THREADS`). Threads switch with Asyncify, so such games only come
+as the Asyncify build.
+
+**POSIX threads** build unchanged on the same scheduler
+([`gasm_pthread.c`](https://github.com/emdzej/gasm/blob/main/sdk/c/src/gasm_pthread.c)
+replaces wasi-libc's single-thread stubs): `pthread_create/join/detach`,
+mutexes (normal, recursive, error-checking, timed), condition variables (timed
+waits on the condition's clock), read/write locks, `pthread_once`, keys, POSIX
+semaphores, spinlocks, `sched_yield`, `nanosleep`/`usleep`/`sleep`. Not
+covered: `pthread_exit`, cancellation, process-shared objects and C11
+`<threads.h>`. Example:
+[`guests/pthreadtest`](https://github.com/emdzej/gasm/blob/main/guests/pthreadtest/main.c).
 
 - Time is the frame's (`gasm_time_ms()`): `gasm_thread_sleep_ms` and the
   timeouts of `gasm_cond_wait` / `gasm_sem_wait` end at the first frame at or
