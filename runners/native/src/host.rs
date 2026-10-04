@@ -249,6 +249,8 @@ pub struct Host {
     /// frames run so far (gl queries and syncs are ready from the next frame on)
     pub frame_index: u64,
     pub net: Net,
+    /// gasm:fetch (denied until the runner sets a policy: `Fetch::new`)
+    pub fetch: crate::fetch::Fetch,
     pub storage: Storage,
     /// false during catch-up frames: gfx begin_frame returns 0
     pub show_frame: bool,
@@ -299,6 +301,7 @@ impl Host {
             audio,
             gfx,
             gl: Default::default(),
+            fetch: Default::default(),
             frame_index: 0,
             net,
             storage,
@@ -924,6 +927,52 @@ fn add_net_imports(linker: &mut Linker<Host>) -> wasmtime::Result<()> {
     Ok(())
 }
 
+fn add_fetch_imports(linker: &mut Linker<Host>) -> wasmtime::Result<()> {
+    const M: &str = "gasm:fetch";
+    linker.func_wrap(M, "request", |mut c: Caller<'_, Host>, dp: u32, dl: u32, bp: u32, bl: u32| -> wasmtime::Result<i32> {
+        let desc = guest_str(&c, dp, dl)?;
+        let mem = memory(&c)?;
+        let body = guest_slice(mem.data(&c), bp, bl as u64)?.to_vec();
+        let h = c.data_mut();
+        let frame = h.frame_index;
+        Ok(h.fetch.request(&desc, body, frame))
+    })?;
+    linker.func_wrap(M, "state", |mut c: Caller<'_, Host>, r: i32| -> wasmtime::Result<u32> {
+        let h = c.data_mut();
+        let frame = h.frame_index;
+        h.fetch.state(r, frame).map_err(trap)
+    })?;
+    linker.func_wrap(M, "status", |mut c: Caller<'_, Host>, r: i32| -> wasmtime::Result<i32> {
+        let h = c.data_mut();
+        let frame = h.frame_index;
+        h.fetch.status(r, frame).map_err(trap)
+    })?;
+    linker.func_wrap(M, "headers", |mut c: Caller<'_, Host>, r: i32, dst: u32, cap: u32| -> wasmtime::Result<i32> {
+        let mem = memory(&c)?;
+        let (data, host) = mem.data_and_store_mut(&mut c);
+        let frame = host.frame_index;
+        match host.fetch.headers(r, frame).map_err(trap)? {
+            Some(text) => copy_if_fits(data, dst, cap, text.as_bytes()),
+            None => Ok(-1),
+        }
+    })?;
+    linker.func_wrap(M, "read", |mut c: Caller<'_, Host>, r: i32, dst: u32, cap: u32| -> wasmtime::Result<i32> {
+        let mem = memory(&c)?;
+        guest_slice(mem.data(&c), dst, cap as u64)?; // the whole destination must be guest memory
+        let (data, host) = mem.data_and_store_mut(&mut c);
+        let frame = host.frame_index;
+        match host.fetch.read(r, (cap as usize).min(i32::MAX as usize), frame).map_err(trap)? {
+            Ok(bytes) => {
+                guest_slice_mut(data, dst, bytes.len() as u64)?.copy_from_slice(&bytes);
+                Ok(bytes.len() as i32)
+            }
+            Err(()) => Ok(-1),
+        }
+    })?;
+    linker.func_wrap(M, "close", |mut c: Caller<'_, Host>, r: i32| -> wasmtime::Result<()> { c.data_mut().fetch.close(r).map_err(trap) })?;
+    Ok(())
+}
+
 fn add_storage_imports(linker: &mut Linker<Host>) -> wasmtime::Result<()> {
     const M: &str = "gasm:storage";
     linker.func_wrap(M, "get", |mut c: Caller<'_, Host>, kp: u32, kl: u32, dst: u32, cap: u32| -> wasmtime::Result<i32> {
@@ -1108,6 +1157,7 @@ impl Game {
         add_gfx_imports(&mut linker)?;
         crate::gl::add_gl_imports(&mut linker)?;
         add_net_imports(&mut linker)?;
+        add_fetch_imports(&mut linker)?;
         add_storage_imports(&mut linker)?;
         let mut store = Store::new(engine, host);
         // what `has` reports: the gasm modules and functions above (not WASI stubs or traps)

@@ -1,0 +1,6 @@
+{
+  "headers": "access-control-allow-headers: x-test, content-type\naccess-control-allow-origin: *\ncontent-type: text/plain\n",
+  "method": "POST",
+  "status": 200,
+  "url": "http://127.0.0.1:8787/api/echo"
+}

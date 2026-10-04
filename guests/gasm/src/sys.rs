@@ -647,6 +647,28 @@ mod imports {
         pub fn net_close(conn: i32);
     }
 
+    #[link(wasm_import_module = "gasm:fetch")]
+    unsafe extern "C" {
+        /// Start a request described by JSON {"method":"GET","url":"https://...","headers":{"name":"value"}}, with body_len bytes of body (0: none). Handle > 0, or -1 if denied, invalid or too many are open (16).
+        #[link_name = "request"]
+        pub fn fetch_request(desc: *const u8, desc_len: u32, body: *const u8, body_len: u32) -> i32;
+        /// GASM_FETCH_PENDING / HEADERS (status and headers are in) / DONE (the whole body arrived) / FAILED.
+        #[link_name = "state"]
+        pub fn fetch_state(req: i32) -> u32;
+        /// HTTP status of the final response (after redirects), 0 before the headers or after a failure.
+        #[link_name = "status"]
+        pub fn fetch_status(req: i32) -> i32;
+        /// Response headers as "name: value\n" lines (names lowercase). Length (copied only if <= cap; cap = 0 queries), -1 before GASM_FETCH_HEADERS.
+        #[link_name = "headers"]
+        pub fn fetch_headers(req: i32, dst: *mut u8, cap: u32) -> i32;
+        /// Copy up to cap bytes of body that have arrived; returns the count, 0 if none are waiting yet, -1 once the body is done and drained or the request failed.
+        #[link_name = "read"]
+        pub fn fetch_read(req: i32, dst: *mut u8, cap: u32) -> i32;
+        /// Cancel if still running and free the handle; closing again does nothing.
+        #[link_name = "close"]
+        pub fn fetch_close(req: i32);
+    }
+
     #[link(wasm_import_module = "gasm:storage")]
     unsafe extern "C" {
         /// Value length, or -1 if missing. Copied only if length <= cap.
@@ -680,7 +702,7 @@ pub use imports::*;
 pub use crate::native::abi::*;
 
 /// Every import module and `module.function` of this ABI version (what `gasm::has` can report).
-pub const IMPORTS: [&str; 292] = [
+pub const IMPORTS: [&str; 299] = [
     "gasm", "gasm.log", "gasm.has", "gasm.time_ms",
     "gasm.utc_offset_minutes", "gasm.set_frame_rate", "gasm.video_present", "gasm.video_set_aspect",
     "gasm.audio_config", "gasm.audio_push", "gasm.input_pad", "gasm.text_input",
@@ -752,8 +774,10 @@ pub const IMPORTS: [&str; 292] = [
     "gasm:gl.is_transform_feedback", "gasm:gl.bind_transform_feedback", "gasm:gl.begin_transform_feedback", "gasm:gl.end_transform_feedback",
     "gasm:gl.pause_transform_feedback", "gasm:gl.resume_transform_feedback", "gasm:net", "gasm:net.open",
     "gasm:net.state", "gasm:net.send", "gasm:net.recv", "gasm:net.close",
-    "gasm:storage", "gasm:storage.get", "gasm:storage.set", "gasm:storage.delete",
-    "gasm:storage.count", "gasm:storage.key", "wasi_snapshot_preview1", "wasi_snapshot_preview1.proc_exit",
+    "gasm:fetch", "gasm:fetch.request", "gasm:fetch.state", "gasm:fetch.status",
+    "gasm:fetch.headers", "gasm:fetch.read", "gasm:fetch.close", "gasm:storage",
+    "gasm:storage.get", "gasm:storage.set", "gasm:storage.delete", "gasm:storage.count",
+    "gasm:storage.key", "wasi_snapshot_preview1", "wasi_snapshot_preview1.proc_exit",
 ];
 
 // ---- buttons
@@ -792,6 +816,12 @@ pub const GASM_NET_CONNECTING: u32 = 0;
 pub const GASM_NET_OPEN: u32 = 1;
 pub const GASM_NET_CLOSED: u32 = 2;
 pub const GASM_NET_ERROR: u32 = 3;
+
+// ---- fetch states
+pub const GASM_FETCH_PENDING: u32 = 0;
+pub const GASM_FETCH_HEADERS: u32 = 1;
+pub const GASM_FETCH_DONE: u32 = 2;
+pub const GASM_FETCH_FAILED: u32 = 3;
 
 // ---- input modes
 /// input_mode flags.

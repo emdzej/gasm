@@ -354,7 +354,7 @@ async function conformance() {
   const hostJs = read('runners/web/lib/host.js');
   const inputJs = read('runners/web/lib/input.js');
   const nativeRs = read('guests/gasm/src/native.rs');
-  const jsMethod = { gasm: 'gasmImports() {', 'gasm:gfx': 'gfxImports() {', 'gasm:net': 'netImports() {', 'gasm:storage': 'storageImports() {' };
+  const jsMethod = { gasm: 'gasmImports() {', 'gasm:gfx': 'gfxImports() {', 'gasm:net': 'netImports() {', 'gasm:fetch': 'fetchImports() {', 'gasm:storage': 'storageImports() {' };
 
   for (const m of gasmModules.filter((m) => m !== glModule)) {
     const want = new Map(m.functions.map((f) => [f.name, f]));
@@ -458,6 +458,24 @@ async function nullLimitsCheck() {
   return errors;
 }
 
+// gasm:fetch's request rules exist twice too (runners/native/src/fetch.rs, runners/web/lib/fetch.js):
+// the methods, the refused header names and prefixes must be the same lists.
+async function fetchRulesCheck() {
+  const js = await import(join(ROOT, 'runners/web/lib/fetch.js'));
+  const src = read('runners/native/src/fetch.rs');
+  const list = (name) => {
+    const i = src.indexOf(`pub const ${name}:`);
+    if (i < 0) return null;
+    const body = src.slice(src.indexOf('[', src.indexOf('=', i)), src.indexOf('];', i));
+    return [...body.matchAll(/"([^"]*)"/g)].map((m) => m[1]);
+  };
+  const errors = [];
+  for (const name of ['METHODS', 'FORBIDDEN_HEADERS', 'FORBIDDEN_PREFIXES', 'HIDDEN_RESPONSE_HEADERS']) {
+    if ((list(name) ?? []).join(',') !== js[name].join(',')) errors.push(`gasm:fetch ${name}: fetch.rs and fetch.js differ`);
+  }
+  return errors;
+}
+
 // ---- main ----------------------------------------------------------------------------------
 
 const outputs = {
@@ -465,7 +483,7 @@ const outputs = {
   'runners/native/src/gl_sigs.rs': genGlSigs(), 'guests/gasm/src/native_gl.rs': genGlStub(),
 };
 if (process.argv.includes('--check')) {
-  const errors = [...(await conformance()), ...(await keymapCheck()), ...(await nullLimitsCheck())];
+  const errors = [...(await conformance()), ...(await keymapCheck()), ...(await nullLimitsCheck()), ...(await fetchRulesCheck())];
   for (const [p, content] of Object.entries(outputs)) {
     if (read(p) !== content) errors.push(`${p} is out of date: run node scripts/gen-abi.mjs`);
   }

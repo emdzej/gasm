@@ -172,6 +172,25 @@ A Godot game on gasm is `godot.wasm` plus its `.pck`:
   third-party components) with the engine, as the release's `THIRD-PARTY.txt`
   does.
 
+## HTTP
+
+`HTTPRequest` (and `HTTPClient`) work unchanged: the runner makes the requests
+through [`gasm:fetch`](/docs/abi#gasm-fetch-optional-http-requests), TLS
+included, so `https://` URLs work without Godot's TLS. The
+[http example](https://github.com/emdzej/gasm/tree/main/guests/godot/examples/http)
+does GETs and a POST.
+
+- **Permission:** natively the player runs with `--allow-net`, or
+  `--allow-net=api.example.org` for just that host. In browsers the API must
+  send CORS headers (`Access-Control-Allow-Origin`).
+- **Headers:** `HTTPRequest`'s `Accept-Encoding` and `User-Agent` are dropped
+  (browsers don't let pages set them either); bodies arrive decompressed.
+- **Tests:** record the responses once (`--allow-net --fetch-record DIR`), then
+  replay them in headless runs (`--fetch-replay DIR`): they complete at the next
+  frame on every runner, so hashes compare.
+- `get_response_body_length()` is -1 (the length is known at the end), and
+  there's no blocking mode or `StreamPeer`, as on Godot's web platform.
+
 ## Limits
 
 | | |
@@ -180,7 +199,7 @@ A Godot game on gasm is `godot.wasm` plus its `.pck`:
 | Scripting | GDScript; no C# (.NET) and no GDExtension (no dynamic libraries) |
 | Threads | the engine is single-threaded (`threads=no`): `Thread` and `WorkerThreadPool` run their work on the main thread |
 | Physics | Godot Physics 2D and 3D (Jolt doesn't build for WASI yet) |
-| Networking | none: `HTTPRequest`, WebSockets, ENet need sockets; no TLS or `Crypto` |
+| Networking | `HTTPRequest` and `HTTPClient` work, `https://` too (the runner makes the requests: [below](#http)); WebSockets, ENet and raw sockets don't; no TLS or `Crypto` in the engine |
 | Text | the fallback text server: no right-to-left scripts or ligatures |
 | Input | no touch, no IME |
 

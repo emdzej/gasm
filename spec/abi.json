@@ -342,6 +342,22 @@
       ]
     },
     {
+      "name": "gasm:fetch",
+      "optional": true,
+      "c_macro": "GASM_FETCH_IMPORT",
+      "c_prefix": "gasm_fetch_",
+      "rust_prefix": "fetch_",
+      "doc": "HTTP requests made by the runner (TLS included), non-blocking: poll each frame. Runners may deny requests (native: --allow-net, optionally a host list; browsers: the page and CORS). A handle that request never returned traps; a closed one reports GASM_FETCH_FAILED.",
+      "functions": [
+        { "name": "request", "params": [{ "name": "desc", "type": "str" }, { "name": "body", "type": "ptr", "c": "const void *", "rust": "*const u8" }, { "name": "body_len", "type": "u32" }], "result": "i32", "doc": "Start a request described by JSON {\"method\":\"GET\",\"url\":\"https://...\",\"headers\":{\"name\":\"value\"}}, with body_len bytes of body (0: none). Handle > 0, or -1 if denied, invalid or too many are open (16)." },
+        { "name": "state", "params": [{ "name": "req", "type": "i32" }], "result": "u32", "doc": "GASM_FETCH_PENDING / HEADERS (status and headers are in) / DONE (the whole body arrived) / FAILED." },
+        { "name": "status", "params": [{ "name": "req", "type": "i32" }], "result": "i32", "doc": "HTTP status of the final response (after redirects), 0 before the headers or after a failure." },
+        { "name": "headers", "params": [{ "name": "req", "type": "i32" }, { "name": "dst", "type": "ptr", "c": "char *", "rust": "*mut u8" }, { "name": "cap", "type": "u32" }], "result": "i32", "doc": "Response headers as \"name: value\\n\" lines (names lowercase). Length (copied only if <= cap; cap = 0 queries), -1 before GASM_FETCH_HEADERS." },
+        { "name": "read", "params": [{ "name": "req", "type": "i32" }, { "name": "dst", "type": "ptr", "c": "void *", "rust": "*mut u8" }, { "name": "cap", "type": "u32" }], "result": "i32", "doc": "Copy up to cap bytes of body that have arrived; returns the count, 0 if none are waiting yet, -1 once the body is done and drained or the request failed." },
+        { "name": "close", "params": [{ "name": "req", "type": "i32" }], "doc": "Cancel if still running and free the handle; closing again does nothing." }
+      ]
+    },
+    {
       "name": "gasm:storage",
       "optional": true,
       "c_macro": "GASM_STORAGE_IMPORT",
@@ -373,6 +389,7 @@
     { "group": "shader stages", "c_enum": true, "doc": "Bind group layout entry visibility (WebGPU GPUShaderStage bits).", "values": [["GASM_STAGE_VERTEX", "0x1"], ["GASM_STAGE_FRAGMENT", "0x2"]] },
     { "group": "index formats", "c_enum": true, "values": [["GASM_INDEX_U16", "0"], ["GASM_INDEX_U32", "1"]] },
     { "group": "net states", "c_enum": true, "values": [["GASM_NET_CONNECTING", "0"], ["GASM_NET_OPEN", "1"], ["GASM_NET_CLOSED", "2"], ["GASM_NET_ERROR", "3"]] },
+    { "group": "fetch states", "c_enum": true, "values": [["GASM_FETCH_PENDING", "0"], ["GASM_FETCH_HEADERS", "1"], ["GASM_FETCH_DONE", "2"], ["GASM_FETCH_FAILED", "3"]] },
     { "group": "input modes", "c_enum": true, "doc": "input_mode flags.", "values": [["GASM_INPUT_KEYS_RAW", "1u << 0"], ["GASM_INPUT_POINTER_HIDDEN", "1u << 1"], ["GASM_INPUT_POINTER_LOCKED", "1u << 2"]] },
     { "group": "storage errors", "c_enum": true, "rust_type": "i32", "doc": "gasm_storage_set results.", "values": [["GASM_STORAGE_OK", "0"], ["GASM_STORAGE_ERR_KEY", "-1"], ["GASM_STORAGE_ERR_SIZE", "-2"], ["GASM_STORAGE_ERR_QUOTA", "-3"], ["GASM_STORAGE_ERR_IO", "-4"]] },
     { "group": "pointer", "c_enum": true, "doc": "pointer() layout and bits: little-endian fields at the GASM_POINTER_OFF_* byte offsets: f32 x, y (drawable px), fx, fy (frame px), dx, dy (relative motion), wheel_x, wheel_y (lines; y > 0 = down), u32 buttons, pressed, released, flags.", "values": [["GASM_POINTER_BYTES", "48"], ["GASM_POINTER_OFF_X", "0"], ["GASM_POINTER_OFF_Y", "4"], ["GASM_POINTER_OFF_FX", "8"], ["GASM_POINTER_OFF_FY", "12"], ["GASM_POINTER_OFF_DX", "16"], ["GASM_POINTER_OFF_DY", "20"], ["GASM_POINTER_OFF_WHEEL_X", "24"], ["GASM_POINTER_OFF_WHEEL_Y", "28"], ["GASM_POINTER_OFF_BUTTONS", "32"], ["GASM_POINTER_OFF_PRESSED", "36"], ["GASM_POINTER_OFF_RELEASED", "40"], ["GASM_POINTER_OFF_FLAGS", "44"], ["GASM_MOUSE_LEFT", "1u << 0"], ["GASM_MOUSE_RIGHT", "1u << 1"], ["GASM_MOUSE_MIDDLE", "1u << 2"], ["GASM_MOUSE_BACK", "1u << 3"], ["GASM_MOUSE_FORWARD", "1u << 4"], ["GASM_POINTER_INSIDE", "1u << 0"], ["GASM_POINTER_IS_HIDDEN", "1u << 1"], ["GASM_POINTER_IS_LOCKED", "1u << 2"]] },

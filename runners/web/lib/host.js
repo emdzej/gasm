@@ -6,6 +6,7 @@ import { AssetTable, isAssetProvider, memoryAssets } from './assets.js';
 import { GfxModel, NullGfx, clampRect } from './gfx.js';
 import { GlHost, glImports } from './gl.js';
 import { GAMEPAD_AXES, GAMEPAD_BUTTONS, GAMEPAD_BYTES, KEY_STATE_BYTES, POINTER_BYTES, framePosition } from './input.js';
+import { FetchRequests } from './fetch.js';
 import { NetConnections } from './net.js';
 import { MemoryStorage, StorageError, STORAGE_ERR_IO } from './storage.js';
 import { ProcExit, Splitmix, WASI_IMPLEMENTED, wasiImports } from './wasi.js';
@@ -72,7 +73,8 @@ export const STACK_SWITCHING = typeof WebAssembly.Suspending === 'function' && t
 export class GasmHost {
   constructor({ assets = {}, params = {}, gfx = new NullGfx(), storage = new MemoryStorage(), allowNet = false,
                 onPresent = () => {}, onAudio = () => {}, onLog = console.log, onTitle = () => {},
-                getPad = () => 0, virtualTime = false, stackSwitching = STACK_SWITCHING, gl = null } = {}) {
+                getPad = () => 0, virtualTime = false, stackSwitching = STACK_SWITCHING, gl = null,
+                fetchReplay = null, fetchRecord = null } = {}) {
     // GasmAssetProvider ({ size(name), readAt(name, offset, dst), names() }), or a plain
     // { name: Uint8Array } record (wrapped as an in-memory provider).
     this.assets = isAssetProvider(assets) ? assets : memoryAssets(assets);
@@ -82,7 +84,9 @@ export class GasmHost {
     this.glContext = gl;
     this.gl = null;
     this.storage = storage;          // MemoryStorage (headless) or IdbStorage (browser)
+    // allowNet: false, true or a list of host names (gasm:net and gasm:fetch)
     this.net = new NetConnections(allowNet, (m) => this.onLog(m));
+    this.fetch = new FetchRequests(allowNet, (m) => this.onLog(m), { replay: fetchReplay, record: fetchRecord });
     this.showFrame = true;           // false during catch-up frames: begin_frame returns 0
     this.onPresent = onPresent;      // (rgba: Uint8ClampedArray, w, h)
     this.onAudio = onAudio;          // (samples: Float32Array interleaved, rate, channels)
@@ -422,6 +426,28 @@ export class GasmHost {
     };
   }
 
+  // ---- gasm:fetch -------------------------------------------------------------
+  fetchImports() {
+    const f = this.fetch;
+    return {
+      request: (dp, dl, bp, bl) => f.request(this.str(dp, dl), this.bytes(bp, bl).slice(), this.frameIndex),
+      state: (r) => f.state(r, this.frameIndex),
+      status: (r) => f.status(r, this.frameIndex),
+      headers: (r, dst, cap) => {
+        const text = f.headers(r, this.frameIndex);
+        return text === null ? -1 : this.copyIfFits(dst, cap, new TextEncoder().encode(text));
+      },
+      read: (r, dst, cap) => {
+        this.bytes(dst, cap);   // the whole destination must be guest memory (traps otherwise)
+        const b = f.read(r, cap >>> 0, this.frameIndex);
+        if (b === -1) return -1;
+        this.bytes(dst, b.length).set(b);
+        return b.length;
+      },
+      close: (r) => f.close(r),
+    };
+  }
+
   wasiImports() { return wasiImports(this); }
 
   // ---- lifecycle -----------------------------------------------------------
@@ -431,7 +457,7 @@ export class GasmHost {
     this.gl.model.hash = (b) => { if (this.hashing) this.videoHash = fnv32(this.videoHash, b); };
     const known = {
       gasm: this.gasmImports(), 'gasm:gfx': this.gfxImports(), 'gasm:gl': glImports(this.gl), 'gasm:net': this.netImports(),
-      'gasm:storage': this.storageImports(),
+      'gasm:fetch': this.fetchImports(), 'gasm:storage': this.storageImports(),
     };
     for (const [mod, fns] of Object.entries(known)) {
       this.provided.add(mod);
@@ -583,6 +609,7 @@ export class GasmHost {
   /** exit(), then close network connections (flushing them) and the storage. */
   async shutdown() {
     this.exit();
+    this.fetch.closeAll();
     await this.net.closeAll();
     await this.storage.flush?.();
     this.storage.close?.();

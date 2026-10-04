@@ -25,7 +25,7 @@ Rust through glow
 threads in Rust, and Godot 4.7
 ([guests/godot](https://github.com/emdzej/gasm/blob/main/guests/godot/README.md)).
 
-1. **Godot, the rest** (below): threads, Jolt, TLS, networking.
+1. **Godot, the rest** (below): threads, Jolt, TLS, multiplayer.
 
 ## Runtime and ABI
 
@@ -111,7 +111,7 @@ Left over:
 | Threads | Godot is built with `threads=no`: its worker pool, threaded loading and the audio thread run on the main thread. Godot's threads on gasm's cooperative scheduler (they would need Asyncify, which Godot's size makes slow), or real wasm threads (part B of design/threads.md). | not started |
 | Jolt physics | Jolt doesn't recognize WASI targets (its platform and SIMD detection); a patch like its Emscripten support. Godot Physics 3D is used meanwhile. | not started |
 | TLS, `Crypto` | mbedtls needs a time source (`mbedtls_ms_time`, `timing.c`) for WASI. | not started |
-| Networking | `HTTPRequest`, WebSockets, ENet need sockets; a `gasm:net` backend for Godot's WebSocket peer would cover multiplayer. | idea |
+| Multiplayer | `HTTPRequest` works (gasm:fetch); WebSockets and ENet need sockets: a `gasm:net` backend for Godot's `WebSocketPeer` would cover multiplayer. | idea |
 | Complex text | The advanced text server (ICU, HarfBuzz: right-to-left, ligatures) instead of the fallback one; larger. | not started |
 | A smaller engine | 32 MB (8 MB gzipped): a build profile without unused modules (e.g. 3D for 2D games) per game. | idea |
 | Touch | Godot's touch events from gasm's pointer on touch screens. | not started |

@@ -214,6 +214,19 @@ Map the calls onto WebGPU (browser) or a WebGPU implementation (wgpu, Dawn):
 - Support `wss://` with the platform's trusted roots. The native runner uses
   rustls with OS certificates (`rustls-native-certs`, which honours `SSL_CERT_FILE`).
 
+### Step 6b: HTTP (`gasm:fetch`, optional)
+
+- One request per handle, never blocking the guest: natively a thread per request
+  sending status, headers and body chunks through a bounded channel (`fetch.rs`),
+  so a guest that doesn't read pauses the download; in JS `fetch()` with a reader.
+- Refuse the same descriptions as the reference runners (`parseDesc` in
+  `lib/fetch.js`, `parse_desc` in `fetch.rs`: methods, forbidden headers, URLs),
+  and report headers the same way (sorted, joined, connection-level ones and
+  cookies left out, `content-encoding` dropped because the body is decoded).
+- Deny by default; with a host list, check every redirect hop.
+- Headless: `--fetch-record` / `--fetch-replay` with the shared record format,
+  replayed requests completing at the frame after the request.
+
 ### Step 7: storage (`gasm:storage`, optional)
 
 - Namespace chosen by the runner (default: game file stem); validate keys

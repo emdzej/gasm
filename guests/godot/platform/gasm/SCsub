@@ -11,6 +11,7 @@ gasm_files = [
     "display_server_gasm.cpp",
     "audio_driver_gasm.cpp",
     "file_access_gasm.cpp",
+    "http_client_gasm.cpp",
 ]
 
 # the C SDK's GLES 3.0 on gasm:gl (sdk/c/src/gasm_gl.c)

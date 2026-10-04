@@ -474,6 +474,13 @@ pub mod abi {
     pub unsafe fn net_send(h: i32, _: *const u8, _: u32) -> i32 { panic!("gasm:net: invalid connection handle {h}") }
     pub unsafe fn net_recv(h: i32, _: *mut u8, _: u32) -> i32 { panic!("gasm:net: invalid connection handle {h}") }
     pub unsafe fn net_close(h: i32) { panic!("gasm:net: invalid connection handle {h}") }
+    // no network here (headless semantics): every request is refused
+    pub unsafe fn fetch_request(_: *const u8, _: u32, _: *const u8, _: u32) -> i32 { -1 }
+    pub unsafe fn fetch_state(h: i32) -> u32 { panic!("gasm:fetch: invalid handle {h}") }
+    pub unsafe fn fetch_status(h: i32) -> i32 { panic!("gasm:fetch: invalid handle {h}") }
+    pub unsafe fn fetch_headers(h: i32, _: *mut u8, _: u32) -> i32 { panic!("gasm:fetch: invalid handle {h}") }
+    pub unsafe fn fetch_read(h: i32, _: *mut u8, _: u32) -> i32 { panic!("gasm:fetch: invalid handle {h}") }
+    pub unsafe fn fetch_close(h: i32) { panic!("gasm:fetch: invalid handle {h}") }
 
     #[allow(clippy::too_many_arguments)]
     mod gl {

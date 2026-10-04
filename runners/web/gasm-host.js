@@ -7,7 +7,7 @@
 // Platform concerns (canvas, GPU, audio device, input) are injected, so the same
 // code runs the browser runner and the headless Node runner. `gfx` is a backend
 // object (NullGfx here; WebGpuGfx in webgpu-gfx.js). Networking uses the global
-// WebSocket, which exists in browsers and Node >= 22. No dependencies.
+// WebSocket and fetch(), which exist in browsers and Node >= 22. No dependencies.
 //
 // The implementation is split by concern under lib/; this module re-exports it all.
 
@@ -15,6 +15,7 @@ export { ABI_VERSION, FNV_INIT, GasmHost, ProcExit, STACK_SWITCHING, TITLE_MAX_B
 export { Splitmix } from './lib/wasi.js';
 export { BUF_COPY_DST, BUF_INDEX, BUF_STORAGE, BUF_UNIFORM, BUF_VERTEX, GfxModel, MAX_BIND_GROUPS, MAX_TEXTURE_SIZE, MAX_VERTEX_BUFFERS, NullGfx, OFFSET_ALIGNMENT, clampRect } from './lib/gfx.js';
 export { MAX_CONNECTIONS, NET_CLOSED, NET_CONNECTING, NET_ERROR, NET_OPEN, NetConnections } from './lib/net.js';
+export { FETCH_DONE, FETCH_FAILED, FETCH_HEADERS, FETCH_PENDING, FetchRequests, NetPolicy, recordKey } from './lib/fetch.js';
 export {
   IdbStorage, MemoryStorage, STORAGE_ERR_IO, STORAGE_ERR_KEY, STORAGE_ERR_QUOTA, STORAGE_ERR_SIZE, STORAGE_MAX_VALUE, STORAGE_QUOTA,
   StorageError, validKey,

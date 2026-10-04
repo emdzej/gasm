@@ -30,6 +30,7 @@
 #define GASM_GFX_IMPORT(name) __attribute__((import_module("gasm:gfx"), import_name(name)))
 #define GASM_GL_IMPORT(name) __attribute__((import_module("gasm:gl"), import_name(name)))
 #define GASM_NET_IMPORT(name) __attribute__((import_module("gasm:net"), import_name(name)))
+#define GASM_FETCH_IMPORT(name) __attribute__((import_module("gasm:fetch"), import_name(name)))
 #define GASM_STORAGE_IMPORT(name) __attribute__((import_module("gasm:storage"), import_name(name)))
 #define GASM_EXPORT(name) __attribute__((export_name(name)))
 #else
@@ -37,6 +38,7 @@
 #define GASM_GFX_IMPORT(name)
 #define GASM_GL_IMPORT(name)
 #define GASM_NET_IMPORT(name)
+#define GASM_FETCH_IMPORT(name)
 #define GASM_STORAGE_IMPORT(name)
 #define GASM_EXPORT(name)
 #endif
@@ -91,6 +93,14 @@ enum {
     GASM_NET_OPEN = 1,
     GASM_NET_CLOSED = 2,
     GASM_NET_ERROR = 3,
+};
+
+/* ---- fetch states ------------------------------------------------------------ */
+enum {
+    GASM_FETCH_PENDING = 0,
+    GASM_FETCH_HEADERS = 1,
+    GASM_FETCH_DONE = 2,
+    GASM_FETCH_FAILED = 3,
 };
 
 /* ---- input modes ------------------------------------------------------------- */
@@ -791,6 +801,32 @@ GASM_NET_IMPORT("send") int32_t gasm_net_send(int32_t conn, const void *data, ui
 GASM_NET_IMPORT("recv") int32_t gasm_net_recv(int32_t conn, void *dst, uint32_t cap);
 /* Close (flushing queued messages); closing again does nothing. */
 GASM_NET_IMPORT("close") void gasm_net_close(int32_t conn);
+
+/* ---- gasm:fetch (optional) -------------------------------------------------------- */
+/* HTTP requests made by the runner (TLS included), non-blocking: poll each
+ * frame. Runners may deny requests (native: --allow-net, optionally a host
+ * list; browsers: the page and CORS). A handle that request never returned
+ * traps; a closed one reports GASM_FETCH_FAILED. */
+
+/* Start a request described by JSON
+ * {"method":"GET","url":"https://...","headers":{"name":"value"}}, with
+ * body_len bytes of body (0: none). Handle > 0, or -1 if denied, invalid or
+ * too many are open (16). */
+GASM_FETCH_IMPORT("request") int32_t gasm_fetch_request(const char *desc, uint32_t desc_len, const void *body, uint32_t body_len);
+/* GASM_FETCH_PENDING / HEADERS (status and headers are in) / DONE (the whole
+ * body arrived) / FAILED. */
+GASM_FETCH_IMPORT("state") uint32_t gasm_fetch_state(int32_t req);
+/* HTTP status of the final response (after redirects), 0 before the headers or
+ * after a failure. */
+GASM_FETCH_IMPORT("status") int32_t gasm_fetch_status(int32_t req);
+/* Response headers as "name: value\n" lines (names lowercase). Length (copied
+ * only if <= cap; cap = 0 queries), -1 before GASM_FETCH_HEADERS. */
+GASM_FETCH_IMPORT("headers") int32_t gasm_fetch_headers(int32_t req, char *dst, uint32_t cap);
+/* Copy up to cap bytes of body that have arrived; returns the count, 0 if none
+ * are waiting yet, -1 once the body is done and drained or the request failed. */
+GASM_FETCH_IMPORT("read") int32_t gasm_fetch_read(int32_t req, void *dst, uint32_t cap);
+/* Cancel if still running and free the handle; closing again does nothing. */
+GASM_FETCH_IMPORT("close") void gasm_fetch_close(int32_t req);
 
 /* ---- gasm:storage (optional) ------------------------------------------------------ */
 /* Persistent per-game key/value store; the runner chooses the namespace. Keys:

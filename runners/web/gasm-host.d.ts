@@ -214,8 +214,13 @@ export interface GasmHostOptions {
   gfx?: GfxBackend;
   /** gasm:storage backend. Default: MemoryStorage. */
   storage?: StorageBackend;
-  /** Allow gasm:net connections (WebSocket). Default false. */
-  allowNet?: boolean;
+  /** Allow gasm:net connections (WebSocket) and gasm:fetch requests: true (any host), or
+   *  only these hosts (`*.example.org`: its subdomains). The browser's rules (CORS) apply too. Default false. */
+  allowNet?: boolean | string[];
+  /** gasm:fetch from recorded responses only (reproducible runs): record key -> response, or null if unrecorded. */
+  fetchReplay?: ((key: string) => FetchRecord | null) | null;
+  /** Called with every completed live gasm:fetch response (to record them). */
+  fetchRecord?: ((key: string, response: FetchRecord & { method: string; url: string }) => void) | null;
   /** 2D frames from gasm.video_present (RGBA8, tightly packed). */
   onPresent?: (rgba: Uint8ClampedArray, width: number, height: number, aspect: [num: number, den: number] | null) => void;
   /** Audio from gasm.audio_push: interleaved f32 at the guest's rate. */
@@ -235,6 +240,12 @@ export interface GasmHostOptions {
    *  omitted: the null GL (headless). */
   gl?: WebGL2RenderingContext | null;
 }
+
+/** A recorded gasm:fetch response (files <key>.json + <key>.body; key: recordKey). */
+export interface FetchRecord { status: number; headers: string; body: Uint8Array }
+/** FNV-1a 64 of method, URL and body as 16 hex digits: the name of a recorded response. */
+export declare function recordKey(method: string, url: string, body: Uint8Array): string;
+export declare const FETCH_PENDING: 0, FETCH_HEADERS: 1, FETCH_DONE: 2, FETCH_FAILED: 3;
 
 /** One frame of a batch for GasmHost.runFrames / GasmWorker.frames. */
 export interface FrameStep {

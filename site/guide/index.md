@@ -239,10 +239,13 @@ gasm-run <game.wasm|game.cwasm> [options]
 --rom <path>             shorthand for --asset rom=<path>
 --asset <name>=<path>    expose a file to the game as asset <name> (repeatable; read on demand)
 --asset-dir [prefix=]dir expose every file under dir (repeatable; case-insensitive names)
+--watch-asset <name>=<path>
+                         like --asset, re-read whenever the file changes (the game sees a new version)
 --keymap <file>          keyboard layout (default <data dir>/gasm/keymap.txt, else built-in)
 --print-keymap           print the active keyboard layout and exit
 --param <name>=<value>   launch parameter for the game (repeatable)
---allow-net              let the game open network connections
+--allow-net[=<hosts>]    let the game open network connections and make HTTP requests (all hosts,
+                         or only api.example.org,*.example.org)
 --storage-dir <dir>      where saves live (default: see "Saves" below)
 --storage-id <id>        save namespace (default: the game file's name)
 --window <W>x<H>         initial window size (default 960x720)
@@ -264,6 +267,8 @@ gasm-run <game.wasm|game.cwasm> [options]
 --input <script>         (headless) scripted input, see below
 --realtime               (headless) run at the game's frame rate instead of flat out
 --no-hash                (headless) skip hashing (for benchmarks)
+--fetch-record <dir>     store the game's HTTP responses in dir (with --allow-net)
+--fetch-replay <dir>     answer HTTP requests from dir only, no network (reproducible runs)
 ```
 
 Game parameters:
@@ -336,8 +341,9 @@ $R build/doom.wasm --asset wad=roms/freedoom2.wad --param "args=-warp 1" --headl
 ```
 
 The Node runner takes the same headless options: `--headless`, `--rom`,
-`--asset`, `--asset-dir`, `--param`, `--allow-net`, `--storage-dir`,
-`--storage-id`, `--input`, `--screenshot`, `--realtime` and `--no-hash`
+`--asset`, `--asset-dir`, `--watch-asset`, `--param`, `--allow-net[=hosts]`,
+`--fetch-record`, `--fetch-replay`, `--storage-dir`, `--storage-id`, `--input`,
+`--screenshot`, `--realtime` and `--no-hash`
 (unknown options are an error). Node has no GPU, so its `--screenshot` only
 captures `video_present` frames; use `gasm-run` for GPU games.
 

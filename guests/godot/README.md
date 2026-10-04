@@ -28,6 +28,7 @@ cases (the same hashes on wasmtime JIT, AOT and V8) and demos on the website.
 | [`examples/scene3d`](examples/scene3d) | 3D in the Compatibility renderer: procedural sky, fog, a shadowed sun, PBR materials, a custom shader (`stripes.gdshader`, with a `varying`), 3D physics |
 | [`examples/ui`](examples/ui) | Controls (`LineEdit`, `CheckBox`, `HSlider`, `OptionButton`, `ItemList`), text input, saves with `ConfigFile` in `user://` |
 | [`examples/audio`](examples/audio) | `AudioStreamGenerator` synthesis, a WAV built in code, a reverb bus, the spectrum analyzer |
+| [`examples/http`](examples/http) | `HTTPRequest` GETs and a POST on gasm:fetch (against `scripts/fetch-server.mjs`; replayed in the determinism suite) |
 
 `make godot` builds the engine and exports the examples (`build/godot/*.pck`).
 
@@ -58,9 +59,11 @@ scenes get random node ids at export).
 - **Files:** `res://` is the pack; `user://` is `gasm:storage` (saves persist
   natively and in the browser). Storage keys are paths with `/` encoded, at
   most 128 bytes; a file is at most 1 MiB, 16 MiB per game.
+- **HTTP:** `HTTPRequest`/`HTTPClient` on gasm:fetch (the runner makes the
+  requests, `https://` included; natively with `--allow-net`).
 - **Not available:** threads (Godot is built with `threads=no`; work runs on
-  the main thread), networking (`HTTPRequest`, `ENet`, WebSockets: gasm:net
-  is messages, not sockets), TLS (`Crypto`), complex text shaping (the
+  the main thread), sockets (`ENet`, WebSockets, `StreamPeerTCP`: gasm:net is
+  messages, not sockets), TLS in the engine (`Crypto`), complex text shaping (the
   fallback text server: no right-to-left or ligatures), several windows.
 - **Time:** frames are paced by the runner (60 Hz); `OS.get_ticks_usec()` is
   the frame's time, virtual in headless runs, so runs are reproducible. Local
@@ -71,7 +74,7 @@ scenes get random node ids at export).
 
 `scripts/fetch-godot.sh` puts the Godot 4.7.2 source in `tools/godot-src`
 (pinned), applies [`godot.patch`](godot.patch) (Godot's WebGL code paths in
-`drivers/gles3` also for gasm) and copies [`platform/gasm`](platform/gasm) in.
+`drivers/gles3` also for gasm; no `HTTPClientTCP`) and copies [`platform/gasm`](platform/gasm) in.
 The platform (MIT, like Godot):
 
 | File | What |
@@ -83,6 +86,7 @@ The platform (MIT, like Godot):
 | `audio_driver_gasm.*` | mixes a frame of audio and pushes it (`gasm_audio_push`) |
 | `file_access_gasm.*` | `FileAccess`/`DirAccess` on gasm assets and `gasm:storage` |
 | `ip_gasm.h` | no host names or interfaces |
+| `http_client_gasm.*` | `HTTPClient` on `gasm:fetch` (so `HTTPRequest` works); `godot.patch` leaves `HTTPClientTCP` out |
 | `platform_gl.h`, `emscripten/html5_webgl.h` | GLES 3 from the C SDK; what Godot's WebGL paths ask of Emscripten |
 
 The module is linked with `wasm-ld`, then `wasm-opt -Oz` (keeping its exact

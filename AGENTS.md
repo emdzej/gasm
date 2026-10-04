@@ -8,8 +8,8 @@ Guidance for coding agents working in this repository. Humans: see
 gasm is a portable game runtime on WebAssembly. **Guests** (games) are single
 `.wasm` modules. **Runners** (native Rust, browser JS, headless Node) implement
 the ABI in [`spec/ABI.md`](spec/ABI.md): the core `gasm` module plus optional
-`gasm:gfx` (WebGPU subset), `gasm:gl` (OpenGL ES 3.0, WebGL 2 rules: WebGL 2 / ANGLE / null GL), `gasm:net` (WebSocket-style messages) and
-`gasm:storage` (per-game key/value). Determinism across runners is the core
+`gasm:gfx` (WebGPU subset), `gasm:gl` (OpenGL ES 3.0, WebGL 2 rules: WebGL 2 / ANGLE / null GL), `gasm:net` (WebSocket-style messages),
+`gasm:fetch` (HTTP made by the runner) and `gasm:storage` (per-game key/value). Determinism across runners is the core
 property: most tests assert bit-identical hashes.
 
 ## Layout
@@ -51,7 +51,8 @@ make roms                     # test ROMs, Freedoom, shareware doom1.wad into ro
 scripts/determinism-test.sh   # 26 cases: wasmtime JIT == AOT == V8 == golden hashes (must pass)
                               # UPDATE_GOLDEN=1 re-records after a change meant to alter output
 scripts/net-test.sh           # lockstep sumo via gasm-relay, 3 runner pairs + TLS (must pass)
-scripts/asset-test.sh         # folders, case-insensitive names, 200 MB streaming + RSS (must pass)
+scripts/asset-test.sh         # folders, case-insensitive names, 200 MB streaming + RSS, --watch-asset (must pass)
+node scripts/fetch-test.mjs   # gasm:fetch against scripts/fetch-server.mjs: native == Node == Chrome, denials, record/replay
 scripts/gl-native-test.sh     # gasm:gl on ANGLE: gltest hashes == null GL, frame drawn
 node scripts/gl-web-test.mjs  # Chrome: gltest/glowtest on WebGL 2 == golden hashes, no WebGL errors
 node scripts/opfs-test.mjs    # Chrome: OPFS + Worker mode == Node, memory flat
@@ -271,6 +272,15 @@ from the repo root, then
   thread stays the default. `gasm:gfx` guests go to a worker only through a
   transferred `OffscreenCanvas` with WebGPU in the worker; otherwise they run
   on the main thread (the page falls back automatically).
+- **fetch:** `runners/native/src/fetch.rs` and `runners/web/lib/fetch.js` accept and
+  refuse the same descriptions, report headers the same way (sorted, joined,
+  connection-level and cookies hidden, `content-encoding` dropped: bodies arrive
+  decoded) and share the record format and key (FNV-1a 64 of method, URL, body);
+  `gen-abi.mjs --check` compares their lists. Replayed requests complete at the
+  frame after the request. Host lists (`--allow-net=a,b`) cover gasm:net too, and
+  every redirect hop natively. `tests/fixtures/fetch` is recorded from
+  `scripts/fetch-server.mjs` on port 8787 (no `Date` header): re-record with
+  `--fetch-record` when the guests' requests change.
 - **net:** runners flush queued messages and do a WebSocket close handshake on
   exit. Lockstep peers finish the frames they have inputs for after a leave notice.
   TLS is rustls with the **ring** backend (no cmake/NASM on CI); the crypto

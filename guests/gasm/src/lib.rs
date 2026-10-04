@@ -709,6 +709,165 @@ pub mod net {
     }
 }
 
+/// HTTP requests made by the runner (`gasm:fetch`, TLS included): start one, then
+/// poll it each frame. Runners may deny requests (natively: `--allow-net`, optionally a
+/// host list; browsers: the page, and CORS). Probe [`available`] first.
+///
+/// ```no_run
+/// let req = gasm::fetch::Request::get("https://api.met.no/weatherapi/locationforecast/2.0/compact?lat=52&lon=21")
+///     .header("accept", "application/json")
+///     .send();
+/// // later, each frame:
+/// # let mut req = req.unwrap();
+/// if req.state() == gasm::fetch::State::Done {
+///     let json = req.read_to_end();
+/// }
+/// ```
+pub mod fetch {
+    use crate::sys;
+
+    /// Whether the runner has gasm:fetch.
+    pub fn available() -> bool {
+        crate::has("gasm:fetch")
+    }
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub enum State {
+        /// waiting for the response
+        Pending,
+        /// status and headers are in; the body is arriving
+        Headers,
+        /// the whole body has arrived (it may still be unread)
+        Done,
+        /// network error, timeout, too large, or refused by the browser
+        Failed,
+    }
+
+    /// A request to send. JSON-escapes what it's given.
+    #[derive(Clone, Debug)]
+    pub struct Request {
+        method: String,
+        url: String,
+        headers: Vec<(String, String)>,
+        body: Vec<u8>,
+    }
+
+    fn json_str(s: &str, out: &mut String) {
+        out.push('"');
+        for c in s.chars() {
+            match c {
+                '"' => out.push_str("\\\""),
+                '\\' => out.push_str("\\\\"),
+                c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+                c => out.push(c),
+            }
+        }
+        out.push('"');
+    }
+
+    impl Request {
+        pub fn new(method: &str, url: &str) -> Request {
+            Request { method: method.to_owned(), url: url.to_owned(), headers: Vec::new(), body: Vec::new() }
+        }
+        pub fn get(url: &str) -> Request {
+            Request::new("GET", url)
+        }
+        pub fn post(url: &str, body: impl Into<Vec<u8>>) -> Request {
+            Request::new("POST", url).body(body)
+        }
+        pub fn header(mut self, name: &str, value: &str) -> Request {
+            self.headers.push((name.to_owned(), value.to_owned()));
+            self
+        }
+        pub fn body(mut self, body: impl Into<Vec<u8>>) -> Request {
+            self.body = body.into();
+            self
+        }
+        /// The JSON description `gasm_fetch_request` takes.
+        pub fn describe(&self) -> String {
+            let mut d = String::from("{\"method\":");
+            json_str(&self.method, &mut d);
+            d.push_str(",\"url\":");
+            json_str(&self.url, &mut d);
+            d.push_str(",\"headers\":{");
+            for (i, (k, v)) in self.headers.iter().enumerate() {
+                if i > 0 {
+                    d.push(',');
+                }
+                json_str(k, &mut d);
+                d.push(':');
+                json_str(v, &mut d);
+            }
+            d.push_str("}}");
+            d
+        }
+        /// Start it. `None` if the runner refuses (denied, invalid, too many open); the log says why.
+        pub fn send(&self) -> Option<Response> {
+            if !available() {
+                return None;
+            }
+            let d = self.describe();
+            let h = unsafe { sys::fetch_request(d.as_ptr(), d.len() as u32, self.body.as_ptr(), self.body.len() as u32) };
+            (h > 0).then(|| Response(h))
+        }
+    }
+
+    /// A request in flight; dropping it cancels it.
+    #[derive(Debug)]
+    pub struct Response(i32);
+
+    impl Response {
+        pub fn state(&self) -> State {
+            match unsafe { sys::fetch_state(self.0) } {
+                0 => State::Pending,
+                1 => State::Headers,
+                2 => State::Done,
+                _ => State::Failed,
+            }
+        }
+        /// HTTP status (after redirects), 0 before the headers or after a failure.
+        pub fn status(&self) -> i32 {
+            unsafe { sys::fetch_status(self.0) }
+        }
+        /// Response headers (names lowercase), once they are in.
+        pub fn headers(&self) -> Option<Vec<(String, String)>> {
+            let n = unsafe { sys::fetch_headers(self.0, std::ptr::null_mut(), 0) };
+            if n < 0 {
+                return None;
+            }
+            let mut buf = vec![0u8; n as usize];
+            unsafe { sys::fetch_headers(self.0, buf.as_mut_ptr(), n as u32) };
+            let text = String::from_utf8_lossy(&buf);
+            Some(text.lines().filter_map(|l| l.split_once(": ").map(|(k, v)| (k.to_owned(), v.to_owned()))).collect())
+        }
+        /// One header's value (`name` lowercase).
+        pub fn header(&self, name: &str) -> Option<String> {
+            self.headers()?.into_iter().find(|(k, _)| k == name).map(|(_, v)| v)
+        }
+        /// Body bytes that have arrived: `Some(n)` copied (0: none yet), `None` when the
+        /// body is done and drained or the request failed.
+        pub fn read(&mut self, buf: &mut [u8]) -> Option<usize> {
+            let n = unsafe { sys::fetch_read(self.0, buf.as_mut_ptr(), buf.len() as u32) };
+            (n >= 0).then_some(n as usize)
+        }
+        /// Everything that has arrived so far (all of it once the state is [`State::Done`]).
+        pub fn read_to_end(&mut self) -> Vec<u8> {
+            let mut out = Vec::new();
+            let mut buf = vec![0u8; 64 * 1024];
+            while let Some(n @ 1..) = self.read(&mut buf) {
+                out.extend_from_slice(&buf[..n]);
+            }
+            out
+        }
+    }
+
+    impl Drop for Response {
+        fn drop(&mut self) {
+            unsafe { sys::fetch_close(self.0) }
+        }
+    }
+}
+
 // ---- game entry points ----------------------------------------------------------------
 
 /// A gasm game. `init` runs once; `frame` runs at the configured frame rate.

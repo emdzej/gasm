@@ -5,7 +5,8 @@
 //   node runners/web/headless.mjs <game.wasm> --headless N [--rom p] [--asset n=p]
 //        [--asset-dir [prefix=]dir] [--param k=v] [--allow-net] [--storage-dir dir]
 //        [--storage-id id] [--input script] [--screenshot out.png] [--realtime] [--no-hash]
-//        [--no-stack-switching] [--watch-asset n=p]
+//        [--no-stack-switching] [--watch-asset n=p] [--allow-net=hosts]
+//        [--fetch-record dir] [--fetch-replay dir]
 //
 // The options mean what they mean for gasm-run. --screenshot writes the last
 // video_present frame: there is no GPU here, so gasm:gfx games can't be captured
@@ -18,12 +19,12 @@ import { AssetTable, GasmHost, MemoryStorage, ProcExit, bytesSource, staticTitle
 import { InputScript } from './input-script.mjs';
 
 const USAGE = 'usage: headless.mjs <game.wasm> --headless N [--rom path] [--asset name=path] [--watch-asset name=path] [--asset-dir [prefix=]dir] ' +
-  '[--param k=v] [--allow-net] [--storage-dir dir] [--storage-id id] [--input script] [--screenshot out.png] [--realtime] [--no-hash]';
+  '[--param k=v] [--allow-net[=hosts]] [--fetch-record dir] [--fetch-replay dir] [--storage-dir dir] [--storage-id id] [--input script] [--screenshot out.png] [--realtime] [--no-hash]';
 const fileStamp = (p) => { try { const s = statSync(p); return `${s.mtimeMs}:${s.size}`; } catch { return null; } };
 const fail = (msg) => { console.error(`error: ${msg}\n\n${USAGE}`); process.exit(2); };
 const argv = process.argv.slice(2);
 let wasm, frames = 600, screenshot, noHash = false, allowNet = false, realtime = false, storageDir = null, storageId = null;
-let stackSwitching = true;
+let stackSwitching = true, fetchRecord = null, fetchReplay = null;
 // --input: see input-script.mjs (same syntax as gasm-run --input)
 let script = new InputScript();
 const assets = {}, params = {}, assetDirs = [], watches = [];
@@ -50,6 +51,12 @@ for (let i = 0; i < argv.length; i++) {
   }
   else if (a === '--param') { const [k, v] = pair(val(), '--param'); params[k] = v; }
   else if (a === '--allow-net') allowNet = true;
+  else if (a.startsWith('--allow-net=')) {
+    allowNet = a.slice('--allow-net='.length).split(',').map((h) => h.trim()).filter(Boolean);
+    if (!allowNet.length) fail('--allow-net= expects host names');
+  }
+  else if (a === '--fetch-record') fetchRecord = val();
+  else if (a === '--fetch-replay') fetchReplay = val();
   else if (a === '--realtime') realtime = true;
   else if (a === '--no-stack-switching') stackSwitching = false;
   else if (a === '--storage-dir') storageDir = val();
@@ -126,8 +133,21 @@ function dirStorage(dir) {
 const storage = storageDir ? dirStorage(storageDir) : new MemoryStorage();
 console.error(`[gasm-node] storage: ${storageDir ?? 'memory'}`);
 
+// gasm:fetch records, as gasm-run writes and reads them: <key>.json (status, headers) + <key>.body
+const replay = fetchReplay && ((key) => {
+  try {
+    const meta = JSON.parse(readFileSync(join(fetchReplay, `${key}.json`), 'utf8'));
+    return { status: meta.status, headers: meta.headers, body: new Uint8Array(readFileSync(join(fetchReplay, `${key}.body`))) };
+  } catch { return null; }
+});
+const record = fetchRecord && ((key, r) => {
+  mkdirSync(fetchRecord, { recursive: true });
+  writeFileSync(join(fetchRecord, `${key}.body`), r.body);
+  writeFileSync(join(fetchRecord, `${key}.json`), `${JSON.stringify({ headers: r.headers, method: r.method, status: r.status, url: r.url }, null, 2)}\n`);
+});
 const host = new GasmHost({
   assets: table, params, allowNet, storage, virtualTime: true, onLog: (m) => console.error(m), stackSwitching,
+  fetchReplay: replay, fetchRecord: record,
   onTitle: (t) => console.error(`[gasm] title: ${t ?? '(default)'}`),
   getPad: (p) => (p !== 0 ? 0 : script.pad(host.frameIndex)),
 });

@@ -111,6 +111,9 @@ jobs:
       - name: gasm:gl in Chrome (WebGL 2 hashes == golden, no WebGL errors)
         run: CHROME=$(command -v google-chrome || command -v chromium) node scripts/gl-web-test.mjs
 
+      - name: "gasm:fetch (native == Node == Chrome, denials, record/replay)"
+        run: CHROME=$(command -v google-chrome || command -v chromium) node scripts/fetch-test.mjs
+
       - name: Parity (NES native vs wasm)
         run: make parity ROM=roms/cpu_instr_test.nes FRAMES=600
 

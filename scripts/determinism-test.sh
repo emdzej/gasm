@@ -25,7 +25,7 @@ for n in node ${NODE24:-} "$HOME"/.nvm/versions/node/v2[4-9]*/bin/node; do
 done
 [ -n "$NODE_JSPI" ] || echo "note: no Node with JSPI (24+): run builds are checked natively only"
 [ -d roms ] && [ -n "$(ls roms/*.nes 2>/dev/null)" ] && [ -f roms/freedoom2.wad ] && [ -f roms/doom1.wad ] && [ -f roms/bass/sky.dnr ] && [ -d roms/scumm/dott-dos-ni-demo-en ] && [ -f roms/drascula/flac/audio/track28.flac ] || scripts/fetch-roms.sh
-for g in nes godot test-pattern gltest glowtest eguidemo sumo triangle textured inputtest threadtest pthreadtest rthreadtest sdl3-threads loopdemo loopdemo-run loopdemo-c loopdemo-c-run doom scummvm scummvm-run sdl3-snake sdl3-woodeneye sdl3-callbacks sdl3-classic sdl3-classic-run; do "$NATIVE" build/$g.wasm --compile build/$g.cwasm 2>/dev/null; done
+for g in nes godot test-pattern gltest glowtest eguidemo fetchtest sumo triangle textured inputtest threadtest pthreadtest rthreadtest sdl3-threads loopdemo loopdemo-run loopdemo-c loopdemo-c-run doom scummvm scummvm-run sdl3-snake sdl3-woodeneye sdl3-callbacks sdl3-classic sdl3-classic-run; do "$NATIVE" build/$g.wasm --compile build/$g.cwasm 2>/dev/null; done
 
 pass=0; fail=0
 run() { "$@" 2>/dev/null | grep -E '^(frames|video)' | tr '\n' ' '; }
@@ -89,6 +89,9 @@ check gltest              gltest 120
 check glowtest            glowtest 120
 # egui's demo through egui_glow (unchanged) on the glow fork: clicks and wheel
 check eguidemo            eguidemo 120 --input '40:PTR(1225,628),41-43:PTR(1225,628,L),44:PTR(1225,628),70:PTR(1012,201),71-73:PTR(1012,201,L),74:PTR(600,300),90-95:WHEEL(0,-2)'
+# HTTP (gasm:fetch) from recorded responses (tests/fixtures/fetch, recorded from
+# scripts/fetch-server.mjs): each completes at the frame after its request, on every runner
+check fetchtest           fetchtest 60 --fetch-replay tests/fixtures/fetch --param base=http://127.0.0.1:8787/api
 # Godot 4 (guests/godot): the engine with the gasm platform, one example project per area
 # (packs exported by the Godot editor; null GL, so the hashes cover every GL upload)
 GP="--asset game.pck=build/godot"
@@ -97,10 +100,12 @@ check godot-platformer    godot 420 $GP/platformer.pck --input '30-400:KEY(Arrow
 check godot-scene3d       godot 300 $GP/scene3d.pck --input '100-160:KEY(ArrowLeft),200-205:KEY(Space)'
 check godot-ui            godot 90 $GP/ui.pck --input '20:PTR(200,126),21-22:PTR(200,126,L),23:PTR(200,126),30:"Ada",50:PTR(500,303),51-53:PTR(500,303,L),54:PTR(500,303),70:PTR(190,492),71-72:PTR(190,492,L),73:PTR(190,492)'
 check godot-audio         godot 150 $GP/audio.pck --input '60-64:KEY(Digit1),90-94:KEY(Digit5),120-124:KEY(Digit8)'
+# HTTPRequest on gasm:fetch, from the recorded responses (as fetchtest)
+check godot-http          godot 60 $GP/http.pck --fetch-replay tests/fixtures/fetch
 # Godot logs an error and carries on (a shader it rejects draws nothing, alike on every
 # runner, so the hashes still agree): the examples must log no errors on either null GL
-for e in hello2d platformer scene3d ui audio; do
-  errs=$( { "$NATIVE" build/godot.wasm $GP/$e.pck --headless 60 2>&1 >/dev/null; $NODE build/godot.wasm $GP/$e.pck --headless 60 2>&1 >/dev/null; } | grep -E '^(SHADER )?ERROR' | sort -u | head -5)
+for e in hello2d platformer scene3d ui audio http; do
+  errs=$( { "$NATIVE" build/godot.wasm $GP/$e.pck --fetch-replay tests/fixtures/fetch --headless 60 2>&1 >/dev/null; $NODE build/godot.wasm $GP/$e.pck --fetch-replay tests/fixtures/fetch --headless 60 2>&1 >/dev/null; } | grep -E '^(SHADER )?ERROR' | sort -u | head -5)
   if [ -z "$errs" ]; then
     pass=$((pass + 1)); printf 'PASS  %-22s %s\n' "godot-$e-log" "no errors (gasm-run, headless.mjs)"
   else

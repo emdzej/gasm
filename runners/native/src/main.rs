@@ -27,7 +27,12 @@ options:
                            by a rename; it may also appear later): the guest sees the new data from the
                            next frame, with a new gasm.asset_version (repeatable)
   --param <name>=<value>   launch parameter for the guest (repeatable)
-  --allow-net              allow the guest to open network connections (gasm:net)
+  --allow-net[=<hosts>]    allow the guest to open network connections (gasm:net) and make HTTP
+                           requests (gasm:fetch); with a comma-separated list only to those hosts
+                           (api.example.org, *.example.org for its subdomains)
+  --fetch-record <dir>     store every gasm:fetch response in <dir> (with --allow-net)
+  --fetch-replay <dir>     answer gasm:fetch requests from <dir> only (never the network): each
+                           completes at the next frame, so headless runs stay reproducible
   --storage-dir <dir>      where the game's saves live (default: <data dir>/gasm/<game>;
                            headless runs use memory unless this is given)
   --storage-id <id>        storage namespace (default: the game file's name)
@@ -79,6 +84,8 @@ struct Args {
     watch_assets: Vec<(String, String)>,
     params: HashMap<String, String>,
     allow_net: bool,
+    allow_hosts: Vec<String>,
+    fetch: gasm_host::fetch::FetchMode,
     storage_dir: Option<String>,
     storage_id: Option<String>,
     window: (u32, u32),
@@ -111,6 +118,8 @@ fn parse_args() -> Result<Args, String> {
         asset_dirs: Vec::new(),
         params: HashMap::new(),
         allow_net: false,
+        allow_hosts: Vec::new(),
+        fetch: Default::default(),
         storage_dir: None,
         storage_id: None,
         window: (960, 720),
@@ -163,6 +172,15 @@ fn parse_args() -> Result<Args, String> {
                 args.params.insert(k.into(), p.into());
             }
             "--allow-net" => args.allow_net = true,
+            a if a.starts_with("--allow-net=") => {
+                args.allow_net = true;
+                args.allow_hosts = a["--allow-net=".len()..].split(',').map(str::trim).filter(|h| !h.is_empty()).map(String::from).collect();
+                if args.allow_hosts.is_empty() {
+                    return Err("--allow-net= expects host names".into());
+                }
+            }
+            "--fetch-record" => args.fetch = gasm_host::fetch::FetchMode::Record(val("--fetch-record")?.into()),
+            "--fetch-replay" => args.fetch = gasm_host::fetch::FetchMode::Replay(val("--fetch-replay")?.into()),
             "--storage-dir" => args.storage_dir = Some(val("--storage-dir")?),
             "--storage-id" => args.storage_id = Some(val("--storage-id")?),
             "--window" => {
@@ -320,6 +338,8 @@ fn run(args: Args) -> Result<i32, String> {
         assets,
         params: args.params.clone(),
         allow_net: args.allow_net,
+        allow_hosts: args.allow_hosts.clone(),
+        fetch: args.fetch.clone(),
         storage: open_storage(&args)?,
         load: LoadOptions { allow_precompiled: args.allow_precompiled, call_timeout: args.call_timeout, stack_switching: args.stack_switching },
         gl_lib: args.gl_lib.as_ref().map(std::path::PathBuf::from),

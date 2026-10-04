@@ -46,6 +46,9 @@ tungstenite = { version = "0.30", features = ["rustls-tls-native-roots"] }
 # TLS for wss:// (client) and gasm-relay --tls-cert (server); ring = no cmake/NASM needed
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
 rustls-pki-types = { version = "1", features = ["std"] }
+# gasm:fetch: HTTP(S) on ring (as above), roots from the OS store
+ureq = { version = "3", default-features = false, features = ["rustls-no-provider", "gzip"] }
+rustls-native-certs = "0.8"
 cpal = { version = "0.18", optional = true }
 gilrs = { version = "0.11", optional = true }
 png = "0.18"

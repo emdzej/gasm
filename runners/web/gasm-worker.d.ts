@@ -33,7 +33,7 @@ export declare class GasmWorker {
     params?: Record<string, string>;
     /** IndexedDB namespace for gasm:storage (null: in-memory). */
     storage?: string | null;
-    allowNet?: boolean;
+    allowNet?: boolean | string[];
     /** The page forwards typed text (FrameStep.text); false: text_input returns -1. */
     keyboard?: boolean;
     /** gasm:gfx: an OffscreenCanvas from transferControlToOffscreen(), and its display size in device pixels. */

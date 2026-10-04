@@ -20,6 +20,10 @@ pub struct Session {
     pub assets: Assets,
     pub params: HashMap<String, String>,
     pub allow_net: bool,
+    /// with `allow_net`: only these hosts (`--allow-net=a.org,*.b.org`; empty: all)
+    pub allow_hosts: Vec<String>,
+    /// gasm:fetch: live, recording or replaying responses (headless)
+    pub fetch: crate::fetch::FetchMode,
     pub storage: Storage,
     pub load: LoadOptions,
     /// where ANGLE is (gasm:gl games): None searches the usual places (`angle::find`)
@@ -58,7 +62,9 @@ impl Session {
     /// (virtual time, fixed random sequence, hashing). `gl`: the GL that executes a
     /// gasm:gl guest's calls (None: the null GL).
     pub fn start(self, audio: Option<Box<dyn AudioOut>>, gfx: Gfx, gl: Option<Angle>, reproducible: bool, hashing: bool) -> Result<Game, Stop> {
-        let mut host = Host::new(self.assets, self.params, audio, gfx, Net::new(self.allow_net), self.storage);
+        let policy = crate::net::NetPolicy::new(self.allow_net, self.allow_hosts);
+        let mut host = Host::new(self.assets, self.params, audio, gfx, Net::with_policy(policy.clone()), self.storage);
+        host.fetch = crate::fetch::Fetch::new(policy, self.fetch);
         if let Some(a) = gl {
             eprintln!("[gasm] gl: {}", a.renderer);
             host.gl.attach(a);

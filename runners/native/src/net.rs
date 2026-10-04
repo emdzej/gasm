@@ -38,20 +38,73 @@ struct Conn {
     queue: VecDeque<Vec<u8>>,
 }
 
+/// The hosts guests may reach (gasm:net and gasm:fetch): none, all (`--allow-net`)
+/// or a list (`--allow-net=api.met.no,*.example.org`; `*.` matches subdomains).
+#[derive(Clone, Debug, Default)]
+pub struct NetPolicy {
+    pub allowed: bool,
+    /// empty: every host (when allowed)
+    pub hosts: Vec<String>,
+}
+
+impl NetPolicy {
+    pub fn new(allowed: bool, hosts: Vec<String>) -> NetPolicy {
+        NetPolicy { allowed, hosts: hosts.into_iter().map(|h| h.to_ascii_lowercase()).collect() }
+    }
+
+    pub fn permits(&self, host: &str) -> bool {
+        if !self.allowed {
+            return false;
+        }
+        let host = host.trim_end_matches('.').to_ascii_lowercase();
+        self.hosts.is_empty()
+            || self.hosts.iter().any(|p| match p.strip_prefix("*.") {
+                Some(domain) => host.len() > domain.len() + 1 && host.ends_with(domain) && host.as_bytes()[host.len() - domain.len() - 1] == b'.',
+                None => host == *p,
+            })
+    }
+
+    /// Why a URL is refused (for the log), or None if it may be reached.
+    pub fn refusal(&self, url: &str) -> Option<String> {
+        if !self.allowed {
+            return Some("run with --allow-net".into());
+        }
+        let host = url_host(url).unwrap_or_default();
+        (!self.permits(&host)).then(|| format!("{host} is not in --allow-net={}", self.hosts.join(",")))
+    }
+}
+
+/// The host of an absolute URL (no userinfo, no port, brackets kept for IPv6).
+pub fn url_host(url: &str) -> Option<String> {
+    let rest = url.split_once("://")?.1;
+    let authority = rest.split(['/', '?', '#']).next()?;
+    let authority = authority.rsplit_once('@').map_or(authority, |(_, a)| a);
+    let host = if authority.starts_with('[') {
+        &authority[..=authority.find(']')?]
+    } else {
+        authority.split(':').next()?
+    };
+    (!host.is_empty()).then(|| host.to_ascii_lowercase())
+}
+
 pub struct Net {
-    allowed: bool,
+    policy: NetPolicy,
     conns: HashMap<i32, Conn>,
     next: i32,
 }
 
 impl Net {
     pub fn new(allowed: bool) -> Net {
-        Net { allowed, conns: HashMap::new(), next: 1 }
+        Net::with_policy(NetPolicy::new(allowed, Vec::new()))
+    }
+
+    pub fn with_policy(policy: NetPolicy) -> Net {
+        Net { policy, conns: HashMap::new(), next: 1 }
     }
 
     pub fn open(&mut self, url: &str) -> i32 {
-        if !self.allowed {
-            eprintln!("[gasm] net: denied connection to {url} (run with --allow-net)");
+        if let Some(why) = self.policy.refusal(url) {
+            eprintln!("[gasm] net: denied connection to {url} ({why})");
             return -1;
         }
         if !url.starts_with("ws://") && !url.starts_with("wss://") {
@@ -320,6 +373,23 @@ fn flush_all(ws: &mut WebSocket<MaybeTlsStream<std::net::TcpStream>>) {
             Err(e) if would_block(&e) => std::thread::sleep(Duration::from_millis(1)),
             _ => return,
         }
+    }
+}
+
+#[cfg(test)]
+mod policy_tests {
+    use super::*;
+
+    #[test]
+    fn hosts() {
+        assert_eq!(url_host("https://User@API.met.no:443/x?y").as_deref(), Some("api.met.no"));
+        assert_eq!(url_host("http://[::1]:8080/").as_deref(), Some("[::1]"));
+        assert_eq!(url_host("ws://localhost").as_deref(), Some("localhost"));
+        let p = NetPolicy::new(true, vec!["api.met.no".into(), "*.example.org".into()]);
+        assert!(p.permits("api.met.no") && p.permits("API.MET.NO.") && p.permits("a.b.example.org"));
+        assert!(!p.permits("met.no") && !p.permits("example.org") && !p.permits("badexample.org"));
+        assert!(NetPolicy::new(true, vec![]).permits("anything"));
+        assert!(!NetPolicy::new(false, vec![]).permits("anything"));
     }
 }
 

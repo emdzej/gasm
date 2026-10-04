@@ -11,7 +11,7 @@ No threads, SIMD or exception handling. A runner is any host that implements the
 imports below. The ABI is intentionally core wasm (no Component Model), so it runs
 unmodified in browsers, wasmtime, WAMR, wasm2c, etc.
 
-It has five import modules:
+It has six import modules:
 
 | Module | Status | Contents |
 |---|---|---|
@@ -19,6 +19,7 @@ It has five import modules:
 | `gasm:gfx` | optional | GPU rendering: a WebGPU subset |
 | `gasm:gl` | optional | GPU rendering: OpenGL ES 3.0 with WebGL 2's rules (a game uses `gasm:gfx` or `gasm:gl`) |
 | `gasm:net` | optional | message connections (WebSocket semantics) |
+| `gasm:fetch` | optional | HTTP requests made by the runner (TLS included) |
 | `gasm:storage` | optional | persistent per-game key/value store (saves, settings) |
 
 Games import only what they use. A runner that lacks an optional module can
@@ -398,13 +399,49 @@ frame.
 
 A handle `open` never returned traps (as gfx handles do).
 
-**Permission.** Networking is off by default natively (`gasm-run --allow-net`)
-and on in the browser runner, where the browser's own rules apply.
+**Permission.** Networking is off by default natively (`gasm-run --allow-net`,
+or `--allow-net=host,host` for only those hosts) and on in the browser runner,
+where the browser's own rules apply.
 
 **Determinism.** Messages arrive at unpredictable times. Deterministic games
 must only let *message contents* affect the simulation, never arrival
 timing: lockstep games apply inputs at the frame number carried in the
 message. See `guests/sumo` and `gasm-relay`.
+
+## `gasm:fetch` (optional): HTTP requests
+
+The runner makes HTTP(S) requests for the guest: natively on background threads
+(TLS with the platform's trusted certificates), in browsers with `fetch()`. The
+guest starts a request and polls it once per frame; nothing blocks. Design:
+[design/fetch.md](https://github.com/emdzej/gasm/blob/main/design/fetch.md).
+
+| Import | Signature | Semantics |
+|---|---|---|
+| `request` | `(desc_ptr, desc_len, body_ptr, body_len) -> i32` | Start a request. `desc` is JSON: `{"method":"GET","url":"https://…","headers":{"accept":"application/json"}}` (`method` default `GET`; `GET HEAD POST PUT PATCH DELETE OPTIONS`; `url` absolute `http`/`https`). `body_len` bytes of body (`0`: none; at most 16 MiB; none for `GET`/`HEAD`). Handle > 0, or `-1` if denied, invalid, or too many are open (16). |
+| `state` | `(req) -> u32` | `GASM_FETCH_PENDING` (0), `_HEADERS` (1: status and headers are in, the body is arriving), `_DONE` (2: the whole body has arrived), `_FAILED` (3: network error, timeout, body over 64 MiB, refused by the browser). A closed handle reports `3`. |
+| `status` | `(req) -> i32` | HTTP status of the final response (redirects are followed), `0` before the headers or after a failure. |
+| `headers` | `(req, dst, cap) -> i32` | Response headers as `name: value\n` lines: names lowercase and sorted, repeated names joined with `, ` (as `fetch()`'s `Headers`). Connection-level headers and cookies are never listed; bodies arrive decoded, so `content-encoding` isn't either (nor `content-length` if it applied). Length (copied only if ≤ `cap`; `cap = 0` queries), `-1` before state 1. Browsers list only what CORS exposes. |
+| `read` | `(req, dst, cap) -> i32` | Copy up to `cap` bytes of body that have arrived: the count, `0` if none are waiting yet, `-1` once the body is done and drained, or after a failure. Reading is what makes room: a guest that stops reading pauses the download. |
+| `close` | `(req)` | Cancel if still running and free the handle; closing again does nothing. |
+
+A handle `request` never returned traps. Every runner refuses the same
+descriptions: request headers browsers forbid (`host`, `cookie`, `origin`,
+`referer`, `user-agent`, `accept-encoding`, `content-length`, `sec-*`,
+`proxy-*`, …), invalid header names or values, unknown methods. Requests are
+stateless: no cookies or credentials, no cache.
+
+**Permission.** Natively off unless `gasm-run --allow-net` (any host) or
+`--allow-net=api.example.org,*.example.org` (only those; `*.` for subdomains;
+the list applies to `gasm:net` too). Every redirect hop must be allowed. In the
+browser the page decides (`GasmHost`'s `allowNet`: `true` or a host list), and
+CORS and mixed-content rules apply on top.
+
+**Determinism.** Responses arrive whenever the network delivers them. Headless
+runners can record them (`--fetch-record DIR`, with `--allow-net`) and replay
+them (`--fetch-replay DIR`, no network): a replayed request completes at the
+start of the next frame, on every runner, so runs are reproducible. Records are
+`<key>.json` (status, headers) and `<key>.body`, keyed by FNV-1a 64 of method,
+URL and request body (16 hex digits).
 
 ## `gasm:storage` (optional): persistent key/value store
 

@@ -75,7 +75,7 @@ SH
 #!/bin/sh
 # A Godot 4.7 game exported as a .pck (Compatibility renderer):
 #   ./run-godot.sh path/to/game.pck      (default: the 3D example)
-# The examples: games/godot/{hello2d,platformer,scene3d,ui,audio}.pck
+# The examples: games/godot/{hello2d,platformer,scene3d,ui,audio,http}.pck (http: with --allow-net)
 pck=${1:-games/godot/scene3d.pck}
 pck=$(cd "$(dirname "$pck")" && pwd)/$(basename "$pck")
 cd "$(dirname "$0")"

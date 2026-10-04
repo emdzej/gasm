@@ -67,6 +67,7 @@ gasm:gfx    width · height · create_shader · create_buffer · write_buffer
             set_viewport · set_scissor_rect · set_vertex_buffer
             set_index_buffer · draw · draw_indexed · end_frame · destroy
 gasm:net    open · state · send · recv · close
+gasm:fetch  request · state · status · headers · read · close
 gasm:storage get · set · delete · count · key
 ```
 

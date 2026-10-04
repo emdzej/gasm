@@ -6,8 +6,11 @@ export const NET_CONNECTING = 0, NET_OPEN = 1, NET_CLOSED = 2, NET_ERROR = 3;
 export const MAX_CONNECTIONS = 16;
 const ENC = new TextEncoder();
 
+import { NetPolicy } from './fetch.js';
+
 export class NetConnections {
-  constructor(allowed, log) { this.allowed = allowed; this.log = log; this.conns = new Map(); this.next = 1; }
+  /** allowed: false, true or a list of host names (NetPolicy). */
+  constructor(allowed, log) { this.policy = new NetPolicy(allowed); this.log = log; this.conns = new Map(); this.next = 1; }
 
   /** Is h a handle `open` returned? Throws (traps) if not; false once closed. */
   check(h) {
@@ -16,7 +19,8 @@ export class NetConnections {
   }
 
   open(url) {
-    if (!this.allowed) { this.log(`[gasm] net: denied connection to ${url} (networking not enabled)`); return -1; }
+    const why = this.policy.refusal(url);
+    if (why) { this.log(`[gasm] net: denied connection to ${url} (${why})`); return -1; }
     if (!/^wss?:\/\//.test(url) || typeof WebSocket === 'undefined') { this.log(`[gasm] net: only ws:// and wss:// URLs are supported: ${url}`); return -1; }
     if (this.conns.size >= MAX_CONNECTIONS) { this.log(`[gasm] net: too many connections (max ${MAX_CONNECTIONS}): ${url}`); return -1; }
     let ws;

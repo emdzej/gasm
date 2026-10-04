@@ -1,3 +1,21 @@
+diff --color -ruN a/core/io/http_client_tcp.cpp b/core/io/http_client_tcp.cpp
+--- a/core/io/http_client_tcp.cpp	2026-10-04 13:50:14
++++ b/core/io/http_client_tcp.cpp	2026-10-04 13:50:14
+@@ -28,7 +28,7 @@
+ /* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                 */
+ /**************************************************************************/
+ 
+-#ifndef WEB_ENABLED
++#if !defined(WEB_ENABLED) && !defined(GASM_ENABLED) // gasm: platform/gasm/http_client_gasm.cpp
+ 
+ #include "http_client_tcp.h"
+ 
+@@ -797,4 +797,4 @@
+ 
+ HTTPClient *(*HTTPClient::_create)(bool p_notify_postinitialize) = HTTPClientTCP::_create_func;
+ 
+-#endif // WEB_ENABLED
++#endif // !WEB_ENABLED && !GASM_ENABLED
 diff --color -ruN a/drivers/gles3/rasterizer_canvas_gles3.cpp b/drivers/gles3/rasterizer_canvas_gles3.cpp
 --- a/drivers/gles3/rasterizer_canvas_gles3.cpp	2026-10-04 13:50:14
 +++ b/drivers/gles3/rasterizer_canvas_gles3.cpp	2026-10-04 13:50:14

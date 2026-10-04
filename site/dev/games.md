@@ -350,6 +350,32 @@ conn.send(&msg);   // false if not open (yet)
 Connections open asynchronously: `conn.state()` goes `Connecting` → `Open`.
 Natively the player must run with `--allow-net`; handle `open` returning `None`.
 
+### HTTP (`gasm:fetch`)
+
+Web APIs (weather, leaderboards, downloads) through the runner, TLS included:
+
+```rust
+use gasm::fetch::{Request, State};
+
+let mut req = Request::get("https://api.example.org/scores?top=10")
+    .header("accept", "application/json")
+    .send()
+    .ok_or("HTTP not allowed")?;
+// every frame:
+match req.state() {
+    State::Pending | State::Headers => {}             // still arriving
+    State::Done => scores = parse(&req.read_to_end()), // req.status(), req.header("content-type")
+    State::Failed => { /* offline: try again later */ }
+}
+```
+
+`Request::post(url, body)` and `Request::new(method, url)` send a body;
+`read(&mut buf)` streams a large one. Natively the player allows it with
+`--allow-net` (or `--allow-net=api.example.org`); in browsers the API must send
+CORS headers. Tests stay reproducible with recorded responses: run once with
+`--allow-net --fetch-record DIR`, then `--fetch-replay DIR`
+([details](/docs/abi#gasm-fetch-optional-http-requests)).
+
 ## 5. Determinism
 
 Determinism is what makes gasm's tests, replays and lockstep netplay work. A
@@ -766,7 +792,7 @@ the five example projects (2D, physics, 3D, UI and saves, audio):
 
 - [ ] `crate-type = ["cdylib"]`, built for `wasm32-unknown-unknown` in release mode
 - [ ] `gasm::game!(YourGame)` (or the three exports in C)
-- [ ] Imports only `gasm`, `gasm:gfx`, `gasm:net`, `gasm:storage`, WASI (or unused ones that trap harmlessly)
+- [ ] Imports only `gasm`, `gasm:gfx`, `gasm:gl`, `gasm:net`, `gasm:fetch`, `gasm:storage`, WASI (or unused ones that trap harmlessly)
 - [ ] Imports newer than your target runners are probed with `gasm::has` first
 - [ ] Frame rate (and audio format) set in `init`
 - [ ] GPU: `"surface"` format, a bind group per pipeline, per-object uniform slots

@@ -9,6 +9,18 @@ the package versions (`gasm-sdk`, `gasm-host`, `@emdzej/gasm-host`).
 ## Unreleased
 
 ABI (additions, ABI version still 0):
+- `gasm:fetch` (optional module): HTTP(S) requests made by the runner, TLS
+  included, polled per frame: `request` (JSON method/URL/headers + body),
+  `state`, `status`, `headers`, `read` (the body as it arrives), `close`. Both
+  runners (natively ureq on rustls/ring with the OS certificates; in JS
+  `fetch()`), the same refusals everywhere (forbidden headers, methods, URLs),
+  16 requests, 64 MiB bodies. Off natively unless `--allow-net`;
+  `--allow-net=host,*.domain` limits gasm:fetch and gasm:net to those hosts
+  (every redirect hop is checked). Headless `--fetch-record DIR` /
+  `--fetch-replay DIR` make runs reproducible (both runners, one format).
+  Rust `gasm::fetch::Request`; Godot: `HTTPRequest`/`HTTPClient` work (a gasm
+  `HTTPClient`), `https://` too. Design: design/fetch.md. Asked for by Nowhere
+  in Particular.
 - `gasm.utc_offset_minutes()`: the player's time zone, minutes east of UTC now
   (daylight saving included); 0 in headless runs. Both runners; Rust
   `gasm::utc_offset_minutes()` (0 on older runners), C `gasm_utc_offset_minutes()`
