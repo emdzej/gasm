@@ -16,6 +16,16 @@ ABI (additions, ABI version still 0):
   `get_time_zone_from_system()` now give local time and the offset instead of UTC.
 
 Runners:
+- Browser runner, gasm:gl: pixels that aren't bytes reach WebGL as the typed
+  array it requires (`Float32Array` for `FLOAT`, `Uint16Array` for `HALF_FLOAT`
+  and packed 16-bit types, `Uint32Array`, `Int*Array`), copied when the guest's
+  pointer isn't aligned for it, in `tex(Sub)Image2D/3D` and `readPixels`. WebGL
+  rejected them as bytes ("type FLOAT but ArrayBufferView not Float32Array"), so
+  float textures (Godot's `FORMAT_RF`, half floats) sampled zeros in browsers.
+  Reported from Nowhere in Particular.
+- gasm:gl model (both runners): binding a texture to a target other than its
+  first one is `INVALID_OPERATION`, as in GLES and WebGL (before, only WebGL
+  reported it, so Chrome's hashes differed).
 - gasm:gl null GL (headless, natively and in Node): reports every WebGL 2
   minimum limit. `GL_MAX_VERTEX_OUTPUT_COMPONENTS` and
   `GL_MAX_FRAGMENT_INPUT_COMPONENTS` were 0, so Godot rejected every shader

@@ -11,7 +11,7 @@ threadtest-many frames=6 presented=1 size=64x64 video_fnv32=ecc5e345 audio_fnv32
 pthreadtest frames=14 presented=7 size=64x64 video_fnv32=ff79a5cd audio_fnv32=811c9dc5 audio_frames=0 
 rthreadtest frames=14 presented=7 size=64x64 video_fnv32=750b56f8 audio_fnv32=811c9dc5 audio_frames=0 
 rthreadtest-many frames=4 presented=1 size=64x64 video_fnv32=5b50c287 audio_fnv32=811c9dc5 audio_frames=0 
-gltest frames=120 presented=0 size=0x0 video_fnv32=48829178 audio_fnv32=811c9dc5 audio_frames=0 
+gltest frames=120 presented=0 size=0x0 video_fnv32=e4cf530a audio_fnv32=811c9dc5 audio_frames=0 
 glowtest frames=120 presented=0 size=0x0 video_fnv32=1a15eb54 audio_fnv32=811c9dc5 audio_frames=0 
 eguidemo frames=120 presented=0 size=0x0 video_fnv32=ccbee56f audio_fnv32=811c9dc5 audio_frames=0 
 godot-hello2d frames=150 presented=0 size=0x0 video_fnv32=c7096cd4 audio_fnv32=c3f9ea05 audio_frames=110250 

@@ -220,6 +220,8 @@ pub struct Gl {
     errors: Vec<u32>,
     buffers: HashMap<u32, u32>,
     textures: HashMap<(u32, u32), u32>,
+    /// the target each texture was first bound to (it can't be bound to another)
+    texture_targets: HashMap<u32, u32>,
     unit: u32,
     framebuffers: HashMap<u32, u32>,
     renderbuffer: u32,
@@ -247,6 +249,7 @@ impl Default for Gl {
             errors: Vec::new(),
             buffers: HashMap::new(),
             textures: HashMap::new(),
+            texture_targets: HashMap::new(),
             unit: 0,
             framebuffers: HashMap::new(),
             renderbuffer: 0,
@@ -779,13 +782,18 @@ fn model_call(
         "delete_texture" => {
             let n = u(0);
             gl.textures.retain(|_, t| *t != n);
+            gl.texture_targets.remove(&n);
             gl.remove(Texture, n);
         }
         "is_texture" => ret(gl.is(Texture, u(0)) as i64),
         "bind_texture" => {
             let (t, n) = (u(0), u(1));
             if gl.target(TEXTURE_TARGETS, t) && gl.valid(Texture, n, true) {
-                gl.textures.insert((gl.unit, t), n);
+                if n != 0 && *gl.texture_targets.entry(n).or_insert(t) != t {
+                    gl.error(INVALID_OPERATION);
+                } else {
+                    gl.textures.insert((gl.unit, t), n);
+                }
             }
         }
         "tex_parameteri"

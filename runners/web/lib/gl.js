@@ -42,6 +42,38 @@ const FB_TARGETS = [GL.FRAMEBUFFER, GL.READ_FRAMEBUFFER, GL.DRAW_FRAMEBUFFER];
 const QUERY_TARGETS = [GL.ANY_SAMPLES_PASSED, GL.ANY_SAMPLES_PASSED_CONSERVATIVE, GL.TRANSFORM_FEEDBACK_PRIMITIVES_WRITTEN];
 
 /** Bytes per pixel of a (format, type) pair; 0 if the pair is invalid. */
+/** The typed array WebGL 2 wants for pixels of `type` (it rejects any other view). */
+const PIXEL_VIEWS = {
+  0x1400: Int8Array,      // BYTE
+  0x1402: Int16Array,     // SHORT
+  0x1403: Uint16Array,    // UNSIGNED_SHORT
+  0x1404: Int32Array,     // INT
+  0x1405: Uint32Array,    // UNSIGNED_INT
+  0x1406: Float32Array,   // FLOAT
+  0x140B: Uint16Array,    // HALF_FLOAT
+  0x8033: Uint16Array,    // UNSIGNED_SHORT_4_4_4_4
+  0x8034: Uint16Array,    // UNSIGNED_SHORT_5_5_5_1
+  0x8363: Uint16Array,    // UNSIGNED_SHORT_5_6_5
+  0x8368: Uint32Array,    // UNSIGNED_INT_2_10_10_10_REV
+  0x84FA: Uint32Array,    // UNSIGNED_INT_24_8
+  0x8C3B: Uint32Array,    // UNSIGNED_INT_10F_11F_11F_REV
+  0x8C3E: Uint32Array,    // UNSIGNED_INT_5_9_9_9_REV
+  0x8DAD: Uint32Array,    // FLOAT_32_UNSIGNED_INT_24_8_REV
+};
+
+/**
+ * Guest bytes as the view WebGL 2 needs for `type` (bytes for UNSIGNED_BYTE). The
+ * view shares guest memory when the pointer is aligned for it, else it's a copy
+ * (`copied`: readPixels then copies the result back).
+ */
+export function pixelView(bytes, type) {
+  const View = PIXEL_VIEWS[type];
+  if (!View) return { view: bytes, copied: false };
+  const n = Math.floor(bytes.byteLength / View.BYTES_PER_ELEMENT);
+  if (bytes.byteOffset % View.BYTES_PER_ELEMENT === 0) return { view: new View(bytes.buffer, bytes.byteOffset, n), copied: false };
+  return { view: new View(bytes.slice(0, n * View.BYTES_PER_ELEMENT).buffer), copied: true };
+}
+
 export function pixelBytes(format, type) {
   const packed = { 0x8363: 2, 0x8033: 2, 0x8034: 2, 0x8368: 4, 0x8C3B: 4, 0x8C3E: 4, 0x84FA: 4, 0x8DAD: 8 }[type];
   if (packed) return packed;
@@ -73,6 +105,7 @@ export class GlModel {
     this.errors = [];
     this.buffers = new Map();   // target -> name
     this.textures = new Map();  // `${unit}:${target}` -> name
+    this.textureTargets = new Map();  // name -> the target it was first bound to (it can't be bound to another)
     this.unit = 0;
     this.framebuffers = new Map();
     this.renderbuffer = 0;
@@ -485,12 +518,14 @@ export class GlHost {
   create_texture() { return this.create('texture', () => this.ctx.createTexture()); }
   delete_texture(n) {
     for (const [k, t] of this.model.textures) if (t === n) this.model.textures.delete(k);
+    this.model.textureTargets.delete(n);
     this.remove('texture', n, (o) => this.ctx.deleteTexture(o));
   }
   is_texture(n) { return this.model.is('texture', n); }
   bind_texture(t, n) {
     const m = this.model;
     if (!m.textureTarget(t) || !m.valid('texture', n)) return;
+    if (n && (m.textureTargets.get(n) ?? m.textureTargets.set(n, t).get(n)) !== t) return void m.error(GL.INVALID_OPERATION);
     m.textures.set(`${m.unit}:${t}`, n);
     this.ctx?.bindTexture(t, this.obj('texture', n));
   }
@@ -508,7 +543,8 @@ export class GlHost {
     if (!bpp) { m.error(GL.INVALID_ENUM); return null; }
     const need = imageBytes(w, h, d, bpp, m.unpack);
     if (len < need) throw new Error(`gasm:gl: ${len} bytes of pixels for a ${w}x${h}x${d} image that needs ${need}`);
-    return { data: this.host.bytes(ptr, len) };
+    const data = this.host.bytes(ptr, len);
+    return { data, view: pixelView(data, type).view };   // hashed as bytes, given to WebGL typed
   }
   upload(header, px) { this.model.fold(header, px.data ?? null); }
   tex_image_2d(t, level, ifmt, w, h, border, format, type, ptr, len) {
@@ -518,7 +554,7 @@ export class GlHost {
     if (!px) return;
     this.upload([2, t, level, ifmt, 0, 0, 0, w, h, 1, format, type, px.data ? len : 0], px);
     if (px.offset !== undefined) this.ctx?.texImage2D(t, level, ifmt, w, h, border, format, type, px.offset);
-    else this.ctx?.texImage2D(t, level, ifmt, w, h, border, format, type, px.data);
+    else this.ctx?.texImage2D(t, level, ifmt, w, h, border, format, type, px.data && px.view);
   }
   tex_image_3d(t, level, ifmt, w, h, d, border, format, type, ptr, len) {
     const m = this.model;
@@ -527,7 +563,7 @@ export class GlHost {
     if (!px) return;
     this.upload([2, t, level, ifmt, 0, 0, 0, w, h, d, format, type, px.data ? len : 0], px);
     if (px.offset !== undefined) this.ctx?.texImage3D(t, level, ifmt, w, h, d, border, format, type, px.offset);
-    else this.ctx?.texImage3D(t, level, ifmt, w, h, d, border, format, type, px.data);
+    else this.ctx?.texImage3D(t, level, ifmt, w, h, d, border, format, type, px.data && px.view);
   }
   tex_sub_image_2d(t, level, x, y, w, h, format, type, ptr, len) {
     const m = this.model;
@@ -537,7 +573,7 @@ export class GlHost {
     if (!px.data && px.offset === undefined) return m.error(GL.INVALID_VALUE);
     this.upload([2, t, level, 0, x, y, 0, w, h, 1, format, type, px.data ? len : 0], px);
     if (px.offset !== undefined) this.ctx?.texSubImage2D(t, level, x, y, w, h, format, type, px.offset);
-    else this.ctx?.texSubImage2D(t, level, x, y, w, h, format, type, px.data);
+    else this.ctx?.texSubImage2D(t, level, x, y, w, h, format, type, px.data && px.view);
   }
   tex_sub_image_3d(t, level, x, y, z, w, h, d, format, type, ptr, len) {
     const m = this.model;
@@ -547,7 +583,7 @@ export class GlHost {
     if (!px.data && px.offset === undefined) return m.error(GL.INVALID_VALUE);
     this.upload([2, t, level, 0, x, y, z, w, h, d, format, type, px.data ? len : 0], px);
     if (px.offset !== undefined) this.ctx?.texSubImage3D(t, level, x, y, z, w, h, d, format, type, px.offset);
-    else this.ctx?.texSubImage3D(t, level, x, y, z, w, h, d, format, type, px.data);
+    else this.ctx?.texSubImage3D(t, level, x, y, z, w, h, d, format, type, px.data && px.view);
   }
   tex_storage_2d(t, levels, ifmt, w, h) {
     if (this.model.target([GL.TEXTURE_2D, GL.TEXTURE_CUBE_MAP], t) && this.model.needTexture(t) && (levels > 0 && w > 0 && h > 0 || this.model.error(GL.INVALID_VALUE))) this.ctx?.texStorage2D(t, levels, ifmt, w, h);
@@ -640,8 +676,10 @@ export class GlHost {
     const need = imageBytes(w, h, 1, bpp, m.pack);
     if (len < need) throw new Error(`gasm:gl: read_pixels: ${len} bytes for ${w}x${h} that needs ${need}`);
     const out = this.host.bytes(dst, len);
-    if (this.ctx) this.ctx.readPixels(x, y, w, h, format, type, out);
-    else out.fill(0, 0, need);
+    if (!this.ctx) return void out.fill(0, 0, need);
+    const { view, copied } = pixelView(out, type);
+    this.ctx.readPixels(x, y, w, h, format, type, view);
+    if (copied) out.set(new Uint8Array(view.buffer, 0, view.byteLength));
   }
   create_renderbuffer() { return this.create('renderbuffer', () => this.ctx.createRenderbuffer()); }
   delete_renderbuffer(n) {

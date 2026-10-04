@@ -53,6 +53,7 @@ scripts/determinism-test.sh   # 26 cases: wasmtime JIT == AOT == V8 == golden ha
 scripts/net-test.sh           # lockstep sumo via gasm-relay, 3 runner pairs + TLS (must pass)
 scripts/asset-test.sh         # folders, case-insensitive names, 200 MB streaming + RSS (must pass)
 scripts/gl-native-test.sh     # gasm:gl on ANGLE: gltest hashes == null GL, frame drawn
+node scripts/gl-web-test.mjs  # Chrome: gltest/glowtest on WebGL 2 == golden hashes, no WebGL errors
 node scripts/opfs-test.mjs    # Chrome: OPFS + Worker mode == Node, memory flat
 make parity                   # NES native Rust build == wasm build
 node scripts/present-test.mjs # Chrome: 2D filters, WebGL 2 == native wgpu == tests/golden/present (skips without a GPU)

@@ -94,6 +94,36 @@ static void mistakes(void) {
     glGetString(0x1234);                             note();   /* INVALID_ENUM */
 }
 
+/* Pixels that aren't bytes: WebGL 2 takes them only as the matching typed array
+ * (Float32Array for FLOAT, Uint16Array for HALF_FLOAT and packed shorts, ...), so
+ * the browser runner must convert. Each upload must record no error; one comes
+ * from an address that isn't aligned for its type. */
+static void typed_uploads(void) {
+    static float r32f[4 * 4];
+    static uint16_t rgba16f[4 * 4 * 4], rgb565[4 * 4];
+    static uint8_t unaligned[2 + sizeof r32f];
+    for (int i = 0; i < 16; i++) {
+        r32f[i] = (float)i * 0.25f - 1.0f;
+        rgb565[i] = (uint16_t)(i * 4099);
+        for (int c = 0; c < 4; c++) rgba16f[i * 4 + c] = (uint16_t)(0x3C00 + i * 16 + c);   /* halves around 1.0 */
+    }
+    memcpy(unaligned + 2, r32f, sizeof r32f);
+    GLuint t[4];
+    glGenTextures(4, t);
+    glBindTexture(GL_TEXTURE_2D, t[0]);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_R32F, 4, 4, 0, GL_RED, GL_FLOAT, r32f);            note();
+    glTexSubImage2D(GL_TEXTURE_2D, 0, 1, 1, 2, 2, GL_RED, GL_FLOAT, r32f);               note();
+    glBindTexture(GL_TEXTURE_2D, t[1]);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, 4, 4, 0, GL_RGBA, GL_HALF_FLOAT, rgba16f); note();
+    glBindTexture(GL_TEXTURE_2D, t[2]);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB565, 4, 4, 0, GL_RGB, GL_UNSIGNED_SHORT_5_6_5, rgb565); note();
+    glBindTexture(GL_TEXTURE_2D, t[3]);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_R32F, 4, 4, 0, GL_RED, GL_FLOAT, unaligned + 2);   note();
+    glBindTexture(GL_TEXTURE_3D, t[0]);                                                  note();   /* INVALID_OPERATION: a 2D texture */
+    glDeleteTextures(4, t);
+    glBindTexture(GL_TEXTURE_2D, tex);
+}
+
 GASM_EXPORT("gasm_init") int32_t init(void) {
     char msg[160];
     snprintf(msg, sizeof msg, "gltest: %s / %s", (const char *)glGetString(GL_VERSION), (const char *)glGetString(GL_SHADING_LANGUAGE_VERSION));
@@ -173,6 +203,7 @@ GASM_EXPORT("gasm_init") int32_t init(void) {
     glGenBuffers(1, &errbuf);
     glGenQueries(1, &query);
     mistakes();
+    typed_uploads();
     GLenum e = glGetError();
     snprintf(msg, sizeof msg, "gltest: %u error records, pending %u", nerr, e);
     gasm_log_str(msg);
