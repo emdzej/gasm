@@ -15,6 +15,7 @@ download "https://static.crates.io/crates/glow/glow-$VERSION.crate" "$TMP/glow.c
 tar xzf "$TMP/glow.crate" -C "$TMP"
 SRC=$TMP/glow-$VERSION
 # what the fork doesn't use: the web backend, the generator, crates.io metadata
+rm -rf "$SRC/.github"
 rm -f "$SRC/src/web_sys.rs" "$SRC/Cargo.toml.orig" "$SRC/Cargo.lock" "$SRC/.cargo_vcs_info.json" "$SRC/bors.toml" "$SRC/generate-native.sh"
 (cd "$SRC" && patch -p1 --no-backup-if-mismatch -s) < sdk/glow.patch
 rm -rf sdk/glow && mv "$SRC" sdk/glow
