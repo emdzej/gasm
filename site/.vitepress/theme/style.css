@@ -80,3 +80,13 @@
 }
 .badge-preview .light { background: #ffffff; }
 .badge-preview .dark { background: #1b1f24; }
+
+/* Mermaid diagrams: labels are <p>s in fixed-size boxes, keep the page's paragraph spacing out */
+.vp-doc .mermaid p {
+  margin: 0;
+  line-height: 1.5;
+}
+.vp-doc .mermaid {
+  margin: 16px 0;
+  text-align: center;
+}

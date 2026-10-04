@@ -85,11 +85,11 @@ guests check for them before calling (see "Feature detection").
 The runner builds a chain from the source size, the letterbox size (which
 includes the display aspect, section 2) and the filter:
 
-```
-source w×h
-  → k × 2× passes of the edge-directed filter    while 2^(k+1)·src still fits the target
-  → one final resample to the exact letterbox    (sharp bilinear, Lanczos-2 or FSR EASU)
-  → optional sharpening (RCAS) / CRT pass
+```mermaid
+flowchart LR
+  src["source w×h"] --> k["k × 2× passes of the edge-directed filter<br/>(while 2^(k+1)·src still fits the target)"]
+  k --> final["one final resample to the exact letterbox<br/>(sharp bilinear, Lanczos-2 or FSR EASU)"]
+  final --> post["optional sharpening (RCAS) / CRT pass"]
 ```
 
 - Single-pass filters (`xbr` any-scale, `fsr` up to ~4×) skip the 2× stages

@@ -1,13 +1,17 @@
 import { defineConfig } from 'vitepress'
+import { withMermaid } from 'vitepress-plugin-mermaid'
 
 const repo = 'https://github.com/emdzej/gasm'
 
-export default defineConfig({
+// ```mermaid blocks become diagrams (rendered in the browser, light and dark)
+export default withMermaid(defineConfig({
   title: 'gasm',
   description: 'Game assembly: write a game once, compile it to WebAssembly, run it everywhere.',
   lang: 'en-US',
   cleanUrls: true,
   lastUpdated: true,
+  // labels wrap at 200 px by default: too narrow for lists of imports
+  mermaid: { flowchart: { wrappingWidth: 400 } },
   // /play/ is the web runner (static files copied in by scripts/build-site.sh)
   ignoreDeadLinks: [/^\/play/],
   head: [
@@ -58,4 +62,4 @@ export default defineConfig({
       copyright: 'gasm: game assembly',
     },
   },
-})
+}))

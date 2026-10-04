@@ -21,18 +21,19 @@ Games in this repo (Rust, C and C++):
 | `test-pattern.wasm` | Minimal C guest (proves the ABI is language-agnostic) | 76 KB |
 | `assetcheck.wasm` | Test guest for asset providers (folders, streaming, OPFS) | 27 KB |
 
-```
-                ┌────────── game.wasm (one artifact) ──────────┐
-                │ Rust/C game ── gasm crate / gasm.h bindings  │
-                └───────────────────────┬──────────────────────┘
-       gasm ABI v0: gasm.* (video, audio, input, assets, params)
-         gasm:gfx (WebGPU subset)   gasm:net (messages)   gasm:storage (saves)
-      ┌───────────────────┬─────────────┴────────┬──────────────────────┐
-  gasm-run (Rust)     gasm-run --compile     browser runner         Node headless
-  wasmtime + wgpu     AOT .cwasm (no JIT)    WebGPU + canvas +      (CI, hashing,
-  winit/cpal/gilrs                           AudioWorklet+Gamepad   net tests)
-                   ▲                                  ▲
-                   └──────── gasm-relay (WebSocket rooms) ────────┘
+```mermaid
+flowchart TB
+  subgraph game ["game.wasm (one artifact)"]
+    code["Rust/C/C++ game"] --- sdk["gasm crate / gasm.h bindings"]
+  end
+  game --> abi(["gasm ABI v0: gasm.* (video, audio, input, assets, params)<br/>gasm:gfx (WebGPU subset) · gasm:gl (OpenGL ES 3) · gasm:net (messages) · gasm:storage (saves)"])
+  abi --> native["gasm-run (Rust)<br/>wasmtime, wgpu, ANGLE<br/>winit, cpal, gilrs"]
+  abi --> aot["gasm-run --compile<br/>AOT .cwasm (no JIT)"]
+  abi --> web["browser runner<br/>WebGPU, WebGL 2, canvas,<br/>AudioWorklet, Gamepad"]
+  abi --> node["Node headless<br/>(CI, hashing, net tests)"]
+  relay["gasm-relay (WebSocket rooms)"]
+  native <--> relay
+  web <--> relay
 ```
 
 **Website:** [gasm.emdzej.pl](https://gasm.emdzej.pl): docs and **playable demos** in your browser.

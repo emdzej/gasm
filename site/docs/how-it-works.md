@@ -5,17 +5,15 @@ are. For the normative interface, see the [ABI spec](/docs/abi).
 
 ## The idea in one picture
 
-```
-            game author                              platform owner
-  ┌───────────────────────────────┐        ┌───────────────────────────────┐
-  │ Rust (gasm crate) / C (gasm.h)│        │ runner for platform X         │
-  │        │ cargo / clang        │        │  - wasm engine                │
-  │        ▼ --target wasm32      │        │  - implements gasm imports    │
-  │   game.wasm  ─────────────────┼──────► │  - window, GPU, audio, input, │
-  └───────────────────────────────┘  ship  │    network                    │
-                                    once   │  - calls gasm_frame() @ N Hz  │
-                                           └───────────────────────────────┘
-                                                 one per platform
+```mermaid
+flowchart LR
+  subgraph author ["game author"]
+    src["Rust (gasm crate)<br/>C/C++ (gasm.h)"] -- "cargo / clang<br/>--target wasm32" --> wasm(["game.wasm"])
+  end
+  subgraph owner ["platform owner: one runner per platform"]
+    runner["runner for platform X<br/>wasm engine<br/>implements the gasm imports<br/>window, GPU, audio, input, network<br/>calls gasm_frame() at N Hz"]
+  end
+  wasm -- "ship once" --> runner
 ```
 
 A **guest** (game) is a single WebAssembly module. A **runner** (host) is a
@@ -44,17 +42,13 @@ optional modules on top.
 
 ## Guest anatomy
 
-```
-exports                          imports
-─────────────────────            ──────────────────────────────────────────────
-memory                           gasm.log / time_ms / set_frame_rate / param
-gasm_abi_version() -> 0          gasm.video_present / audio_config / audio_push
-gasm_init() -> 0 = ok            gasm.input_pad / text_input / asset_size / asset_read / has
-gasm_frame()                     gasm:gfx.*   (optional: WebGPU subset)
-                                 gasm:gl.*    (optional: OpenGL ES 3.0; or gasm:gfx)
-_initialize()  (optional)        gasm:net.*   (optional: message connections)
-gasm_exit()    (optional)        gasm:storage.* (optional: saves)
-                                 wasi_snapshot_preview1.proc_exit (and libc subset)
+```mermaid
+flowchart LR
+  imp["<b>game.wasm imports</b><br/>gasm.log / time_ms / set_frame_rate / param<br/>gasm.video_present / audio_config / audio_push<br/>gasm.input_pad / text_input<br/>gasm.asset_size / asset_read / has<br/>gasm:gfx.* (optional: WebGPU subset)<br/>gasm:gl.* (optional: OpenGL ES 3.0)<br/>gasm:net.* (optional: message connections)<br/>gasm:storage.* (optional: saves)<br/>wasi_snapshot_preview1.proc_exit (+ libc subset)"]
+  runner(["runner"])
+  exp["<b>game.wasm exports</b><br/>memory<br/>gasm_abi_version() → 0<br/>gasm_init() → 0 = ok<br/>gasm_frame()<br/>_initialize() (optional)<br/>gasm_exit() (optional)"]
+  imp -- "the guest calls" --> runner
+  runner -- "the runner calls" --> exp
 ```
 
 Everything crosses the boundary as `i32`/`f32`/`f64` scalars. Buffers are passed
@@ -66,20 +60,27 @@ bounds-checks every access and traps the guest on violation).
 
 ## Lifecycle
 
-```
-runner                                   guest
-──────                                   ─────
-instantiate(module, imports)
-call _initialize()           ───────►    static constructors (C), if any
-call gasm_abi_version()      ───────►    return 0
-call gasm_init()             ───────►    set_frame_rate(60), param("relay"),
-                                         create shaders/buffers/pipelines ... return 0
-loop at frame_rate Hz:
-  sample input
-  call gasm_frame()          ───────►    input_pad(0), net recv → simulate one step
-                             ◄───────    gfx begin_frame … draw … end_frame  (3D)
-                             ◄───────    or video_present(fb)                 (2D)
-                             ◄───────    audio_push(samples)
+```mermaid
+sequenceDiagram
+  participant R as runner
+  participant G as guest
+  Note over R: instantiate(module, imports)
+  R->>G: _initialize()
+  Note right of G: static constructors (C), if any
+  R->>G: gasm_abi_version()
+  G-->>R: 0
+  R->>G: gasm_init()
+  G->>R: set_frame_rate(60), param("relay")
+  G->>R: create shaders, buffers, pipelines
+  G-->>R: 0 = ok
+  loop at frame_rate Hz
+    Note over R: sample input
+    R->>G: gasm_frame()
+    G->>R: input_pad(0), net recv
+    Note right of G: simulate one step
+    G->>R: gfx begin_frame … draw … end_frame (3D)<br/>or video_present(fb) (2D)
+    G->>R: audio_push(samples)
+  end
 ```
 
 Two decisions matter here.
@@ -122,30 +123,36 @@ builds.
 
 ## Video path (2D)
 
-```
-guest RGBA8 buffer ──video_present──► runner copies rows (stride-aware)
-                                         ├─ hash (headless)
-                                         ├─ native: upload to a wgpu texture →
-                                         │   letterboxed nearest-neighbour blit
-                                         └─ web: ImageData → canvas 2D
+```mermaid
+flowchart LR
+  fb["guest RGBA8 buffer"] -- "video_present" --> copy["runner copies the rows<br/>(stride-aware)"]
+  copy --> hash["hash (headless)"]
+  copy --> native["native: wgpu texture,<br/>letterbox + upscaling filter"]
+  copy --> web["web: WebGL 2, the same filters<br/>(canvas 2D without WebGL 2)"]
 ```
 
 One format (RGBA8) keeps every runner trivial. tetanes-core already produces
-RGBA8. If the guest used `gasm:gfx` in a frame, `video_present` isn't displayed.
+RGBA8. Presentation (letterbox, display aspect, upscaling filters) happens after
+hashing, the same way on both runners. If the guest used `gasm:gfx` in a frame, `video_present` isn't displayed.
 
 ## GPU path (`gasm:gfx`)
 
-```
-guest                        runner (native: wgpu → Metal/Vulkan/D3D12, web: navigator.gpu)
-─────                        ─────────────────────────────────────────────────────────────
-create_shader(WGSL)     ───► handle table: shaders, buffers, pipelines, bind groups
-create_pipeline(JSON)   ───► JSON → GPURenderPipelineDescriptor; "surface" → swapchain
-                             format, runner adds 4x MSAA + depth24plus
-write_buffer(h, bytes)  ───► queue.writeBuffer (hashed in headless runs)
-begin_frame(clear)      ───► acquire swapchain texture; render pass: MSAA color resolves
-                             into it, depth cleared
-set_* / draw_indexed    ───► forwarded to the render pass
-end_frame()             ───► submit + present
+```mermaid
+sequenceDiagram
+  participant G as guest
+  participant R as runner (native: wgpu on Metal/Vulkan/D3D12, web: navigator.gpu)
+  G->>R: create_shader(WGSL)
+  Note right of R: handle table: shaders, buffers, pipelines, bind groups
+  G->>R: create_pipeline(JSON)
+  Note right of R: JSON → GPURenderPipelineDescriptor, "surface" → swapchain format,<br/>the runner adds 4x MSAA + depth24plus
+  G->>R: write_buffer(h, bytes)
+  Note right of R: queue.writeBuffer (hashed in headless runs)
+  G->>R: begin_frame(clear)
+  Note right of R: acquire the swapchain texture, render pass:<br/>MSAA color resolves into it, depth cleared
+  G->>R: set_* / draw_indexed
+  Note right of R: forwarded to the render pass
+  G->>R: end_frame()
+  Note right of R: submit + present
 ```
 
 Design choices:
@@ -186,15 +193,23 @@ games include the SDK's drop-in `<GLES3/gl3.h>` and link `gasm_gl.c`, which
 turn GL's C conventions (name arrays, string arrays, `glMapBufferRange`,
 `glGetString` pointers) into imports with explicit lengths.
 
-```
-guest (GLES 3 C)             gasm_gl.c                runner
-────────────────             ─────────                ──────
-glGenBuffers(2, b)      ───► create_buffer() × 2 ───► model: name 1, 2 (+ WebGL objects)
-glTexImage2D(..., px)   ───► tex_image_2d(..., px, len) model: target, binding, len vs
-                             (len from the pixel store)  the unpack state → WebGL 2 /
-                                                         null GL; hashed headless
-glMapBufferRange(...)   ───► guest memory; unmap ───► buffer_sub_data
-glGetError()            ◄─── GL errors of the model first, then WebGL's
+```mermaid
+sequenceDiagram
+  participant G as guest (GLES 3 C)
+  participant C as gasm_gl.c
+  participant R as runner
+  G->>C: glGenBuffers(2, b)
+  C->>R: create_buffer() × 2
+  Note right of R: model: names 1, 2 (+ WebGL objects)
+  G->>C: glTexImage2D(..., px)
+  C->>R: tex_image_2d(..., px, len)<br/>(len from the pixel store)
+  Note right of R: model: target, binding, len vs the unpack state<br/>→ WebGL 2 / ANGLE / null GL, hashed headless
+  G->>C: glMapBufferRange(...)
+  Note over C: guest memory
+  G->>C: glUnmapBuffer(...)
+  C->>R: buffer_sub_data
+  G->>R: glGetError()
+  R-->>G: the model's GL errors first, then WebGL's
 ```
 
 Both runners keep the same model of names, bindings and the pixel store and
@@ -210,17 +225,11 @@ time, so games without `gasm:gl` never need it.
 
 ## Audio path
 
-```
-guest f32 frames @ guest rate (e.g. 48000/1ch)
-   │ audio_push
-   ▼
-runner: streaming linear resampler → device rate (e.g. 44100 or 48000)
-   │
-   ▼
-ring buffer   target 60 ms  |  cap 200 ms (drop oldest)  |  underrun → silence + re-prime
-   │
-   ▼
-device callback (cpal on native, AudioWorklet in browser)
+```mermaid
+flowchart TB
+  push["guest: f32 frames at the guest's rate<br/>(e.g. 48000 Hz, 1 channel)"] -- "audio_push" --> rs["runner: streaming linear resampler<br/>→ device rate (e.g. 44100 or 48000)"]
+  rs --> ring["ring buffer: target 60 ms, cap 200 ms (drops the oldest)<br/>underrun → silence + re-prime"]
+  ring --> dev["device callback<br/>(cpal natively, AudioWorklet in the browser)"]
 ```
 
 Video pacing comes from the frame timer, so audio production and consumption
@@ -248,11 +257,19 @@ The lowest common denominator decides the API: browsers can't open raw TCP or
 UDP sockets, so `gasm:net` is WebSocket-shaped (reliable, ordered, binary
 messages) on every runner, and fully non-blocking:
 
-```
-guest ──open(url)──► runner: native = tungstenite on a background thread
-      ◄─handle──              web    = WebSocket (also used by headless Node)
-      ──send(msg)──► queue ───────────────────────────────► socket
-      ◄─recv()───── queue ◄─────────────────────────────── socket
+```mermaid
+sequenceDiagram
+  participant G as guest
+  participant R as runner
+  participant S as socket
+  G->>R: open(url)
+  Note right of R: native: tungstenite on a background thread<br/>web: WebSocket (also used by headless Node)
+  R-->>G: handle
+  G->>R: send(msg): queued, returns at once
+  R->>S: message
+  S->>R: message: queued
+  G->>R: recv()
+  R-->>G: the next message, or none
 ```
 
 **gasm-relay** is a tiny, game-agnostic room server. Clients connect to
@@ -263,15 +280,13 @@ other peers. It never looks inside them.
 **Sumo's lockstep netcode** builds on the determinism the rest of the system
 already guarantees:
 
-```
-frame f on each peer:
-  poll messages → store remote inputs by frame number
-  if inputs for frame f from BOTH players are known:
-      send my input for frame f + 4   (INPUT_DELAY: 4 frames ≈ 66 ms)
-      sim.step(input0[f], input1[f])
-      every 120 frames: send hash(sim) → peer compares → "in sync" or "DESYNC"
-  else: stall (render the same state; the peer will catch up)
-  render
+```mermaid
+flowchart TB
+  poll["frame f on each peer:<br/>poll messages, store remote inputs by frame number"] --> known{"inputs for frame f<br/>from both players?"}
+  known -- yes --> step["send my input for frame f + 4 (INPUT_DELAY: 4 frames ≈ 66 ms)<br/>sim.step(input0[f], input1[f])<br/>every 120 frames: send hash(sim), the peer compares: in sync or DESYNC"]
+  known -- no --> stall["stall: render the same state<br/>(the peer will catch up)"]
+  step --> render["render"]
+  stall --> render
 ```
 
 - Only inputs cross the network (7-byte messages), never positions.
@@ -315,13 +330,11 @@ filesystem: games can't read anything they weren't given.
 Assets are designed for data-heavy games (a CD's worth of files, a streamed
 soundtrack):
 
-```
-native / Node:  --asset name=path   --asset-dir [prefix=]dir
-                files opened, not read -> positioned reads into guest memory
-browser main:   { name: bytes } | picked folder (preloaded, with progress)
-browser Worker: OPFS (FileSystemSyncAccessHandle) | File/Blob (FileReaderSync)
-                read on demand, synchronously, straight into guest memory
-```
+| Runner | Asset sources | Reads |
+|---|---|---|
+| native, Node | `--asset name=path`, `--asset-dir [prefix=]dir` | files are opened, not read: positioned reads into guest memory |
+| browser, main thread | `{ name: bytes }`, a picked folder | preloaded, with progress |
+| browser, Worker | OPFS (`FileSystemSyncAccessHandle`), `File`/`Blob` (`FileReaderSync`) | on demand, synchronously, straight into guest memory |
 
 All providers share one set of naming rules: relative `/` paths, exact match
 first, then case-insensitive among folder entries, with hidden files and
