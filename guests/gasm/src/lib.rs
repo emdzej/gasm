@@ -671,7 +671,7 @@ pub mod net {
         /// Open `ws://` / `wss://`. `None` if the runner denies it.
         pub fn open(url: &str) -> Option<Conn> {
             let h = unsafe { sys::net_open(url.as_ptr(), url.len() as u32) };
-            (h > 0).then_some(Conn(h))
+            (h > 0).then(|| Conn(h)) // not then_some: a Conn(-1) would be dropped, closing -1 (a trap)
         }
         pub fn state(&self) -> State {
             match unsafe { sys::net_state(self.0) } {

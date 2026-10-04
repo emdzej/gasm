@@ -25,6 +25,11 @@ ABI (additions, ABI version still 0):
   `gasm-host`: `Session` has a new field, `watch_assets`. Asked for by Nowhere in
   Particular.
 
+SDKs:
+- Rust: `gasm::net::Conn::open` returned `None` for a denied connection only
+  after closing handle -1, which traps: a game without `--allow-net` crashed
+  instead of seeing `None`.
+
 Runners:
 - Browser runner, gasm:gl: pixels that aren't bytes reach WebGL as the typed
   array it requires (`Float32Array` for `FLOAT`, `Uint16Array` for `HALF_FLOAT`
