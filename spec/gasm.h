@@ -333,6 +333,10 @@ GASM_IMPORT("log") void gasm_log(const char *msg, uint32_t msg_len);
 GASM_IMPORT("has") int32_t gasm_has(const char *name, uint32_t name_len);
 /* Monotonic time in milliseconds (virtual, frame-derived in headless runs). */
 GASM_IMPORT("time_ms") double gasm_time_ms(void);
+/* The player's time zone now: minutes east of UTC, daylight saving included
+ * (120 for CEST, -300 for EST). 0 in headless runs. Local time is the WASI
+ * realtime clock plus this offset. */
+GASM_IMPORT("utc_offset_minutes") int32_t gasm_utc_offset_minutes(void);
 /* Rate (Hz) at which the runner calls gasm_frame(). Default 60; 1-1000. */
 GASM_IMPORT("set_frame_rate") void gasm_set_frame_rate(double hz);
 /* Present RGBA8 pixels (bytes R,G,B,A), stride bytes per row, w,h <= 4096.

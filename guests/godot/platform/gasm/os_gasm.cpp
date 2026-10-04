@@ -78,10 +78,19 @@ double OS_Gasm::get_unix_time() const {
 	return (double)ts.tv_sec + (double)ts.tv_nsec / 1e9;
 }
 
+// The player's time zone (gasm.utc_offset_minutes; UTC in headless runs and on older runners).
+static int utc_offset_minutes() {
+	static const bool has = gasm_has_str("gasm.utc_offset_minutes") == 1;
+	return has ? gasm_utc_offset_minutes() : 0;
+}
+
 OS::DateTime OS_Gasm::get_datetime(bool p_utc) const {
 	time_t t = time(nullptr);
+	if (!p_utc) {
+		t += (time_t)utc_offset_minutes() * 60;
+	}
 	struct tm lt;
-	gmtime_r(&t, &lt); // no time zones on gasm: UTC
+	gmtime_r(&t, &lt); // WASI's libc has no time zones: shift the time, then read it as UTC
 	DateTime ret;
 	ret.year = 1900 + lt.tm_year;
 	ret.month = (Month)(lt.tm_mon + 1);
@@ -90,14 +99,15 @@ OS::DateTime OS_Gasm::get_datetime(bool p_utc) const {
 	ret.hour = lt.tm_hour;
 	ret.minute = lt.tm_min;
 	ret.second = lt.tm_sec;
-	ret.dst = false;
+	ret.dst = false; // the offset includes daylight saving, but gasm doesn't say whether it applies
 	return ret;
 }
 
 OS::TimeZoneInfo OS_Gasm::get_time_zone_info() const {
+	int bias = utc_offset_minutes();
 	TimeZoneInfo ret;
-	ret.bias = 0;
-	ret.name = "UTC";
+	ret.bias = bias;
+	ret.name = bias == 0 ? String("UTC") : vformat("UTC%s%02d:%02d", bias < 0 ? "-" : "+", Math::abs(bias) / 60, Math::abs(bias) % 60);
 	return ret;
 }
 

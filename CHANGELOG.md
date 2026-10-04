@@ -8,6 +8,13 @@ the package versions (`gasm-sdk`, `gasm-host`, `@emdzej/gasm-host`).
 
 ## Unreleased
 
+ABI (additions, ABI version still 0):
+- `gasm.utc_offset_minutes()`: the player's time zone, minutes east of UTC now
+  (daylight saving included); 0 in headless runs. Both runners; Rust
+  `gasm::utc_offset_minutes()` (0 on older runners), C `gasm_utc_offset_minutes()`
+  (probe `gasm.has` first). Godot's `Time.get_datetime_*_from_system()` and
+  `get_time_zone_from_system()` now give local time and the offset instead of UTC.
+
 Runners:
 - gasm:gl null GL (headless, natively and in Node): reports every WebGL 2
   minimum limit. `GL_MAX_VERTEX_OUTPUT_COMPONENTS` and

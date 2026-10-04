@@ -134,6 +134,36 @@ pub fn frame_position(x: f32, y: f32, drawable: (f32, f32), frame: (usize, usize
 /// Longest title `set_title` keeps, in UTF-8 bytes.
 pub const TITLE_MAX_BYTES: usize = 256;
 
+/// The system time zone's offset from UTC now, in minutes east (daylight saving included).
+#[cfg(unix)]
+fn utc_offset_minutes() -> i32 {
+    let now = unsafe { libc::time(std::ptr::null_mut()) };
+    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+    if unsafe { libc::localtime_r(&now, &mut tm) }.is_null() {
+        return 0;
+    }
+    (tm.tm_gmtoff / 60) as i32
+}
+
+#[cfg(windows)]
+fn utc_offset_minutes() -> i32 {
+    use windows_sys::Win32::System::Time::{GetTimeZoneInformation, TIME_ZONE_INFORMATION};
+    let mut tz: TIME_ZONE_INFORMATION = unsafe { std::mem::zeroed() };
+    // UTC = local + bias: the standard or daylight bias by the current state
+    let bias = match unsafe { GetTimeZoneInformation(&mut tz) } {
+        1 => tz.Bias + tz.StandardBias, // TIME_ZONE_ID_STANDARD
+        2 => tz.Bias + tz.DaylightBias, // TIME_ZONE_ID_DAYLIGHT
+        0 => tz.Bias,                   // TIME_ZONE_ID_UNKNOWN: no daylight saving
+        _ => 0,
+    };
+    -bias
+}
+
+#[cfg(not(any(unix, windows)))]
+fn utc_offset_minutes() -> i32 {
+    0
+}
+
 /// A guest's `set_title` text as runners show it: control characters (Unicode
 /// Cc) and bidi controls (U+202A–U+202E, U+2066–U+2069) removed, then cut to
 /// 256 bytes at a character boundary. None: empty, the runner's default.
@@ -471,6 +501,11 @@ fn add_gasm_imports(linker: &mut Linker<Host>) -> wasmtime::Result<()> {
     linker.func_wrap("gasm", "time_ms", |caller: Caller<'_, Host>| -> f64 {
         let h = caller.data();
         h.virtual_time_ms.unwrap_or_else(|| h.start.elapsed().as_secs_f64() * 1000.0)
+    })?;
+
+    linker.func_wrap("gasm", "utc_offset_minutes", |caller: Caller<'_, Host>| -> i32 {
+        // headless runs are reproducible: UTC, like their clocks
+        if caller.data().virtual_time_ms.is_some() { 0 } else { utc_offset_minutes() }
     })?;
 
     linker.func_wrap("gasm", "set_frame_rate", |mut caller: Caller<'_, Host>, hz: f64| {

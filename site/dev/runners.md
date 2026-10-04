@@ -122,6 +122,7 @@ ignore silently. String arguments must be UTF-8; trap otherwise.
 | `log(ptr,len)` | Decode UTF-8 lossily and print. |
 | `has(name)` | `1` for the import modules and functions you implement (`"gasm:gfx"`, `"gasm:gfx.destroy"`), else `0`. |
 | `time_ms()` | Monotonic ms. For deterministic mode, return `frame_index * 1000 / frame_rate`. |
+| `utc_offset_minutes()` | Minutes east of UTC now (the system time zone, daylight saving included; in JS `-new Date().getTimezoneOffset()`). Deterministic mode: 0. |
 | `set_frame_rate(hz)` | Accept 1–1000, ignore others. |
 | `video_present(ptr,w,h,stride)` | Reject `w,h == 0`, `> 4096`, `stride < w*4`. Read `stride*(h-1) + w*4` bytes. Copy rows into your own buffer before returning. Display the **latest** frame at your own refresh rate. |
 | `audio_config(rate,ch)` | Accept 8000–192000 Hz, 1–2 channels. |

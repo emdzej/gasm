@@ -185,6 +185,10 @@ pub mod abi {
     pub unsafe fn time_ms() -> f64 {
         with(|s| s.now_ms)
     }
+    /// Headless semantics: UTC.
+    pub unsafe fn utc_offset_minutes() -> i32 {
+        0
+    }
     pub unsafe fn video_set_aspect(num: u32, den: u32) {
         let ok = (num, den) == (0, 0) || ((1..=65535).contains(&num) && (1..=65535).contains(&den) && num as u64 * 8 >= den as u64 && den as u64 * 8 >= num as u64);
         assert!(ok, "video_set_aspect: invalid ratio {num}:{den}");

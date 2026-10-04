@@ -43,6 +43,12 @@ pub fn time_ms() -> f64 {
     unsafe { sys::time_ms() }
 }
 
+/// The player's time zone now: minutes east of UTC, daylight saving included
+/// (120 for CEST). 0 in headless runs, and on older runners without it.
+pub fn utc_offset_minutes() -> i32 {
+    if has("gasm.utc_offset_minutes") { unsafe { sys::utc_offset_minutes() } } else { 0 }
+}
+
 /// Does the runner provide an import? A module (`"gasm:gfx"`) or a function in
 /// one (`"gasm.asset_size64"`, `"gasm:gfx.destroy"`). Calling an import the
 /// runner lacks traps, so probe optional features first.

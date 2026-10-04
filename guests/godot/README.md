@@ -63,7 +63,9 @@ scenes get random node ids at export).
   is messages, not sockets), TLS (`Crypto`), complex text shaping (the
   fallback text server: no right-to-left or ligatures), several windows.
 - **Time:** frames are paced by the runner (60 Hz); `OS.get_ticks_usec()` is
-  the frame's time, virtual in headless runs, so runs are reproducible.
+  the frame's time, virtual in headless runs, so runs are reproducible. Local
+  time and the time zone's offset come from the runner (`gasm.utc_offset_minutes`;
+  UTC in headless runs).
 
 ## How it's built
 

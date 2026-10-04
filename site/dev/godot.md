@@ -117,6 +117,11 @@ saves and loads a settings file. When the player quits, the game gets
 - **Time** is the frame's: `_process(delta)` gets 1/60 s steps, and
   `Time.get_ticks_usec()` follows the frames (virtual in headless runs).
   `Engine.max_fps` has no effect: the runner paces frames.
+- **The date** is real: `Time.get_unix_time_from_system()` and
+  `Time.get_datetime_dict_from_system()` give the player's clock and local time,
+  `Time.get_time_zone_from_system()` their UTC offset (`{"bias": 120, "name":
+  "UTC+02:00"}`; no zone names). Headless runs are reproducible: the clock starts
+  at 1970-01-01 00:00 UTC.
 - **The window** is the gasm drawable: its size is the player's window or canvas,
   `DisplayServer.window_set_title` sets the title, and `get_tree().quit(code)`
   ends the game with that exit code. There is one window (no popups as separate

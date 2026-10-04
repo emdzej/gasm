@@ -175,6 +175,8 @@ export class GasmHost {
         if (t !== this.title) { this.title = t; this.titleChanged = true; }
       },
       time_ms: () => (this.virtualTime ? this.vtime : performance.now() - this.t0),
+      // minutes east of UTC (getTimezoneOffset is west); headless runs are UTC
+      utc_offset_minutes: () => (this.virtualTime ? 0 : -new Date().getTimezoneOffset()),
       set_frame_rate: (hz) => { if (Number.isFinite(hz) && hz >= 1 && hz <= 1000) this.frameRate = hz; },
       video_present: (ptr, w, h, stride) => {
         w >>>= 0; h >>>= 0; stride >>>= 0;

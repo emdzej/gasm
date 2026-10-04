@@ -1037,6 +1037,7 @@ dependencies = [
  "cpal",
  "getrandom 0.3.4",
  "gilrs",
+ "libc",
  "libloading",
  "png",
  "pollster",
@@ -1047,6 +1048,7 @@ dependencies = [
  "wasmtime",
  "wat",
  "wgpu",
+ "windows-sys 0.61.2",
  "winit",
 ]
 
