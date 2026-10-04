@@ -6,7 +6,7 @@ embedders. The ABI version is still 0: additions keep it (see
 guests can probe for newer imports with `gasm.has`. Versions are the git tags and
 the package versions (`gasm-sdk`, `gasm-host`, `@emdzej/gasm-host`).
 
-## Unreleased
+## 0.9.0 (2026-10-04)
 
 ABI (additions, ABI version still 0):
 - `gasm:fetch` (optional module): HTTP(S) requests made by the runner, TLS
