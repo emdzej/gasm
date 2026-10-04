@@ -59,3 +59,8 @@ if [ ! -f tools/godot-editor/.version ] || [ "$(cat tools/godot-editor/.version)
   [ "$(uname -s)" = Darwin ] && xattr -dr com.apple.quarantine tools/godot-editor 2>/dev/null || true
   echo "$VERSION-$ED" > tools/godot-editor/.version
 fi
+# one name for the editor on every host (the Makefile runs tools/godot-editor/godot)
+case "$ED" in
+  macos.*) ln -sf Godot.app/Contents/MacOS/Godot tools/godot-editor/godot ;;
+  *)       ln -sf "Godot_v${VERSION}_$ED" tools/godot-editor/godot ;;
+esac

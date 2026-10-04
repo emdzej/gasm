@@ -154,7 +154,7 @@ GODOT_SRC := tools/godot-src
 GODOT_PLATFORM := $(shell find guests/godot/platform -type f 2>/dev/null)
 GODOT_EXAMPLES := $(notdir $(patsubst %/,%,$(dir $(wildcard guests/godot/examples/*/project.godot))))
 GODOT_PCKS := $(addprefix $(BUILD)/godot/,$(addsuffix .pck,$(GODOT_EXAMPLES)))
-GODOT_EDITOR := $(if $(filter Darwin,$(shell uname -s)),tools/godot-editor/Godot.app/Contents/MacOS/Godot,$(firstword $(wildcard tools/godot-editor/Godot_v*)))
+GODOT_EDITOR := tools/godot-editor/godot
 GODOT_JOBS ?= $(shell getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)
 # the module's wasm features (wasm-opt must keep exactly these: setjmp uses exceptions)
 GODOT_FEATURES := --enable-exception-handling --enable-reference-types --enable-bulk-memory \
