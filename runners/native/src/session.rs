@@ -26,6 +26,9 @@ pub struct Session {
     pub gl_lib: Option<std::path::PathBuf>,
     /// gasm:gl on SwiftShader (software Vulkan) instead of the GPU
     pub gl_software: bool,
+    /// `--watch-asset name=path`: files re-read as assets whenever they change
+    /// (create each watch before opening its file, so no change is missed)
+    pub watch_assets: Vec<crate::assets::AssetWatch>,
 }
 
 impl Session {
@@ -65,7 +68,10 @@ impl Session {
         }
         host.hashing = hashing;
         let t0 = Instant::now();
-        let game = Game::load(&self.wasm, host, self.load)?;
+        let mut game = Game::load(&self.wasm, host, self.load)?;
+        for w in self.watch_assets {
+            game.add_watch(w);
+        }
         eprintln!("[gasm] loaded {} in {:.0} ms", self.name, t0.elapsed().as_secs_f64() * 1000.0);
         Ok(game)
     }

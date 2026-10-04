@@ -40,6 +40,20 @@ nl=$(lst "$NATIVE"); jl=$(lst $NODE)
 check "asset enumeration: native == node" "$nl" "$jl"
 case "$nl" in *".DS_Store"*|"") check "asset enumeration: hidden files skipped" "no .DS_Store" "$nl" ;; *) check "asset enumeration: hidden files skipped" ok ok ;; esac
 
+# ---- assets replaced while running (--watch-asset): rewritten in place, then by a rename,
+# seen with new versions on both runners (real time, so the writes land mid-run)
+watch() { # <runner...>: the versions and contents the guest saw
+  local d; d=$(mktemp -d)
+  printf 'one' > "$d/w.txt"
+  ( sleep 0.5; printf 'two!!' > "$d/w.txt"; sleep 0.5; printf 'three!!!' > "$d/n.txt"; mv "$d/n.txt" "$d/w.txt" ) </dev/null &
+  "$@" $G --watch-asset w.txt="$d/w.txt" --headless 100 --realtime --param watch=w.txt --param frames=100 2>&1 \
+    | grep -o 'watch w.txt: version .*' | tr '\n' ' '
+  wait; rm -rf "$d"
+}
+want='watch w.txt: version Some(0) Some("one") watch w.txt: version Some(1) Some("two!!") watch w.txt: version Some(2) Some("three!!!") '
+check "watched asset: native" "$want" "$(watch "$NATIVE")"
+check "watched asset: node" "$want" "$(watch $NODE)"
+
 # ---- R1: a large asset streamed at random offsets costs no RAM ----------------------
 # (LARGE_MB=0 to skip). Same hash as an in-memory run (Node, --asset); resident memory
 # of the file-backed native run compared with the same run on a tiny asset.

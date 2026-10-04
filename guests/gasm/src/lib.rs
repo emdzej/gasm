@@ -226,6 +226,17 @@ pub fn asset_size(name: &str) -> Option<u64> {
     (n >= 0).then_some(n as u64)
 }
 
+/// An asset's version, or `None` if it doesn't exist: 0 for assets given at
+/// launch, a new, larger number each time the embedder replaces it while the game
+/// runs. Poll it to notice new data. Older runners: always 0.
+pub fn asset_version(name: &str) -> Option<u32> {
+    if !has("gasm.asset_version") {
+        return asset_size(name).map(|_| 0);
+    }
+    let v = unsafe { sys::asset_version(name.as_ptr(), name.len() as u32) };
+    (v >= 0).then_some(v as u32)
+}
+
 /// Read a whole asset (it must fit in memory: under 2 GiB).
 pub fn asset(name: &str) -> Option<Vec<u8>> {
     let n = unsafe { sys::asset_size(name.as_ptr(), name.len() as u32) };

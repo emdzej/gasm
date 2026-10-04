@@ -7,6 +7,8 @@
 //! - `stream=name`: read `reads` chunks of `chunk` bytes per frame at pseudo-random offsets
 //! - `reads=64`, `chunk=4096`, `frames=120`: then log totals and exit
 //! - `list=1`: enumerate assets (asset_count/asset_name), log and hash the names
+//! - `watch=name`: every frame, log the asset's version and contents when they change
+//!   (assets replaced while running: `--watch-asset`, `setAsset`)
 
 use gasm::log;
 
@@ -19,6 +21,7 @@ fn fnv(h: u32, bytes: &[u8]) -> u32 {
 
 struct Check {
     stream: Option<(String, u64)>,
+    watch: Option<(String, Option<u32>)>,
     reads: u32,
     chunk: Vec<u8>,
     frames: u32,
@@ -62,6 +65,7 @@ impl gasm::Game for Check {
         });
         Ok(Check {
             stream,
+            watch: gasm::param("watch").map(|n| (n, None)),
             reads: num("reads", 64),
             chunk: vec![0; num("chunk", 4096) as usize],
             frames: num("frames", 120),
@@ -74,6 +78,14 @@ impl gasm::Game for Check {
     }
 
     fn frame(&mut self) {
+        if let Some((name, seen)) = &mut self.watch {
+            let v = gasm::asset_version(name);
+            if v != *seen {
+                *seen = v;
+                let text = gasm::asset(name).map(|d| String::from_utf8_lossy(&d).trim().to_owned());
+                log!("[assetcheck] watch {name}: version {v:?} {text:?}");
+            }
+        }
         if let Some((name, size)) = &self.stream {
             for _ in 0..self.reads {
                 // xorshift64: deterministic offsets on every runner

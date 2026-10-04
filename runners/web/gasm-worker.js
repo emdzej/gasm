@@ -122,6 +122,16 @@ export class GasmWorker {
     return done;
   }
 
+  /** GasmHost.setAsset in the worker, before the next batch of frames (the bytes are transferred). */
+  setAsset(name, bytes) {
+    if (this.failed) return;
+    this.worker.postMessage({ type: 'setAsset', name, bytes }, [bytes.buffer]);
+  }
+  /** GasmHost.removeAsset in the worker, before the next batch of frames. */
+  removeAsset(name) {
+    if (!this.failed) this.worker.postMessage({ type: 'removeAsset', name });
+  }
+
   /** The player is quitting: gasm_exit (flush saves), close sockets, stop the worker.
    *  Also after the guest exited or trapped (sockets and storage still get closed). */
   async exit(timeoutMs = 1000) {
@@ -200,6 +210,10 @@ if (inWorker) {
       const out = audio; audio = [];
       const transfer = [...(frame ? [frame.rgba.buffer] : []), ...out.map((a) => a.samples.buffer)];
       post({ type: 'done', frame, audio: out, stats: stats(), frameIndex: host.frameIndex, frameRate: host.frameRate, inputMode: host.inputMode, title: host.title, exit, error }, transfer);
+    } else if (m.type === 'setAsset') {
+      host?.setAsset(m.name, m.bytes);
+    } else if (m.type === 'removeAsset') {
+      host?.removeAsset(m.name);
     } else if (m.type === 'exit') {
       try { await host?.shutdown(); } catch {}
       gfx?.device.destroy();

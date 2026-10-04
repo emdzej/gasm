@@ -15,6 +15,16 @@ ABI (additions, ABI version still 0):
   (probe `gasm.has` first). Godot's `Time.get_datetime_*_from_system()` and
   `get_time_zone_from_system()` now give local time and the offset instead of UTC.
 
+- `gasm.asset_version(name)`: assets the embedder replaces while the game runs
+  get a new version (0 as launched). Embedders: `Game::set_asset` /
+  `remove_asset` (`gasm-host`), `GasmHost.setAsset` / `removeAsset`,
+  `GasmWorker.setAsset` (`@emdzej/gasm-host`). Launchers:
+  `gasm-run --watch-asset name=path` (and the Node runner) re-reads a file
+  whenever it changes, in place or by a rename. Rust `gasm::asset_version`,
+  C `gasm_asset_version`; Godot: `FileAccess.get_modified_time("res://...")`.
+  `gasm-host`: `Session` has a new field, `watch_assets`. Asked for by Nowhere in
+  Particular.
+
 Runners:
 - Browser runner, gasm:gl: pixels that aren't bytes reach WebGL as the typed
   array it requires (`Float32Array` for `FLOAT`, `Uint16Array` for `HALF_FLOAT`

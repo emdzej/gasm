@@ -168,6 +168,7 @@ All pointers are `i32` offsets into guest memory. Strings are UTF-8 `(ptr, len)`
 | `asset_read` | `(name_ptr, name_len, dst, cap) -> i32` | Copy ≤ `cap` bytes from the start, return count or `-1`. |
 | `asset_read_at` | `(name_ptr, name_len, offset: u32, dst, len) -> i32` | Copy up to `len` bytes starting at byte `offset` (streaming large assets). Returns bytes copied (0 at or after the end), or `-1` if missing. |
 | `asset_read_at64` | `(name_ptr, name_len, offset: u64, dst, len) -> i32` | `asset_read_at` with a 64-bit offset, for assets of 4 GiB and more. |
+| `asset_version` | `(name_ptr, name_len) -> i32` | `0` for an asset given at launch, a new, larger number each time the embedder replaces it while the game runs, or `-1` if missing. See [Assets that change](#assets-that-change). Probe `has("gasm.asset_version")` (the SDK wrappers do, and answer 0 without it). |
 | `asset_count` | `() -> u32` | Number of assets. |
 | `asset_name` | `(index, dst, cap) -> i32` | Name of asset `index` (0 … `asset_count`−1), sorted by UTF-8 bytes; folder entries as named on disk. Returns its length (copied only if length ≤ `cap`; `cap = 0` queries), or `-1` if `index` is out of range. |
 | `param` | `(name_ptr, name_len, dst, cap) -> i32` | Launch parameter value: returns its byte length, or `-1` if unset. Copied only if length ≤ `cap`; call with `cap = 0` to query the length. |
@@ -556,6 +557,29 @@ same everywhere.
   `ART/ART.CAR`. If folder entries differ only in case, runners warn at
   start-up and resolve case-insensitive lookups to the first name in sorted
   order.
+
+### Assets that change
+
+Assets are fixed for a run unless the embedder replaces them, and only between
+frames: a guest's reads within a frame always see one version.
+
+- **Embedders:** `Game::set_asset(name, bytes)` / `remove_asset` (crate
+  `gasm-host`), `GasmHost.setAsset(name, bytes)` / `removeAsset` and
+  `GasmWorker.setAsset` (`@emdzej/gasm-host`). New names are listed by
+  `asset_count`/`asset_name` from then on.
+- **Launchers:** `gasm-run --watch-asset name=path` (and the Node runner's
+  flag) re-reads the file whenever its size or modification time changes,
+  checked before each frame, whether it was rewritten in place or replaced by
+  a rename (the safe way to write it). The file may appear after the start.
+- **Guests** poll `asset_version(name)`: `0` as launched, then a new, larger
+  number for each replacement (one counter for all assets, so a removed and
+  re-added asset gets a new one). A read spread over several frames should
+  check the version didn't change in between. Godot games:
+  `FileAccess.get_modified_time("res://<name>")` is the version.
+
+Nothing else changes assets: a native file asset that is modified some other
+way (without `--watch-asset`) has no new version, and what the guest reads is
+undefined.
 
 ### Worker mode (browser runner)
 

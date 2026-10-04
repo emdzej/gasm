@@ -22,6 +22,10 @@ options:
                            expose every file under <dir> (repeatable); names are relative paths
                            like ART/ART.CAR (or <prefix>/ART/ART.CAR), looked up case-insensitively;
                            symlinks and hidden files are skipped; --asset wins over folder entries
+  --watch-asset <name>=<path>
+                           like --asset, but re-read whenever the file changes (rewritten or replaced
+                           by a rename; it may also appear later): the guest sees the new data from the
+                           next frame, with a new gasm.asset_version (repeatable)
   --param <name>=<value>   launch parameter for the guest (repeatable)
   --allow-net              allow the guest to open network connections (gasm:net)
   --storage-dir <dir>      where the game's saves live (default: <data dir>/gasm/<game>;
@@ -72,6 +76,7 @@ struct Args {
     wasm: String,
     assets: HashMap<String, String>,
     asset_dirs: Vec<(Option<String>, String)>,
+    watch_assets: Vec<(String, String)>,
     params: HashMap<String, String>,
     allow_net: bool,
     storage_dir: Option<String>,
@@ -102,6 +107,7 @@ fn parse_args() -> Result<Args, String> {
     let mut args = Args {
         wasm: String::new(),
         assets: HashMap::new(),
+        watch_assets: Vec::new(),
         asset_dirs: Vec::new(),
         params: HashMap::new(),
         allow_net: false,
@@ -136,6 +142,11 @@ fn parse_args() -> Result<Args, String> {
                 let v = val("--asset")?;
                 let (k, p) = v.split_once('=').ok_or("--asset expects name=path")?;
                 args.assets.insert(k.into(), p.into());
+            }
+            "--watch-asset" => {
+                let v = val("--watch-asset")?;
+                let (k, p) = v.split_once('=').ok_or("--watch-asset expects name=path")?;
+                args.watch_assets.push((k.into(), p.into()));
             }
             "--asset-dir" => {
                 let v = val("--asset-dir")?;
@@ -223,17 +234,28 @@ fn main() -> ExitCode {
 }
 
 /// Open (not read) every asset: explicit files first, so they win over folder entries.
-fn open_assets(args: &Args) -> Result<assets::Assets, String> {
+/// Also returns the --watch-asset watches.
+fn open_assets(args: &Args) -> Result<(assets::Assets, Vec<assets::AssetWatch>), String> {
     let mut a = assets::Assets::new();
     for (name, path) in &args.assets {
         a.insert_file(name, std::path::Path::new(path))?;
+    }
+    let mut watches = Vec::new();
+    for (name, path) in &args.watch_assets {
+        let path = std::path::Path::new(path);
+        // the file's state before it's opened: a change in between is picked up later
+        watches.push(assets::AssetWatch::new(name, path));
+        // a watched file may not exist yet: the watch adds it when it appears
+        if path.exists() {
+            a.insert_file(name, path)?;
+        }
     }
     for (prefix, dir) in &args.asset_dirs {
         let n = a.add_dir(prefix.as_deref(), std::path::Path::new(dir))?;
         eprintln!("[gasm] assets: {n} files from {dir}{}", prefix.as_ref().map_or(String::new(), |p| format!(" as {p}/")));
     }
     a.finish();
-    Ok(a)
+    Ok((a, watches))
 }
 
 /// --keymap FILE, else <data dir>/gasm/keymap.txt if present, else the default.
@@ -291,16 +313,18 @@ fn run(args: Args) -> Result<i32, String> {
         return Ok(0);
     }
     // fail fast on bad paths, before opening a window
+    let (assets, watch_assets) = open_assets(&args)?;
     let session = Session {
         name: args.wasm.clone(),
         wasm,
-        assets: open_assets(&args)?,
+        assets,
         params: args.params.clone(),
         allow_net: args.allow_net,
         storage: open_storage(&args)?,
         load: LoadOptions { allow_precompiled: args.allow_precompiled, call_timeout: args.call_timeout, stack_switching: args.stack_switching },
         gl_lib: args.gl_lib.as_ref().map(std::path::PathBuf::from),
         gl_software: args.gl_software,
+        watch_assets,
     };
     match args.headless {
         Some(frames) => {

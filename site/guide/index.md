@@ -102,6 +102,16 @@ Names match case-insensitively (`Art/art.car` finds `ART/ART.CAR`). Hidden
 files and symlinks are skipped, and an explicit `--asset name=path` overrides a
 folder entry with the same name.
 
+Data that changes while the game runs (fetched by a script, rebuilt by a tool):
+`--watch-asset name=path` re-reads the file whenever it changes and gives the
+game a new [asset version](/docs/abi#assets-that-change). Write it by renaming
+a finished file over it, so the game never reads a half-written one:
+
+```sh
+$R game.wasm --watch-asset weather.json=build/weather.json &
+curl -s "$URL" > build/weather.tmp && mv build/weather.tmp build/weather.json
+```
+
 ## 4. Play in the browser
 
 ```sh

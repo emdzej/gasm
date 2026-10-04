@@ -313,6 +313,11 @@ export declare class GasmHost {
   /** A catch-up batch: one frame per step, only the last shown; blits 2D frames into a
    *  gfx canvas (presentVideo). Returns whether a new 2D frame was presented. */
   runFrames(steps: FrameStep[], show?: boolean): { video: boolean };
+  /** Add or replace an asset between frames: the guest sees it from its next call on, with a
+   *  new gasm.asset_version (returned). Throws if the asset provider can't change. */
+  setAsset(name: string, bytes: Uint8Array): number;
+  /** Remove an asset between frames; false if there was none. */
+  removeAsset(name: string): boolean;
   /** The player is quitting: calls the guest's optional gasm_exit (flush saves). The guest is not called again. */
   exit(): void;
   /** exit(), then close network connections (flushing them) and the storage. */
@@ -335,6 +340,8 @@ export interface GasmAssetProvider {
   readAt(name: string, offset: number, dst: Uint8Array): number;
   /** All names, sorted by UTF-8 bytes (asset_count / asset_name). */
   names?(): string[];
+  /** gasm.asset_version: 0 as given, larger after each replacement, -1 if missing (absent: never changes). */
+  version?(name: string): number;
 }
 /** UTF-8 byte order (= code point order) for sort(). */
 export declare function byCodePoint(a: string, b: string): number;
@@ -348,6 +355,11 @@ export declare class AssetTable implements GasmAssetProvider {
   size(name: string): number;
   readAt(name: string, offset: number, dst: Uint8Array): number;
   names(): string[];
+  version(name: string): number;
+  /** Add or replace an asset while the game runs; returns its new version. */
+  set(name: string, bytes: Uint8Array | AssetSource): number;
+  /** Remove an asset while the game runs; false if there was none. */
+  remove(name: string): boolean;
 }
 export declare function isAssetProvider(value: unknown): value is GasmAssetProvider;
 export declare function bytesSource(bytes: Uint8Array): AssetSource;

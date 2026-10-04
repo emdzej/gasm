@@ -26,11 +26,27 @@ export const bytesSource = (u8) => ({
 });
 
 export class AssetTable {
-  constructor(log = () => {}) { this.exact = new Map(); this.folded = new Map(); this.log = log; }
+  constructor(log = () => {}) { this.exact = new Map(); this.folded = new Map(); this.log = log; this.lastVersion = 0; }
   /** Add a source. Explicit entries replace; folder entries never replace an existing name. */
   add(name, source, { fromDir = false } = {}) {
     if (fromDir && this.exact.has(name)) return false;
-    this.exact.set(name, { source, fromDir });
+    this.exact.set(name, { source, fromDir, version: 0 });
+    return true;
+  }
+  /**
+   * Add or replace an asset while the game runs (between frames): `bytes` (Uint8Array)
+   * or a source. It gets a new version (gasm.asset_version), which is returned.
+   */
+  set(name, bytes) {
+    const source = bytes instanceof Uint8Array ? bytesSource(bytes) : bytes;
+    this.exact.set(name, { source, fromDir: false, version: ++this.lastVersion });
+    this.index();
+    return this.lastVersion;
+  }
+  /** Remove an asset while the game runs. False if there was none. */
+  remove(name) {
+    if (!this.exact.delete(name)) return false;
+    this.index();
     return true;
   }
   /** Merge another table's entries (as folder entries if `fromDir`). */
@@ -40,6 +56,13 @@ export class AssetTable {
   }
   /** Build the case-insensitive index; warns about names that differ only in case. */
   finish() {
+    this.index();
+    for (const names of this.folded.values()) {
+      if (names.length > 1) this.log(`[gasm] assets: ${names.join(', ')} differ only in case; case-insensitive lookups use "${names[0]}"`);
+    }
+    return this;
+  }
+  index() {
     this.folded.clear();
     this.sorted = null;
     for (const [name, e] of this.exact) {
@@ -47,11 +70,7 @@ export class AssetTable {
       const k = asciiLower(name);
       (this.folded.get(k) ?? this.folded.set(k, []).get(k)).push(name);
     }
-    for (const names of this.folded.values()) {
-      names.sort();
-      if (names.length > 1) this.log(`[gasm] assets: ${names.join(', ')} differ only in case; case-insensitive lookups use "${names[0]}"`);
-    }
-    return this;
+    for (const names of this.folded.values()) names.sort();
   }
   resolve(name) {
     const e = this.exact.get(name);
@@ -60,6 +79,8 @@ export class AssetTable {
     return k ? this.exact.get(k[0]) : undefined;
   }
   size(name) { const e = this.resolve(name); return e ? e.source.size() : -1; }
+  /** 0 for assets given at start, a new number per replacement (set), -1 if missing. */
+  version(name) { const e = this.resolve(name); return e ? e.version : -1; }
   readAt(name, offset, dst) { const e = this.resolve(name); return e ? e.source.readAt(offset, dst) : -1; }
   /** Names sorted by UTF-8 bytes (= code point order), like the native runner. */
   names() { return (this.sorted ??= [...this.exact.keys()].sort(byCodePoint)); }

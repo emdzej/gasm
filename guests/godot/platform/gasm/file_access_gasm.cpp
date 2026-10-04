@@ -157,6 +157,18 @@ Error FileAccessGasm::open_internal(const String &p_path, int p_mode_flags) {
 	return last_error = OK;
 }
 
+// Assets: their gasm.asset_version (0 as launched, larger each time the runner replaces
+// one), so FileAccess.get_modified_time() tells a game when to re-read. user://: 0.
+uint64_t FileAccessGasm::_get_modified_time(const String &p_file) {
+	static const bool has = gasm_has_str("gasm.asset_version") == 1;
+	if (!has || gasm_fs::is_user(p_file)) {
+		return 0;
+	}
+	CharString a = gasm_fs::asset_name(p_file).utf8();
+	int32_t v = gasm_asset_version(a.ptr(), a.length());
+	return v > 0 ? (uint64_t)v : 0;
+}
+
 int64_t FileAccessGasm::_get_size(const String &p_file) {
 	if (is_user(p_file)) {
 		CharString k = storage_key(p_file).utf8();

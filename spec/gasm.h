@@ -406,6 +406,11 @@ GASM_IMPORT("asset_count") uint32_t gasm_asset_count(void);
  * entries as named on disk). Its length (copied only if length <= cap; cap = 0
  * queries), or -1 if index is out of range. */
 GASM_IMPORT("asset_name") int32_t gasm_asset_name(uint32_t index, char *dst, uint32_t cap);
+/* Version of asset name, -1 if it does not exist: 0 for assets given at
+ * launch, a new, larger number each time the embedder replaces it while the
+ * game runs (between frames). Poll it to notice new data; a read spanning
+ * frames should check it did not change. */
+GASM_IMPORT("asset_version") int32_t gasm_asset_version(const char *name, uint32_t name_len);
 /* Launch parameter value length, or -1 if unset. Copied only if length <= cap
  * (cap = 0 queries the length). */
 GASM_IMPORT("param") int32_t gasm_param(const char *name, uint32_t name_len, char *dst, uint32_t cap);

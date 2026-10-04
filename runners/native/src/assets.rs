@@ -21,6 +21,12 @@
 //!   warning is logged at start-up and the first in sorted order wins.
 //! - Sizes are 64-bit (`asset_size64`, `asset_read_at64`); `asset_size`
 //!   reports assets of 2 GiB and more as -2.
+//! - **Replacing assets while the game runs:** the embedder calls
+//!   [`Assets::set`] / [`Assets::set_file`] / [`Assets::remove`] between frames
+//!   (`Game::set_asset`, or `--watch-asset`, which re-opens a file whenever it
+//!   changes: [`AssetWatch`]). Each replacement gives the asset a new version
+//!   (`gasm.asset_version`): 0 for assets given at start, then increasing
+//!   numbers from one counter, so a removed and re-added asset never repeats one.
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap, VecDeque};
@@ -42,6 +48,7 @@ enum Source {
 struct Entry {
     source: Source,
     from_dir: bool,
+    version: u32,
 }
 
 #[derive(Default)]
@@ -53,6 +60,8 @@ pub struct Assets {
     sorted: Vec<String>,
     /// open folder entries, most recently used last
     open: RefCell<VecDeque<(PathBuf, Arc<File>)>>,
+    /// the last version handed out by a replacement (assets given at start are 0)
+    last_version: u32,
 }
 
 impl From<HashMap<String, Vec<u8>>> for Assets {
@@ -97,9 +106,15 @@ fn read_file(file: &File, path: &Path, offset: u64, dst: &mut [u8]) -> usize {
 pub struct Asset<'a> {
     assets: &'a Assets,
     source: &'a Source,
+    version: u32,
 }
 
 impl Asset<'_> {
+    /// 0 if given at start, else a new number each time it was replaced.
+    pub fn version(&self) -> u32 {
+        self.version
+    }
+
     /// Size in bytes (for folder entries: as found at start-up).
     pub fn size(&self) -> u64 {
         match self.source {
@@ -144,7 +159,7 @@ impl Assets {
 
     /// Asset from memory (overrides any entry with the same name).
     pub fn insert_memory(&mut self, name: &str, bytes: Vec<u8>) {
-        self.exact.insert(name.to_owned(), Entry { source: Source::Memory(bytes), from_dir: false });
+        self.exact.insert(name.to_owned(), Entry { source: Source::Memory(bytes), from_dir: false, version: 0 });
     }
 
     /// Asset backed by a file, opened now and read on demand (overrides any
@@ -154,7 +169,7 @@ impl Assets {
         if !file.metadata().map_err(|e| format!("{}: {e}", path.display()))?.is_file() {
             return Err(format!("{}: not a regular file", path.display()));
         }
-        self.exact.insert(name.to_owned(), Entry { source: Source::File { file, path: path.to_owned() }, from_dir: false });
+        self.exact.insert(name.to_owned(), Entry { source: Source::File { file, path: path.to_owned() }, from_dir: false, version: 0 });
         Ok(())
     }
 
@@ -178,14 +193,58 @@ impl Assets {
             if self.exact.contains_key(&name) {
                 continue;
             }
-            self.exact.insert(name, Entry { source: Source::Lazy { path, len }, from_dir: true });
+            self.exact.insert(name, Entry { source: Source::Lazy { path, len }, from_dir: true, version: 0 });
             added += 1;
         }
         Ok(added)
     }
 
+    /// Add or replace an asset from memory while the game runs (between frames):
+    /// it gets a new version. Returns that version.
+    pub fn set(&mut self, name: &str, bytes: Vec<u8>) -> u32 {
+        self.replace(name, Source::Memory(bytes))
+    }
+
+    /// [`Assets::set`] with a file read on demand (opened now).
+    pub fn set_file(&mut self, name: &str, path: &Path) -> Result<u32, String> {
+        let file = File::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
+        if !file.metadata().map_err(|e| format!("{}: {e}", path.display()))?.is_file() {
+            return Err(format!("{}: not a regular file", path.display()));
+        }
+        Ok(self.replace(name, Source::File { file, path: path.to_owned() }))
+    }
+
+    /// Remove an asset while the game runs (between frames). False if there was none.
+    pub fn remove(&mut self, name: &str) -> bool {
+        let gone = self.exact.remove(name).is_some();
+        if gone {
+            self.index();
+        }
+        gone
+    }
+
+    fn replace(&mut self, name: &str, source: Source) -> u32 {
+        self.last_version += 1;
+        self.exact.insert(name.to_owned(), Entry { source, from_dir: false, version: self.last_version });
+        self.index();
+        self.last_version
+    }
+
     /// Build the case-insensitive index and the sorted name list; logs collisions.
     pub fn finish(&mut self) {
+        self.index();
+        for names in self.folded.values() {
+            if names.len() > 1 {
+                eprintln!(
+                    "[gasm] assets: {} differ only in case; case-insensitive lookups use {:?}",
+                    names.join(", "),
+                    names[0]
+                );
+            }
+        }
+    }
+
+    fn index(&mut self) {
         self.folded.clear();
         for (name, entry) in &self.exact {
             if entry.from_dir {
@@ -194,13 +253,6 @@ impl Assets {
         }
         for names in self.folded.values_mut() {
             names.sort();
-            if names.len() > 1 {
-                eprintln!(
-                    "[gasm] assets: {} differ only in case; case-insensitive lookups use {:?}",
-                    names.join(", "),
-                    names[0]
-                );
-            }
         }
         self.sorted = self.exact.keys().cloned().collect();
         self.sorted.sort();
@@ -212,7 +264,7 @@ impl Assets {
             Some(e) => e,
             None => self.exact.get(self.folded.get(&name.to_ascii_lowercase())?.first()?)?,
         };
-        Some(Asset { assets: self, source: &entry.source })
+        Some(Asset { assets: self, source: &entry.source, version: entry.version })
     }
 
     /// Current size in bytes, or `None` if there is no such asset.
@@ -224,6 +276,11 @@ impl Assets {
     /// `None` if there is no such asset.
     pub fn read_at(&self, name: &str, offset: u64, dst: &mut [u8]) -> Option<usize> {
         self.get(name).map(|a| a.read_at(offset, dst))
+    }
+
+    /// The asset's version (see [`Asset::version`]), or `None` if there is no such asset.
+    pub fn version(&self, name: &str) -> Option<u32> {
+        self.get(name).map(|a| a.version())
     }
 
     /// All asset names, sorted (by UTF-8 bytes).
@@ -258,6 +315,43 @@ impl Assets {
         }
         open.push_back((path.to_owned(), file.clone()));
         Some(file)
+    }
+}
+
+/// `--watch-asset name=path`: the file is re-opened as asset `name` whenever its
+/// size or modification time changes (in place or replaced by a rename), checked
+/// before each frame. A file that disappears keeps the last version until it's back.
+pub struct AssetWatch {
+    pub name: String,
+    pub path: PathBuf,
+    stamp: Option<(std::time::SystemTime, u64)>,
+}
+
+impl AssetWatch {
+    /// Watch `path`; the asset itself is added by [`AssetWatch::poll`] (or already given at start).
+    pub fn new(name: &str, path: &Path) -> AssetWatch {
+        AssetWatch { name: name.to_owned(), path: path.to_owned(), stamp: Self::stamp(path) }
+    }
+
+    fn stamp(path: &Path) -> Option<(std::time::SystemTime, u64)> {
+        let m = std::fs::metadata(path).ok()?;
+        Some((m.modified().ok()?, m.len()))
+    }
+
+    /// Re-open the file if it changed. Returns the new version, if any.
+    pub fn poll(&mut self, assets: &mut Assets) -> Option<u32> {
+        let now = Self::stamp(&self.path)?;
+        if self.stamp == Some(now) && assets.get(&self.name).is_some() {
+            return None;
+        }
+        self.stamp = Some(now);
+        match assets.set_file(&self.name, &self.path) {
+            Ok(v) => Some(v),
+            Err(e) => {
+                eprintln!("[gasm] assets: --watch-asset {e}");
+                None
+            }
+        }
     }
 }
 
@@ -313,6 +407,42 @@ mod tests {
         #[cfg(unix)]
         std::os::unix::fs::symlink("/etc/hosts", d.join("escape")).unwrap();
         d
+    }
+
+    #[test]
+    fn replace_and_watch() {
+        let read = |a: &Assets, n: &str| {
+            let mut buf = vec![0u8; 64];
+            a.read_at(n, 0, &mut buf).map(|k| String::from_utf8_lossy(&buf[..k]).into_owned())
+        };
+        let mut a = Assets::new();
+        a.insert_memory("weather.json", b"{}".to_vec());
+        a.finish();
+        assert_eq!(a.version("weather.json"), Some(0));
+        assert_eq!(a.set("weather.json", b"{\"t\":1}".to_vec()), 1);
+        assert_eq!((a.version("weather.json"), read(&a, "weather.json").as_deref()), (Some(1), Some("{\"t\":1}")));
+        assert_eq!(a.set("tiles/0.png", b"png".to_vec()), 2); // a new name is listed
+        assert_eq!(a.names(), ["tiles/0.png", "weather.json"]);
+        assert!(a.remove("tiles/0.png") && !a.remove("tiles/0.png"));
+        assert_eq!((a.version("tiles/0.png"), a.names().len()), (None, 1));
+        assert_eq!(a.set("tiles/0.png", b"png".to_vec()), 3); // never a version seen before
+
+        let d = std::env::temp_dir().join(format!("gasm-assets-watch-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        let f = d.join("w.json");
+        std::fs::write(&f, b"one").unwrap();
+        let mut w = AssetWatch::new("w.json", &f);
+        assert_eq!(w.poll(&mut a), Some(4)); // not an asset yet: added
+        assert_eq!(w.poll(&mut a), None); // unchanged
+        std::fs::write(d.join("tmp"), b"second").unwrap();
+        std::fs::rename(d.join("tmp"), &f).unwrap(); // atomic replace: a new size
+        assert_eq!(w.poll(&mut a), Some(5));
+        assert_eq!(read(&a, "w.json").as_deref(), Some("second"));
+        std::fs::remove_file(&f).unwrap();
+        assert_eq!(w.poll(&mut a), None); // gone: the last version stays
+        assert_eq!(read(&a, "w.json").as_deref(), Some("second"));
+        let _ = std::fs::remove_dir_all(&d);
     }
 
     #[test]

@@ -62,6 +62,10 @@ export declare class GasmWorker {
     /** gasm:gfx canvas display size in device pixels. */
     size?: [width: number, height: number] | null;
   }): Promise<FramesResult>;
+  /** GasmHost.setAsset in the worker, before the next batch of frames (the bytes' buffer is transferred). */
+  setAsset(name: string, bytes: Uint8Array): void;
+  /** GasmHost.removeAsset in the worker, before the next batch of frames. */
+  removeAsset(name: string): void;
   /** gasm_exit (flush saves), close sockets and storage, terminate. Safe to call twice. */
   exit(timeoutMs?: number): Promise<void>;
 }

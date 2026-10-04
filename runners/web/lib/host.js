@@ -269,12 +269,33 @@ export class GasmHost {
       asset_size: (ptr, len) => { const n = this.assets.size(this.str(ptr, len)); return n > 0x7fffffff ? -2 : n; },
       asset_size64: (ptr, len) => BigInt(this.assets.size(this.str(ptr, len))),
       asset_count: () => this.assetNames().length,
+      // providers without versions never change: 0 (or -1 if missing)
+      asset_version: (ptr, len) => {
+        const name = this.str(ptr, len);
+        if (typeof this.assets.version === 'function') return this.assets.version(name);
+        return this.assets.size(name) >= 0 ? 0 : -1;
+      },
       asset_name: (index, dst, cap) => {
         const n = this.assetNames()[index >>> 0];
         return n === undefined ? -1 : this.copyIfFits(dst, cap, ENC.encode(n));
       },
       asset_read: (ptr, len, dst, cap) => readAsset(ptr, len, 0, dst, cap),
     };
+  }
+
+  /**
+   * Add or replace an asset while the game runs: the guest sees it from its next
+   * call on, with a new gasm.asset_version (returned). Call between frames. Needs
+   * an AssetTable (the default for a { name: bytes } record and every built-in provider).
+   */
+  setAsset(name, bytes) {
+    if (typeof this.assets.set !== 'function') throw new Error('setAsset: this asset provider is read-only');
+    return this.assets.set(name, bytes);
+  }
+  /** Remove an asset while the game runs. False if there was none. */
+  removeAsset(name) {
+    if (typeof this.assets.remove !== 'function') throw new Error('removeAsset: this asset provider is read-only');
+    return this.assets.remove(name);
   }
 
   /** Asset names sorted by UTF-8 bytes (= code point order), like the native runner. */

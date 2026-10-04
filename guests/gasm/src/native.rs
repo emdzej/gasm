@@ -293,6 +293,11 @@ pub mod abi {
         let n = unsafe { text(name, len) };
         with(|s| s.assets.get(&n).map_or(-1, |a| a.len() as i64))
     }
+    /// The stub's assets never change: 0 (or -1 if missing).
+    pub unsafe fn asset_version(name: *const u8, len: u32) -> i32 {
+        let n = unsafe { text(name, len) };
+        with(|s| if s.assets.contains_key(&n) { 0 } else { -1 })
+    }
     pub unsafe fn asset_count() -> u32 {
         with(|s| s.assets.len() as u32)
     }

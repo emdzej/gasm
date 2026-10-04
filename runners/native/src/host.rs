@@ -751,6 +751,15 @@ fn add_gasm_imports(linker: &mut Linker<Host>) -> wasmtime::Result<()> {
             Ok(caller.data().assets.size(&name).map_or(-1, |n| n as i64))
         },
     )?;
+
+    linker.func_wrap(
+        "gasm",
+        "asset_version",
+        |caller: Caller<'_, Host>, ptr: u32, len: u32| -> wasmtime::Result<i32> {
+            let name = guest_str(&caller, ptr, len)?;
+            Ok(caller.data().assets.version(&name).map_or(-1, |v| v.min(i32::MAX as u32) as i32))
+        },
+    )?;
     Ok(())
 }
 
@@ -1058,6 +1067,8 @@ pub struct Game {
     ended: bool,
     /// the guest imports gasm:gl (the native window has no GL backend yet)
     gl: bool,
+    /// files re-read as assets when they change (`--watch-asset`), checked before each frame
+    watches: Vec<crate::assets::AssetWatch>,
 }
 
 impl Game {
@@ -1152,7 +1163,29 @@ impl Game {
         let frame = instance.get_typed_func::<(), ()>(&mut store, "gasm_frame")?;
         let exit = instance.get_typed_func::<(), ()>(&mut store, "gasm_exit").ok();
         let run = if switching { Some(instance.get_typed_func::<(), i32>(&mut store, "gasm_run")?) } else { None };
-        Ok(Game { store: Some(store), frame, exit, deadline, run, running: None, exchange, ended: false, gl })
+        Ok(Game { store: Some(store), frame, exit, deadline, run, running: None, exchange, ended: false, gl, watches: Vec::new() })
+    }
+
+    /// Add or replace an asset between frames: the guest sees it from the next
+    /// frame on, with a new `gasm.asset_version`. Returns that version.
+    pub fn set_asset(&mut self, name: &str, bytes: Vec<u8>) -> u32 {
+        self.with_host(|h| h.assets.set(name, bytes))
+    }
+
+    /// Remove an asset between frames. False if there was none.
+    pub fn remove_asset(&mut self, name: &str) -> bool {
+        self.with_host(|h| h.assets.remove(name))
+    }
+
+    /// Re-read `path` as asset `name` whenever the file changes (in place or by a
+    /// rename), checked before each frame.
+    pub fn watch_asset(&mut self, name: &str, path: &std::path::Path) {
+        self.add_watch(crate::assets::AssetWatch::new(name, path));
+    }
+
+    /// [`Game::watch_asset`] with a watch made earlier (when the asset was first opened).
+    pub fn add_watch(&mut self, watch: crate::assets::AssetWatch) {
+        self.watches.push(watch);
     }
 
     /// Whether the guest imports gasm:gl.
@@ -1169,6 +1202,11 @@ impl Game {
     pub fn frame(&mut self) -> Result<(), Stop> {
         if self.ended {
             return Err(Stop::Trap("the guest is not running".into()));
+        }
+        if !self.watches.is_empty() {
+            let mut watches = std::mem::take(&mut self.watches);
+            self.with_host(|h| watches.iter_mut().for_each(|w| _ = w.poll(&mut h.assets)));
+            self.watches = watches;
         }
         let Some(run) = self.run.clone() else {
             let store = self.store.as_mut().expect("store");

@@ -34,7 +34,7 @@ class FileAccessGasm : public FileAccess {
 	mutable Error last_error = OK;
 
 	Error open_internal(const String &p_path, int p_mode_flags) override;
-	uint64_t _get_modified_time(const String &p_file) override { return 0; }
+	uint64_t _get_modified_time(const String &p_file) override;
 	uint64_t _get_access_time(const String &p_file) override { return 0; }
 	int64_t _get_size(const String &p_file) override;
 	BitField<FileAccess::UnixPermissionFlags> _get_unix_permissions(const String &p_file) override { return 0; }

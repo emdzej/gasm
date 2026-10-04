@@ -92,6 +92,12 @@ Input actions (`ui_left`, your own) work as usual. Godot reads the keyboard
 itself, so gasm's built-in keyboard-to-pad layout is off for Godot games. No
 touch yet.
 
+Other assets than the pack are files in `res://` too:
+`--asset levels/extra.json=...` is `res://levels/extra.json`. An asset the
+launcher or the page replaces while the game runs (`--watch-asset`,
+`setAsset`, see [assets that change](/docs/abi#assets-that-change)) gets a new
+`FileAccess.get_modified_time("res://...")`: poll it and re-read.
+
 ## 5. Saves
 
 `user://` is [`gasm:storage`](/docs/abi#gasm-storage-optional-persistent-key-value-store):

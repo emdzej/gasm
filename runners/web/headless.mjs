@@ -5,33 +5,40 @@
 //   node runners/web/headless.mjs <game.wasm> --headless N [--rom p] [--asset n=p]
 //        [--asset-dir [prefix=]dir] [--param k=v] [--allow-net] [--storage-dir dir]
 //        [--storage-id id] [--input script] [--screenshot out.png] [--realtime] [--no-hash]
-//        [--no-stack-switching]
+//        [--no-stack-switching] [--watch-asset n=p]
 //
 // The options mean what they mean for gasm-run. --screenshot writes the last
 // video_present frame: there is no GPU here, so gasm:gfx games can't be captured
 // (use gasm-run --screenshot). A guest calling proc_exit ends the run early, cleanly.
 
-import { closeSync, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { closeSync, fstatSync, lstatSync, statSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { deflateSync } from 'node:zlib';
 import { AssetTable, GasmHost, MemoryStorage, ProcExit, bytesSource, staticTitle, validKey } from './gasm-host.js';
 import { InputScript } from './input-script.mjs';
 
-const USAGE = 'usage: headless.mjs <game.wasm> --headless N [--rom path] [--asset name=path] [--asset-dir [prefix=]dir] ' +
+const USAGE = 'usage: headless.mjs <game.wasm> --headless N [--rom path] [--asset name=path] [--watch-asset name=path] [--asset-dir [prefix=]dir] ' +
   '[--param k=v] [--allow-net] [--storage-dir dir] [--storage-id id] [--input script] [--screenshot out.png] [--realtime] [--no-hash]';
+const fileStamp = (p) => { try { const s = statSync(p); return `${s.mtimeMs}:${s.size}`; } catch { return null; } };
 const fail = (msg) => { console.error(`error: ${msg}\n\n${USAGE}`); process.exit(2); };
 const argv = process.argv.slice(2);
 let wasm, frames = 600, screenshot, noHash = false, allowNet = false, realtime = false, storageDir = null, storageId = null;
 let stackSwitching = true;
 // --input: see input-script.mjs (same syntax as gasm-run --input)
 let script = new InputScript();
-const assets = {}, params = {}, assetDirs = [];
+const assets = {}, params = {}, assetDirs = [], watches = [];
 const pair = (v, what) => { const k = v.indexOf('='); if (k <= 0) fail(`${what} expects name=value`); return [v.slice(0, k), v.slice(k + 1)]; };
 for (let i = 0; i < argv.length; i++) {
   const a = argv[i];
   const val = () => { if (i + 1 >= argv.length) fail(`${a} needs a value`); return argv[++i]; };
   if (a === '--rom') assets.rom = new Uint8Array(readFileSync(val()));
   else if (a === '--asset') { const [k, p] = pair(val(), '--asset'); assets[k] = new Uint8Array(readFileSync(p)); }
+  else if (a === '--watch-asset') {
+    // like gasm-run: re-read whenever the file changes (or appears), checked before each frame
+    const [k, p] = pair(val(), '--watch-asset');
+    watches.push({ name: k, path: p, stamp: fileStamp(p) });
+    if (watches.at(-1).stamp) assets[k] = new Uint8Array(readFileSync(p));
+  }
   else if (a === '--headless') { frames = Number(val()); if (!Number.isInteger(frames) || frames < 0) fail('--headless expects a number'); }
   else if (a === '--screenshot') screenshot = val();
   else if (a === '--input') { try { script = new InputScript(val()); } catch (e) { fail(e.message); } }
@@ -145,6 +152,13 @@ let ran = 0, exitCode = null;
 const scriptState = {};
 try {
   for (; ran < frames; ran++) {
+    for (const w of watches) {
+      const now = fileStamp(w.path);
+      if (now && (now !== w.stamp || table.version(w.name) < 0)) {
+        w.stamp = now;
+        try { host.setAsset(w.name, new Uint8Array(readFileSync(w.path))); } catch (e) { console.error(`[gasm-node] --watch-asset ${w.path}: ${e.message}`); }
+      }
+    }
     host.text = script.textAt(ran);
     host.input = script.raw(ran, scriptState, [host.gfx.width(), host.gfx.height()], host.inputMode);
     if (host.switching) await host.frameAsync(); else host.frame();
