@@ -19,11 +19,13 @@ Done recently: stack switching (`gasm_run`,
 [design/stack-switching.md](https://github.com/emdzej/gasm/blob/main/design/stack-switching.md)),
 cooperative threads in C, POSIX and SDL 3
 ([design/threads.md](https://github.com/emdzej/gasm/blob/main/design/threads.md))
-and `gasm:gl` on every runner: WebGL 2 in browsers, ANGLE natively, and from
+`gasm:gl` on every runner: WebGL 2 in browsers, ANGLE natively, and from
 Rust through glow
-([design/gasm-gl.md](https://github.com/emdzej/gasm/blob/main/design/gasm-gl.md)).
+([design/gasm-gl.md](https://github.com/emdzej/gasm/blob/main/design/gasm-gl.md)),
+threads in Rust, and Godot 4.7
+([guests/godot](https://github.com/emdzej/gasm/blob/main/guests/godot/README.md)).
 
-1. **Godot** on `gasm:gl`.
+1. **Godot, the rest** (below): threads, Jolt, TLS, networking.
 
 ## Runtime and ABI
 
@@ -47,7 +49,6 @@ Rust through glow
 | `gasm:gl` in Worker mode | WebGL 2 on a transferred `OffscreenCanvas`; `gasm:gl` games run on the main thread for now. | not started |
 | glow upstream | Rust GL code runs on a fork of glow (`sdk/glow`: its native backend on wasm32), used through `[patch.crates-io]`. Upstream support (a loader-based backend on `wasm32-unknown-unknown`) would make the patch unnecessary. | idea |
 | A display scale | Guests only see drawable pixels, so UI code guesses a scale (the egui demo uses the drawable height). A `gasm.display_scale()` import would give the real one. | idea |
-| Godot | A `platform/gasm` port on `gasm:gl`. | next |
 | `gasm:gfx` render targets | Render-to-texture. | not started |
 | `gasm:gfx` cube maps, render bundles | Skyboxes and environment maps; cheaper repeated draws. | not started |
 | Batched gfx commands | One call per frame for draw-heavy guests instead of one per command. | not started |
@@ -101,10 +102,19 @@ What works is in the [ScummVM README](https://github.com/emdzej/gasm/blob/main/g
 
 ### Godot
 
-A `platform/gasm` port on `gasm:gl`: headless first, then the Compatibility
-renderer. Phase 5 of the
-[`gasm:gl` plan](https://github.com/emdzej/gasm/blob/main/design/gasm-gl.md#plan),
-its own project.
+Godot 4.7 runs (Compatibility renderer, GDScript, 2D and 3D physics, audio,
+input, saves: [guests/godot](https://github.com/emdzej/gasm/blob/main/guests/godot/README.md)).
+Left over:
+
+| Item | What it gives | Status |
+|---|---|---|
+| Threads | Godot is built with `threads=no`: its worker pool, threaded loading and the audio thread run on the main thread. Godot's threads on gasm's cooperative scheduler (they would need Asyncify, which Godot's size makes slow), or real wasm threads (part B of design/threads.md). | not started |
+| Jolt physics | Jolt doesn't recognize WASI targets (its platform and SIMD detection); a patch like its Emscripten support. Godot Physics 3D is used meanwhile. | not started |
+| TLS, `Crypto` | mbedtls needs a time source (`mbedtls_ms_time`, `timing.c`) for WASI. | not started |
+| Networking | `HTTPRequest`, WebSockets, ENet need sockets; a `gasm:net` backend for Godot's WebSocket peer would cover multiplayer. | idea |
+| Complex text | The advanced text server (ICU, HarfBuzz: right-to-left, ligatures) instead of the fallback one; larger. | not started |
+| A smaller engine | 32 MB (8 MB gzipped): a build profile without unused modules (e.g. 3D for 2D games) per game. | idea |
+| Touch | Godot's touch events from gasm's pointer on touch screens. | not started |
 
 ## Testing and tooling
 

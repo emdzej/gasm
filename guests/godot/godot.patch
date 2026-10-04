@@ -1,0 +1,191 @@
+diff --color -ruN a/drivers/gles3/rasterizer_canvas_gles3.cpp b/drivers/gles3/rasterizer_canvas_gles3.cpp
+--- a/drivers/gles3/rasterizer_canvas_gles3.cpp	2026-10-04 13:50:14
++++ b/drivers/gles3/rasterizer_canvas_gles3.cpp	2026-10-04 13:50:14
+@@ -121,7 +121,7 @@
+ 		if (syncStatus == GL_UNSIGNALED) {
+ 			// If older than 2 frames, wait for sync OpenGL can have up to 3 frames in flight, any more and we need to sync anyway.
+ 			if (state.canvas_instance_data_buffers[state.current_data_buffer_index].last_frame_used < RSG::rasterizer->get_frame_number() - 2) {
+-#ifndef WEB_ENABLED
++#if !defined(WEB_ENABLED) && !defined(GASM_ENABLED)
+ 				// On web, we do nothing as the glSubBufferData will force a sync anyway and WebGL does not like waiting.
+ 				glClientWaitSync(state.canvas_instance_data_buffers[state.current_data_buffer_index].fence, 0, 100000000); // wait for up to 100ms
+ #endif
+@@ -293,7 +293,7 @@
+ 	if (light_count > 0) {
+ 		glBindBufferBase(GL_UNIFORM_BUFFER, LIGHT_UNIFORM_LOCATION, state.canvas_instance_data_buffers[state.current_data_buffer_index].light_ubo);
+ 
+-#ifdef WEB_ENABLED
++#if defined(WEB_ENABLED) || defined(GASM_ENABLED)
+ 		glBufferSubData(GL_UNIFORM_BUFFER, 0, sizeof(LightUniform) * light_count, state.light_uniforms);
+ #else
+ 		// On Desktop and mobile we map the memory without synchronizing for maximum speed.
+@@ -668,7 +668,7 @@
+ 
+ 	// Copy over all data needed for rendering.
+ 	glBindBuffer(GL_ARRAY_BUFFER, state.canvas_instance_data_buffers[state.current_data_buffer_index].instance_buffers[state.current_instance_buffer_index]);
+-#ifdef WEB_ENABLED
++#if defined(WEB_ENABLED) || defined(GASM_ENABLED)
+ 	glBufferSubData(GL_ARRAY_BUFFER, state.last_item_index * sizeof(InstanceData), sizeof(InstanceData) * index, state.instance_data_array);
+ #else
+ 	// On Desktop and mobile we map the memory without synchronizing for maximum speed.
+@@ -1551,7 +1551,7 @@
+ 		// Copy over all data needed for rendering right away
+ 		// then go back to recording item commands.
+ 		glBindBuffer(GL_ARRAY_BUFFER, state.canvas_instance_data_buffers[state.current_data_buffer_index].instance_buffers[state.current_instance_buffer_index]);
+-#ifdef WEB_ENABLED
++#if defined(WEB_ENABLED) || defined(GASM_ENABLED)
+ 		glBufferSubData(GL_ARRAY_BUFFER, state.last_item_index * sizeof(InstanceData), sizeof(InstanceData) * r_index, state.instance_data_array);
+ #else
+ 		// On Desktop and mobile we map the memory without synchronizing for maximum speed.
+diff --color -ruN a/drivers/gles3/shader_gles3.cpp b/drivers/gles3/shader_gles3.cpp
+--- a/drivers/gles3/shader_gles3.cpp	2026-10-04 13:50:14
++++ b/drivers/gles3/shader_gles3.cpp	2026-10-04 13:50:14
+@@ -37,7 +37,7 @@
+ #include "drivers/gles3/rasterizer_util_gles3.h"
+ #include "drivers/gles3/storage/config.h"
+ 
+-#ifndef WEB_ENABLED
++#if !defined(WEB_ENABLED) && !defined(GASM_ENABLED)
+ #include "core/io/file_access.h"
+ #endif
+ 
+@@ -539,13 +539,13 @@
+ 	return hash_build.as_string().sha1_text();
+ }
+ 
+-#ifndef WEB_ENABLED // not supported in webgl
++#if !defined(WEB_ENABLED) && !defined(GASM_ENABLED) // not supported in webgl
+ static const char *shader_file_header = "GLSC";
+ static const uint32_t cache_file_version = 3;
+ #endif
+ 
+ bool ShaderGLES3::_load_from_cache(Version *p_version) {
+-#ifdef WEB_ENABLED // not supported in webgl
++#if defined(WEB_ENABLED) || defined(GASM_ENABLED) // not supported in webgl
+ 	return false;
+ #else
+ #if !defined(ANDROID_ENABLED) && !defined(IOS_ENABLED)
+@@ -631,7 +631,7 @@
+ }
+ 
+ void ShaderGLES3::_save_to_cache(Version *p_version) {
+-#ifdef WEB_ENABLED // not supported in webgl
++#if defined(WEB_ENABLED) || defined(GASM_ENABLED) // not supported in webgl
+ 	return;
+ #else
+ 	ERR_FAIL_COND(!shader_cache_dir_valid);
+diff --color -ruN a/drivers/gles3/storage/config.cpp b/drivers/gles3/storage/config.cpp
+--- a/drivers/gles3/storage/config.cpp	2026-10-04 13:50:14
++++ b/drivers/gles3/storage/config.cpp	2026-10-04 13:50:14
+@@ -41,7 +41,7 @@
+ #include <platform_egl.h>
+ #endif
+ 
+-#ifdef WEB_ENABLED
++#if defined(WEB_ENABLED) || defined(GASM_ENABLED)
+ #include <emscripten/html5_webgl.h>
+ #endif
+ 
+@@ -54,7 +54,7 @@
+ Config::Config() {
+ 	singleton = this;
+ 
+-#ifdef WEB_ENABLED
++#if defined(WEB_ENABLED) || defined(GASM_ENABLED)
+ 	// Starting with Emscripten 3.1.51, glGetStringi(GL_EXTENSIONS, i) will only ever return
+ 	// a fixed list of extensions, regardless of what additional extensions are enabled. This
+ 	// isn't very useful for us in determining which extensions we can rely on here. So, instead
+@@ -137,13 +137,13 @@
+ 	}
+ 
+ 	glGetIntegerv(GL_MAX_SAMPLES, &msaa_max_samples);
+-#ifdef WEB_ENABLED
++#if defined(WEB_ENABLED) || defined(GASM_ENABLED)
+ 	msaa_supported = (msaa_max_samples > 0);
+ #else
+ 	msaa_supported = true;
+ #endif
+ #ifndef IOS_ENABLED
+-#ifdef WEB_ENABLED
++#if defined(WEB_ENABLED) || defined(GASM_ENABLED)
+ 	msaa_multiview_supported = extensions.has("OCULUS_multiview");
+ 	rt_msaa_multiview_supported = msaa_multiview_supported;
+ #else
+@@ -250,7 +250,7 @@
+ 	if (OS::get_singleton()->get_current_rendering_driver_name() == "opengl3_angle") {
+ 		polyfill_half2float = false;
+ 	}
+-#ifdef WEB_ENABLED
++#if defined(WEB_ENABLED) || defined(GASM_ENABLED)
+ 	polyfill_half2float = false;
+ #endif
+ }
+diff --color -ruN a/drivers/gles3/storage/render_scene_buffers_gles3.cpp b/drivers/gles3/storage/render_scene_buffers_gles3.cpp
+--- a/drivers/gles3/storage/render_scene_buffers_gles3.cpp	2026-10-04 13:50:14
++++ b/drivers/gles3/storage/render_scene_buffers_gles3.cpp	2026-10-04 13:50:14
+@@ -55,7 +55,7 @@
+ void RenderSceneBuffersGLES3::_rt_attach_textures(GLuint p_color, GLuint p_depth, GLsizei p_samples, uint32_t p_view_count, bool p_depth_has_stencil) {
+ 	if (p_view_count > 1) {
+ 		if (p_samples > 1) {
+-#if defined(ANDROID_ENABLED) || defined(WEB_ENABLED)
++#if defined(ANDROID_ENABLED) || defined(WEB_ENABLED) || defined(GASM_ENABLED)
+ 			glFramebufferTextureMultisampleMultiviewOVR(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, p_color, 0, p_samples, 0, p_view_count);
+ 			glFramebufferTextureMultisampleMultiviewOVR(GL_FRAMEBUFFER, p_depth_has_stencil ? GL_DEPTH_STENCIL_ATTACHMENT : GL_DEPTH_ATTACHMENT, p_depth, 0, p_samples, 0, p_view_count);
+ #else
+@@ -87,7 +87,7 @@
+ GLuint RenderSceneBuffersGLES3::_rt_get_cached_fbo(GLuint p_color, GLuint p_depth, GLsizei p_samples, uint32_t p_view_count) {
+ 	FBDEF new_fbo;
+ 
+-#if defined(ANDROID_ENABLED) || defined(WEB_ENABLED)
++#if defined(ANDROID_ENABLED) || defined(WEB_ENABLED) || defined(GASM_ENABLED)
+ 	// There shouldn't be more then 3 entries in this...
+ 	for (const FBDEF &cached_fbo : msaa3d.cached_fbos) {
+ 		if (cached_fbo.color == p_color && cached_fbo.depth == p_depth) {
+@@ -317,7 +317,7 @@
+ 
+ 			glBindRenderbuffer(GL_RENDERBUFFER, 0);
+ 			glBindFramebuffer(GL_FRAMEBUFFER, GLES3::TextureStorage::system_fbo);
+-#if !defined(IOS_ENABLED) && !defined(WEB_ENABLED)
++#if !defined(IOS_ENABLED) && !defined(WEB_ENABLED) && !defined(GASM_ENABLED)
+ 		} else if (use_multiview && !config->rt_msaa_multiview_supported) {
+ 			// Render to texture extensions not supported? fall back to MSAA textures through GL_EXT_multiview_texture_multisample.
+ 			msaa3d.needs_resolve = true;
+@@ -364,7 +364,7 @@
+ 			glBindTexture(GL_TEXTURE_2D_MULTISAMPLE_ARRAY, 0);
+ 			glBindFramebuffer(GL_FRAMEBUFFER, GLES3::TextureStorage::system_fbo);
+ #endif
+-#if defined(ANDROID_ENABLED) || defined(WEB_ENABLED) // Only supported on OpenGLES!
++#if defined(ANDROID_ENABLED) || defined(WEB_ENABLED) || defined(GASM_ENABLED) // Only supported on OpenGLES!
+ 		} else if (!use_internal_buffer) {
+ 			// We are going to render directly into our render target textures,
+ 			// these can change from frame to frame as we cycle through swapchains,
+diff --color -ruN a/drivers/gles3/storage/texture_storage.cpp b/drivers/gles3/storage/texture_storage.cpp
+--- a/drivers/gles3/storage/texture_storage.cpp	2026-10-04 13:50:14
++++ b/drivers/gles3/storage/texture_storage.cpp	2026-10-04 13:50:14
+@@ -894,7 +894,7 @@
+ 			}
+ 		} break;
+ 		case Image::FORMAT_ETC2_RA_AS_RG: {
+-#ifndef WEB_ENABLED
++#if !defined(WEB_ENABLED) && !defined(GASM_ENABLED)
+ 			if (config->etc2_supported) {
+ 				r_gl_internal_format = _EXT_COMPRESSED_RGBA8_ETC2_EAC;
+ 				r_gl_format = GL_RGBA;
+@@ -908,7 +908,7 @@
+ 			decompress_ra_to_rg = true;
+ 		} break;
+ 		case Image::FORMAT_DXT5_RA_AS_RG: {
+-#ifndef WEB_ENABLED
++#if !defined(WEB_ENABLED) && !defined(GASM_ENABLED)
+ 			if (config->s3tc_supported) {
+ 				r_gl_internal_format = _EXT_COMPRESSED_RGBA_S3TC_DXT5_EXT;
+ 				r_gl_format = GL_RGBA;
+@@ -2173,7 +2173,7 @@
+ }
+ 
+ void TextureStorage::_texture_set_swizzle(GLES3::Texture *p_texture, Image::Format p_real_format) {
+-#ifndef WEB_ENABLED
++#if !defined(WEB_ENABLED) && !defined(GASM_ENABLED)
+ 	switch (p_texture->format) {
+ 		case Image::FORMAT_L8: {
+ 			if (RasterizerUtilGLES3::is_gles_over_gl()) {

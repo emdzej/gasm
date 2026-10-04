@@ -72,7 +72,9 @@ with `gasm:gl` it isn't needed.
 - Browser games run on the main thread (no Worker mode yet).
 - Queries and fences report results from the next frame on, everywhere.
 
-Example: [gltest](https://github.com/emdzej/gasm/blob/main/guests/gltest/main.c).
+Examples: [gltest](https://github.com/emdzej/gasm/blob/main/guests/gltest/main.c),
+and Godot 4.7, whose Compatibility renderer runs on it
+([guests/godot](https://github.com/emdzej/gasm/blob/main/guests/godot/README.md)).
 Details: [Writing games, OpenGL ES 3](/dev/games#opengl-es-3) and the
 [ABI](/docs/abi#gasm-gl-optional-opengl-es-3-0).
 

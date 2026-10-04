@@ -61,7 +61,7 @@ GUESTS   := $(BUILD)/test-pattern.wasm $(BUILD)/gltest.wasm $(BUILD)/glowtest.wa
 # made by the same recipes as the Asyncify builds
 RUN_BUILDS := $(BUILD)/loopdemo-run.wasm $(BUILD)/loopdemo-c-run.wasm $(BUILD)/sdl3-classic-run.wasm $(BUILD)/scummvm-run.wasm
 
-.PHONY: all guests native test web relay roms parity clean rust-toolchain doom scummvm sdl3 FORCE
+.PHONY: all guests native test web relay roms parity clean rust-toolchain doom scummvm sdl3 godot FORCE
 all: guests native
 
 guests: $(GUESTS)
@@ -148,6 +148,45 @@ SCUMMVM_ENV  := CXX="$(WASI_SDK)/bin/clang++ --target=wasm32-wasip1 --sysroot=$(
   CXXFLAGS="-I$(CURDIR)/spec -fno-exceptions -DGASM_LOOP_STACK_SIZE=4194304" LDFLAGS="-mexec-model=reactor -Wl,-z,stack-size=8388608 -Wl,--wrap=exit"
 
 scummvm: $(BUILD)/scummvm.wasm
+
+# --- Godot (guests/godot): the engine with the gasm platform, and its example projects ----
+GODOT_SRC := tools/godot-src
+GODOT_PLATFORM := $(shell find guests/godot/platform -type f 2>/dev/null)
+GODOT_EXAMPLES := $(notdir $(patsubst %/,%,$(dir $(wildcard guests/godot/examples/*/project.godot))))
+GODOT_PCKS := $(addprefix $(BUILD)/godot/,$(addsuffix .pck,$(GODOT_EXAMPLES)))
+GODOT_EDITOR := $(if $(filter Darwin,$(shell uname -s)),tools/godot-editor/Godot.app/Contents/MacOS/Godot,$(firstword $(wildcard tools/godot-editor/Godot_v*)))
+GODOT_JOBS ?= $(shell getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)
+# the module's wasm features (wasm-opt must keep exactly these: setjmp uses exceptions)
+GODOT_FEATURES := --enable-exception-handling --enable-reference-types --enable-bulk-memory \
+  --enable-nontrapping-float-to-int --enable-sign-ext --enable-mutable-globals --enable-multivalue
+
+godot: $(BUILD)/godot.wasm $(GODOT_PCKS)
+guests: $(BUILD)/godot.wasm $(GODOT_PCKS)
+
+$(GODOT_SRC)/.gasm-fetch: scripts/fetch-godot.sh scripts/lib.sh guests/godot/godot.patch
+	scripts/fetch-godot.sh
+	@touch $@
+
+# scons rebuilds what changed (fetch-godot.sh copies only changed platform files)
+$(BUILD)/godot.wasm: $(GODOT_SRC)/.gasm-fetch $(GODOT_PLATFORM) sdk/c/src/gasm_gl.c sdk/c/include/GLES3/gl3.h spec/gasm.h $(CLANG) $(WASM_OPT)
+	@mkdir -p $(@D)
+	scripts/fetch-godot.sh
+	cd $(GODOT_SRC) && GASM_ROOT=$(CURDIR) WASI_SDK=$(WASI_SDK) PYTHONPATH=$(CURDIR)/tools/scons \
+	  python3 -c "import SCons.Script.Main as m; m.main()" platform=gasm target=template_release lto=full -j$(GODOT_JOBS)
+	$(WASM_OPT) $(GODOT_SRC)/bin/godot.gasm.template_release.wasm32.nothreads.wasm -Oz $(GODOT_FEATURES) -o $@
+
+# a project's pack: imported and exported by the Godot editor, from a copy (the
+# repository never gets the editor's .godot import cache). One rule per example,
+# depending on its files.
+define godot_pck
+$$(BUILD)/godot/$(1).pck: $$(GODOT_SRC)/.gasm-fetch $$(shell find guests/godot/examples/$(1) -type f)
+	@mkdir -p $$(@D) $$(BUILD)/godot-projects
+	rm -rf $$(BUILD)/godot-projects/$(1) && cp -R guests/godot/examples/$(1) $$(BUILD)/godot-projects/$(1)
+	cd $$(BUILD)/godot-projects/$(1) && "$$(CURDIR)/$$(GODOT_EDITOR)" --headless --import >/dev/null 2>&1 </dev/null; \
+	  "$$(CURDIR)/$$(GODOT_EDITOR)" --headless --export-pack gasm "$$(CURDIR)/$$@" </dev/null >"$$(CURDIR)/$$(BUILD)/godot-projects/$(1).log" 2>&1 || { cat "$$(CURDIR)/$$(BUILD)/godot-projects/$(1).log"; exit 1; }
+	@test -s $$@
+endef
+$(foreach e,$(GODOT_EXAMPLES),$(eval $(call godot_pck,$(e))))
 
 # pristine sources + patched configure; the backend is synced by the scummvm.wasm recipe
 # (the scripts leave unchanged stamps alone, so recipes touch their target: make

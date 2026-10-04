@@ -40,6 +40,7 @@ jobs:
           name: games
           path: |
             build/*.wasm
+            build/godot/*.pck
             build/THIRD-PARTY.txt
       # doom.wasm (GPL-2.0) and scummvm.wasm (GPL-3.0): their complete source goes out with every release
       - name: DOOM and ScummVM source
@@ -176,7 +177,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           VERSION=$TAG
-          (cd artifacts/games && zip -q "../gasm-$VERSION-games-wasm.zip" *.wasm THIRD-PARTY.txt)
+          (cd artifacts/games && zip -q "../gasm-$VERSION-games-wasm.zip" *.wasm godot/*.pck THIRD-PARTY.txt)
           cp "$(scripts/package-c-sdk.sh "$VERSION")" artifacts/
           cp spec/gasm.h spec/abi.json artifacts/
           mapfile -t FILES < <(find artifacts -maxdepth 2 -type f \( -name '*.tar.gz' -o -name '*.zip' -o -name gasm.h -o -name abi.json \))

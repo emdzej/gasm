@@ -25,7 +25,7 @@ for n in node ${NODE24:-} "$HOME"/.nvm/versions/node/v2[4-9]*/bin/node; do
 done
 [ -n "$NODE_JSPI" ] || echo "note: no Node with JSPI (24+): run builds are checked natively only"
 [ -d roms ] && [ -n "$(ls roms/*.nes 2>/dev/null)" ] && [ -f roms/freedoom2.wad ] && [ -f roms/doom1.wad ] && [ -f roms/bass/sky.dnr ] && [ -d roms/scumm/dott-dos-ni-demo-en ] && [ -f roms/drascula/flac/audio/track28.flac ] || scripts/fetch-roms.sh
-for g in nes test-pattern gltest glowtest eguidemo sumo triangle textured inputtest threadtest pthreadtest rthreadtest sdl3-threads loopdemo loopdemo-run loopdemo-c loopdemo-c-run doom scummvm scummvm-run sdl3-snake sdl3-woodeneye sdl3-callbacks sdl3-classic sdl3-classic-run; do "$NATIVE" build/$g.wasm --compile build/$g.cwasm 2>/dev/null; done
+for g in nes godot test-pattern gltest glowtest eguidemo sumo triangle textured inputtest threadtest pthreadtest rthreadtest sdl3-threads loopdemo loopdemo-run loopdemo-c loopdemo-c-run doom scummvm scummvm-run sdl3-snake sdl3-woodeneye sdl3-callbacks sdl3-classic sdl3-classic-run; do "$NATIVE" build/$g.wasm --compile build/$g.cwasm 2>/dev/null; done
 
 pass=0; fail=0
 run() { "$@" 2>/dev/null | grep -E '^(frames|video)' | tr '\n' ' '; }
@@ -89,6 +89,14 @@ check gltest              gltest 120
 check glowtest            glowtest 120
 # egui's demo through egui_glow (unchanged) on the glow fork: clicks and wheel
 check eguidemo            eguidemo 120 --input '40:PTR(1225,628),41-43:PTR(1225,628,L),44:PTR(1225,628),70:PTR(1012,201),71-73:PTR(1012,201,L),74:PTR(600,300),90-95:WHEEL(0,-2)'
+# Godot 4 (guests/godot): the engine with the gasm platform, one example project per area
+# (packs exported by the Godot editor; null GL, so the hashes cover every GL upload)
+GP="--asset game.pck=build/godot"
+check godot-hello2d       godot 150 $GP/hello2d.pck --input '60-100:KEY(ArrowRight),100-115:KEY(ArrowUp)'
+check godot-platformer    godot 420 $GP/platformer.pck --input '30-400:KEY(ArrowRight),60-64:KEY(Space),130-134:KEY(Space),200-204:KEY(Space),270-274:KEY(Space)'
+check godot-scene3d       godot 300 $GP/scene3d.pck --input '100-160:KEY(ArrowLeft),200-205:KEY(Space)'
+check godot-ui            godot 90 $GP/ui.pck --input '20:PTR(200,126),21-22:PTR(200,126,L),23:PTR(200,126),30:"Ada",50:PTR(500,303),51-53:PTR(500,303,L),54:PTR(500,303),70:PTR(190,492),71-72:PTR(190,492,L),73:PTR(190,492)'
+check godot-audio         godot 150 $GP/audio.pck --input '60-64:KEY(Digit1),90-94:KEY(Digit5),120-124:KEY(Digit8)'
 # SDL3 (sdk/sdl3): SDL's own demos unchanged (snake; woodeneye: WASD, relative mouse, shooting),
 # a callbacks app (audio stream, gamepad events) and a classic main() loop (Asyncify:
 # keyboard state, text input, SDL_Delay, a save file in the pref path)

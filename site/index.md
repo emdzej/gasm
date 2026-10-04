@@ -50,6 +50,8 @@ features:
   <figure><img src="/screenshots/sumo.webp" alt="Sumo, the 3D demo" loading="lazy"><figcaption>Sumo: gasm:gfx (WebGPU) with lockstep netplay.</figcaption></figure>
   <figure><img src="/screenshots/textured.webp" alt="GPU texture test" loading="lazy"><figcaption>Mipmapped textures, samplers, instancing and dynamic offsets on gasm:gfx.</figcaption></figure>
   <figure><img src="/screenshots/gltest.webp" alt="GLES 3 test in the browser player" loading="lazy"><figcaption>OpenGL ES 3 C code on gasm:gl, in the browser player (WebGL 2).</figcaption></figure>
+  <figure><img src="/screenshots/godot3d.webp" alt="Godot 4 3D scene" loading="lazy"><figcaption>Godot 4.7 on gasm: the Compatibility renderer in 3D (shadows, PBR, physics).</figcaption></figure>
+  <figure><img src="/screenshots/godot2d.webp" alt="Godot 4 platformer" loading="lazy"><figcaption>A Godot platformer: 2D physics, signals, a following camera.</figcaption></figure>
   <figure><img src="/screenshots/egui.webp" alt="egui's demo" loading="lazy"><figcaption>egui's demo, unchanged, painted by egui_glow on gasm:gl (Rust, through glow).</figcaption></figure>
   <figure><img src="/screenshots/woodeneye.webp" alt="SDL 3 woodeneye-008" loading="lazy"><figcaption>SDL 3's woodeneye-008, source unchanged, on SDL for gasm.</figcaption></figure>
 </div>

@@ -29,6 +29,10 @@ scummvm.wasm: ScummVM, GNU General Public License version 3, with zlib (zlib
 
 sdl3-*.wasm: SDL 3 (zlib license), https://libsdl.org
 
+godot.wasm: Godot Engine 4.7.2 (MIT), https://godotengine.org, with the
+  third-party components listed in its COPYRIGHT.txt (below). The example packs
+  (godot/*.pck) are MIT, like gasm.
+
 Notices the BSD-3-Clause and zlib licenses ask to reproduce follow.
 TXT
 notice() { # <title> <file>
@@ -39,3 +43,5 @@ notice "libogg 1.3.6 (BSD-3-Clause)" "$LIBS/libogg-1.3.6/COPYING"
 notice "libvorbis 1.3.7 (BSD-3-Clause)" "$LIBS/libvorbis-1.3.7/COPYING"
 notice "libFLAC 1.5.0 (BSD-3-Clause)" "$LIBS/flac-1.5.0/COPYING.Xiph"
 notice "zlib 1.3.2 (zlib license)" "$LIBS/zlib-1.3.2/LICENSE"
+notice "Godot Engine (MIT)" tools/godot-src/LICENSE.txt
+notice "Godot Engine: copyright and licenses of its components (COPYRIGHT.txt)" tools/godot-src/COPYRIGHT.txt

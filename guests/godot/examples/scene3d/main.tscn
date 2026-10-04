@@ -1,0 +1,77 @@
+[gd_scene load_steps=10 format=3]
+
+[ext_resource type="Script" path="res://main.gd" id="1"]
+
+[sub_resource type="ProceduralSkyMaterial" id="sky_mat"]
+sky_top_color = Color(0.32, 0.5, 0.82, 1)
+sky_horizon_color = Color(0.72, 0.78, 0.88, 1)
+ground_bottom_color = Color(0.2, 0.18, 0.16, 1)
+ground_horizon_color = Color(0.72, 0.78, 0.88, 1)
+
+[sub_resource type="Sky" id="sky"]
+sky_material = SubResource("sky_mat")
+
+[sub_resource type="Environment" id="env"]
+background_mode = 2
+sky = SubResource("sky")
+ambient_light_source = 3
+tonemap_mode = 2
+fog_enabled = true
+fog_light_color = Color(0.6, 0.68, 0.82, 1)
+fog_density = 0.01
+fog_sky_affect = 0.0
+
+[sub_resource type="PlaneMesh" id="floor_mesh"]
+size = Vector2(14, 14)
+
+[sub_resource type="StandardMaterial3D" id="floor_mat"]
+albedo_color = Color(0.3, 0.36, 0.28, 1)
+roughness = 0.95
+
+[sub_resource type="BoxShape3D" id="floor_shape"]
+size = Vector3(14, 0.2, 14)
+
+[sub_resource type="TorusMesh" id="torus_mesh"]
+inner_radius = 0.6
+outer_radius = 1.1
+
+[sub_resource type="StandardMaterial3D" id="torus_mat"]
+albedo_color = Color(0.95, 0.75, 0.3, 1)
+metallic = 0.9
+roughness = 0.25
+
+[node name="Main" type="Node3D"]
+script = ExtResource("1")
+
+[node name="Environment" type="WorldEnvironment" parent="."]
+environment = SubResource("env")
+
+[node name="Sun" type="DirectionalLight3D" parent="."]
+transform = Transform3D(0.866, -0.354, 0.354, 0, 0.707, 0.707, -0.5, -0.612, 0.612, 0, 8, 0)
+shadow_enabled = true
+
+[node name="Lamp" type="OmniLight3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -3, 2.5, 2)
+light_color = Color(1, 0.5, 0.3, 1)
+light_energy = 2.0
+omni_range = 6.0
+
+[node name="Floor" type="StaticBody3D" parent="."]
+
+[node name="Mesh" type="MeshInstance3D" parent="Floor"]
+mesh = SubResource("floor_mesh")
+surface_material_override/0 = SubResource("floor_mat")
+
+[node name="Shape" type="CollisionShape3D" parent="Floor"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.1, 0)
+shape = SubResource("floor_shape")
+
+[node name="Torus" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2.2, 0)
+mesh = SubResource("torus_mesh")
+surface_material_override/0 = SubResource("torus_mat")
+
+[node name="Bodies" type="Node3D" parent="."]
+
+[node name="Camera" type="Camera3D" parent="."]
+fov = 60.0

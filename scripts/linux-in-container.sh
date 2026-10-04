@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Runs inside the Linux container: sync the (read-only) source into the work
 # volume, build everything, run the test suites, export the Linux binaries.
-#   linux-in-container.sh [test|build|shell|gl]
+#   linux-in-container.sh [test|build|shell|gl|godot|godot-packs]
 set -euo pipefail
 MODE=${1:-test}
 mkdir -p /work/gasm
@@ -14,6 +14,17 @@ rsync -a --delete \
 cd /work/gasm
 echo "== $(uname -srm), $(rustc --version), node $(node --version)"
 [ "$MODE" = shell ] && exec bash
+if [ "$MODE" = godot ]; then   # the Godot engine (to compare with other machines)
+  make build/godot.wasm
+  sha256sum build/godot.wasm
+  exit 0
+fi
+if [ "$MODE" = godot-packs ]; then   # the Godot examples' packs (to compare with other machines)
+  scripts/fetch-godot.sh
+  make $(ls guests/godot/examples | sed 's|.*|build/godot/&.pck|')
+  sha256sum build/godot/*.pck
+  exit 0
+fi
 if [ "$MODE" = gl ]; then   # only gasm:gl on ANGLE (SwiftShader): the runner and gltest
   make build/gltest.wasm && (cd runners/native && cargo build --release)
   scripts/gl-native-test.sh --gl-software

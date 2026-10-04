@@ -21,6 +21,22 @@ host with WebGPU for 3D.
   <a class="demo-card" href="/play/?game=test-pattern.wasm&autostart" target="_blank"><strong>Test pattern (C)</strong><span>An 80-line C game built with wasi-sdk: gradient, movable square, a tone while A is held.</span></a>
 </div>
 
+## Godot
+
+[Godot](https://godotengine.org) 4.7 runs on gasm with the Compatibility
+renderer on `gasm:gl`: one engine module, and each game is a `.pck` exported by
+the Godot editor ([how](https://github.com/emdzej/gasm/blob/main/guests/godot/README.md)).
+Each example shows one part of the engine:
+
+<div class="demo-grid">
+  <a class="demo-card" href="/play/?game=godot-hello2d&autostart" target="_blank"><strong>Hello 2D</strong><span>GDScript, drawing, an imported SVG, text. Arrows move the square.</span></a>
+  <a class="demo-card" href="/play/?game=godot-platformer&autostart" target="_blank"><strong>Platformer</strong><span>2D physics, coins with signals, a following camera. Arrows run, Space jumps; gamepads work.</span></a>
+  <a class="demo-card" href="/play/?game=godot-scene3d&autostart" target="_blank"><strong>3D scene</strong><span>Sky, fog, shadows, PBR materials, 3D physics. Arrows orbit, Space drops more.</span></a>
+  <a class="demo-card" href="/play/?game=godot-ui&autostart" target="_blank"><strong>UI and saves</strong><span>Controls, text input, settings saved to user:// (they survive a reload).</span></a>
+  <a class="demo-card" href="/play/?game=godot-audio&autostart" target="_blank"><strong>Audio</strong><span>A melody synthesized sample by sample, notes on keys 1 to 8, reverb, a spectrum analyzer.</span></a>
+  <a class="demo-card" href="/play/?game=godot.wasm" target="_blank"><strong>Your Godot game</strong><span>Open or drop a .pck exported from Godot 4.7 with the Compatibility renderer.</span></a>
+</div>
+
 ## DOOM
 
 DOOM runs everywhere, so it had to run on gasm. [`doom.wasm`](https://github.com/emdzej/gasm/tree/main/guests/doom)

@@ -19,12 +19,24 @@ const GAMES = {
   'sdl3-classic.wasm': 'SDL3: classic main loop', 'sdl3-threads.wasm': 'SDL3: threads (cooperative)',
   'triangle.wasm': 'GPU triangle', 'textured.wasm': 'GPU textures (test)', 'inputtest.wasm': 'input tester', 'test-pattern.wasm': 'test pattern (C)', 'gltest.wasm': 'GLES 3 test (C)', 'glowtest.wasm': 'GLES 3 from Rust (glow)', 'eguidemo.wasm': 'egui demo (egui_glow)',
   'assetcheck.wasm': 'asset check (test)',
+  'godot.wasm': 'Godot: your game (.pck)',
 };
+// Godot projects: the engine (build/godot.wasm) with the project's pack as asset game.pck.
+const GODOT_GAMES = {
+  'godot-hello2d': { pck: 'godot/hello2d.pck', label: 'Godot: hello 2D' },
+  'godot-platformer': { pck: 'godot/platformer.pck', label: 'Godot: platformer' },
+  'godot-scene3d': { pck: 'godot/scene3d.pck', label: 'Godot: 3D scene' },
+  'godot-ui': { pck: 'godot/ui.pck', label: 'Godot: UI and saves' },
+  'godot-audio': { pck: 'godot/audio.pck', label: 'Godot: audio' },
+};
+for (const [id, g] of Object.entries(GODOT_GAMES)) GAMES[id] = g.label;
 // Games that take a content file from roms/ (or an opened/dropped file) as an asset.
 // `known` is offered even without a roms/ directory listing (the website has none).
 const CONTENT = {
   'nes.wasm': { ext: '.nes', asset: 'rom', preferred: 'bladebuster', known: [] },
   'doom.wasm': { ext: '.wad', asset: 'wad', preferred: 'doom1.wad', known: ['doom1.wad'] },
+  // any Godot 4.7 game exported as a pack (Compatibility renderer): open or drop a .pck
+  'godot.wasm': { ext: '.pck', asset: 'game.pck', preferred: '', known: [] },
 };
 // Games that take a folder of files: without "open folder..." they get a default set
 // from roms/ (the freeware Beneath a Steel Sky for ScummVM) and launch args.
@@ -363,6 +375,12 @@ async function start({ romBytes } = {}) {
     } catch (e) { return log(`${e.message}: open a ${CONTENT[game].ext} file instead`); }
     record[CONTENT[game].asset] = romBytes;
   }
+  const godot = GODOT_GAMES[game];
+  if (godot) {
+    try {
+      record['game.pck'] = await fetchBytes(new URL(`build/${godot.pck}`, ROOT));
+    } catch (e) { return log(`${e.message}: build the Godot examples (make godot)`); }
+  }
   const fg = FOLDER_GAMES[game];
   if (fg && !folder && !url.has('opfs')) {
     try {
@@ -375,7 +393,8 @@ async function start({ romBytes } = {}) {
   if (fg && params.args === undefined) params.args = folder || url.has('opfs') ? fg.folderArgs : fg.args;
   if ($('relay').value.trim()) { params.relay = $('relay').value.trim(); params.room = $('room').value.trim() || 'sumo'; }
   try {
-    const bytes = game.includes('/') ? await fetchBytes(new URL(game, location.href)) : await fetchGame(game);
+    const bytes = godot ? await fetchBytes(new URL('build/godot.wasm', ROOT))
+      : game.includes('/') ? await fetchBytes(new URL(game, location.href)) : await fetchGame(game);
     // compiled once: the imports tell where it can run, the same Module is instantiated
     const module = await WebAssembly.compile(bytes);
     if (stale()) return;

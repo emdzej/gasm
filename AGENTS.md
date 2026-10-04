@@ -27,6 +27,7 @@ property: most tests assert bit-identical hashes.
 | `guests/pthreadtest/` | C guest: plain POSIX threads code on the same scheduler (`sdk/c/src/gasm_pthread.c`) |
 | `sdk/c/src/gasm_loop.c`, `sdk/c/include/gasm_loop.h` | loop helper for games with their own main loop (`gasm_main` + `gasm_wait_frame`): exports `gasm_frame` (Asyncify inside the guest) and `gasm_run` (the runner switches stacks); Rust: `gasm::main_loop!`. Used by ScummVM and SDL3 classic `main()`; each builds as `game.wasm` (Asyncify) and `game-run.wasm` (without) |
 | `sdk/sdl3/` | SDL 3 for gasm: SDL as a "private platform" (`SDL_PLATFORM_PRIVATE`), config + drivers (zlib). `scripts/fetch-sdl3.sh` puts SDL in `tools/SDL3-src`; `make sdl3` builds `build/sdl3/` (lib, headers, `find_package` config); `scripts/package-sdl3.sh` bundles it |
+| `guests/godot/` | Godot 4.7 for gasm: `platform/gasm` (MIT: OS, display server with input, audio driver, FileAccess on assets/storage, entry points) + `godot.patch` (WebGL paths in `drivers/gles3` also for gasm). `scripts/fetch-godot.sh` puts the engine (MIT) in `tools/godot-src`, SCons in `tools/scons`, the editor in `tools/godot-editor`; `make godot` builds `build/godot.wasm` and exports `examples/*` to `build/godot/*.pck` |
 | `guests/scummvm/` | ScummVM: gasm backend (MIT, `backend/` -> `backends/platform/gasm`) + `configure.patch` (`wasm32-gasm` host). `scripts/fetch-scummvm.sh` puts ScummVM (GPL-3.0) in `tools/scummvm-src`; `scripts/build-scummvm-libs.sh` builds zlib, libmad, libogg/libvorbis, libFLAC (pinned release tarballs) into `tools/scummvm-libs`; `make scummvm` builds with wasi-sdk and runs `wasm-opt --asyncify` (`scripts/fetch-binaryen.sh`); `scripts/package-scummvm-src.sh` packs exactly the files the build used plus the library sources (verify: a clean `make scummvm` from the tarball is byte-identical) |
 | `guests/doom/` | DOOM: gasm platform layer (MIT) for doomgeneric. `scripts/fetch-doom.sh` puts the GPL-2.0 engine (+ chocolate-doom OPL music) in `tools/doom-src` and applies `engine.patch`; `scripts/package-doom-src.sh` packs the complete source shipped with releases and the site |
 | `runners/native/` | crate `gasm-host` (workspace root; one `target/`): the library has the host (`host.rs`, `switching.rs` stack switching for `gasm_run`, `wasi.rs` WASI subset, `gfx.rs`, `present.rs` 2D filters, `net.rs`, `storage.rs`, `assets.rs`) and both runners (`headless.rs`, `window.rs` + `keymap.rs` behind the default `window` feature); `src/main.rs` (`gasm-run`) only parses arguments. `relay/`: crate `gasm-relay` (no runtime deps, not on crates.io); `relay.Dockerfile` |
@@ -44,7 +45,8 @@ property: most tests assert bit-identical hashes.
 ## Build and test
 
 ```sh
-make                          # games -> build/*.wasm, native runner + relay
+make                          # games -> build/*.wasm, native runner + relay (Godot too: its first build
+                              # takes ~15 min and an LTO link that needs ~12 GB; `make godot` alone)
 make roms                     # test ROMs, Freedoom, shareware doom1.wad into roms/ (needed by the determinism test)
 scripts/determinism-test.sh   # 26 cases: wasmtime JIT == AOT == V8 == golden hashes (must pass)
                               # UPDATE_GOLDEN=1 re-records after a change meant to alter output
@@ -91,6 +93,11 @@ from the repo root, then
   is a real prerequisite. Don't make targets depend on `Makefile` (one edit would
   rebuild ScummVM), and copy into `tools/scummvm-src` only what changed
   (`fetch-scummvm.sh` uses `cmp`).
+- **Guests are the same bytes on every host.** wasi-sdk's per-host archives
+  carry their own sysroot builds (with different source paths in libc++abi, which
+  shift data and so Godot's address-keyed hash maps), so `fetch-wasi-sdk.sh`
+  lays the host-independent `wasi-sysroot` and `libclang_rt` archives over them.
+  Check with `scripts/linux-container.sh godot` (same sha256 as a macOS build).
 - **Every download is pinned:** `download`/`sha256_ok` from `scripts/lib.sh` with
   a SHA-256 (GitHub release assets list theirs: `gh api …/releases/tags/<tag>`).
 - **`-mexec-model=reactor` is link-only** for clang; passing it with `-c` errors.
@@ -169,6 +176,18 @@ from the repo root, then
   headless gl games never start wgpu (its Vulkan instance would come first).
   `c_char` is `u8` on arm64 Linux: use `c_char`, not `i8`. Electron 44+ no
   longer ships ANGLE as separate libraries.
+- **Godot:** change the engine only through `guests/godot/godot.patch` and
+  `platform/gasm` (fetch-godot.sh copies changed platform files in, so SCons
+  rebuilds only those). setjmp/longjmp use wasm exceptions (`-mllvm
+  -wasm-enable-sjlj`, also at link time for LTO; `-lsetjmp`); `wasm-opt` gets the
+  module's exact features (`GODOT_FEATURES`; `--all-features` emits encodings the
+  runners refuse). Godot reads the raw keyboard (`KEYS_RAW`): scripted input uses
+  `KEY(...)`, not pad buttons. Example packs must export byte-identical everywhere:
+  commit `.uid`/`.import` files and keep text scenes
+  (`editor/export/convert_text_resources_to_binary=false`). Godot's hash maps key
+  on addresses, so a change to the engine build can change the godot-* golden
+  hashes (check the frames, then `UPDATE_GOLDEN=1`); hashes are only comparable
+  on the null GL (Godot adapts to a real GPU's extensions).
 - **wasm checks indirect call signatures.** C that calls through a mismatched
   function pointer traps with "indirect call type mismatch"; fix it with a
   typed wrapper (see `engine.patch`).

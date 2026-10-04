@@ -23,6 +23,12 @@ for f in sharp xbr fsr crt; do
 done
 shot sky scummvm 2400 --asset-dir roms/bass --param "args=-p / sky" --input '600-603:KEY(Escape)' \
   --screenshot-filtered "$TMP/sky.png" --filter xbr --window 960x720
+godot() { # <name> <example> <frames> [args]: a Godot example, rendered with ANGLE
+  local name=$1 ex=$2 frames=$3; shift 3
+  "$R" build/godot.wasm --asset "game.pck=build/godot/$ex.pck" --headless "$frames" --screenshot "$TMP/$name.png" "$@" >/dev/null 2>&1 </dev/null
+}
+godot godot3d scene3d 300 --input '100-160:KEY(ArrowLeft),200-205:KEY(Space)'
+godot godot2d platformer 420 --input '30-400:KEY(ArrowRight),60-64:KEY(Space),130-134:KEY(Space),200-204:KEY(Space),270-274:KEY(Space)'
 shot egui eguidemo 120 --input '40:PTR(1225,628),41-43:PTR(1225,628,L),44:PTR(600,300)' --screenshot "$TMP/egui.png"
 shot woodeneye sdl3-woodeneye 400 --input '50-150:KEY(KeyW),100-200:MOVE(8,0)' \
   --screenshot-filtered "$TMP/woodeneye.png" --window 960x720
@@ -47,7 +53,7 @@ for i, t in enumerate(tiles):
 strip.save(f'{tmp}/filters.png')
 EOF
 
-for n in sumo textured doom sky woodeneye gltest egui player filters; do
+for n in sumo textured doom sky woodeneye gltest egui godot3d godot2d player filters; do
   cwebp -quiet -q 85 "$TMP/$n.png" -o "$OUT/$n.webp"
 done
 ls -la "$OUT"

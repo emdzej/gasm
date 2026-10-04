@@ -294,6 +294,35 @@ enum {
     GASM_KEY_F24 = 121,
 };
 
+/* The W3C KeyboardEvent.code name of GASM_KEY_* `code`, or "" for an unknown code. */
+static inline const char *gasm_key_name(uint32_t code) {
+    static const char *const names[] = {
+        "",
+        "Escape", "F1", "F2", "F3", "F4", "F5",
+        "F6", "F7", "F8", "F9", "F10", "F11",
+        "F12", "Backquote", "Digit0", "Digit1", "Digit2", "Digit3",
+        "Digit4", "Digit5", "Digit6", "Digit7", "Digit8", "Digit9",
+        "Minus", "Equal", "Backspace", "Tab", "KeyA", "KeyB",
+        "KeyC", "KeyD", "KeyE", "KeyF", "KeyG", "KeyH",
+        "KeyI", "KeyJ", "KeyK", "KeyL", "KeyM", "KeyN",
+        "KeyO", "KeyP", "KeyQ", "KeyR", "KeyS", "KeyT",
+        "KeyU", "KeyV", "KeyW", "KeyX", "KeyY", "KeyZ",
+        "BracketLeft", "BracketRight", "Backslash", "CapsLock", "Semicolon", "Quote",
+        "Enter", "ShiftLeft", "IntlBackslash", "Comma", "Period", "Slash",
+        "ShiftRight", "ControlLeft", "MetaLeft", "AltLeft", "Space", "AltRight",
+        "MetaRight", "ContextMenu", "ControlRight", "PrintScreen", "ScrollLock", "Pause",
+        "Insert", "Home", "PageUp", "Delete", "End", "PageDown",
+        "ArrowUp", "ArrowLeft", "ArrowDown", "ArrowRight", "NumLock", "NumpadDivide",
+        "NumpadMultiply", "NumpadSubtract", "NumpadAdd", "NumpadEnter", "NumpadDecimal", "Numpad0",
+        "Numpad1", "Numpad2", "Numpad3", "Numpad4", "Numpad5", "Numpad6",
+        "Numpad7", "Numpad8", "Numpad9", "NumpadEqual", "NumpadComma", "IntlRo",
+        "IntlYen", "F13", "F14", "F15", "F16", "F17",
+        "F18", "F19", "F20", "F21", "F22", "F23",
+        "F24",
+    };
+    return code < sizeof names / sizeof names[0] ? names[code] : "";
+}
+
 /* ---- gasm -------------------------------------------------------------- */
 
 /* Write a line to the runner's log. */

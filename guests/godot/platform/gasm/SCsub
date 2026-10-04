@@ -1,0 +1,20 @@
+#!/usr/bin/env python
+from misc.utility.scons_hints import *
+
+Import("env")
+
+import os
+
+gasm_files = [
+    "gasm_main.cpp",
+    "os_gasm.cpp",
+    "display_server_gasm.cpp",
+    "audio_driver_gasm.cpp",
+    "file_access_gasm.cpp",
+]
+
+# the C SDK's GLES 3.0 on gasm:gl (sdk/c/src/gasm_gl.c)
+gl_env = env.Clone()
+gl_obj = gl_env.Object("gasm_gl.o", os.path.join(env["GASM_ROOT"], "sdk", "c", "src", "gasm_gl.c"))
+
+prog = env.add_program("#bin/godot", gasm_files + gl_obj)

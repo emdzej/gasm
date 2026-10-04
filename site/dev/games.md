@@ -746,6 +746,22 @@ THREADS`, `SDL_CreateThread`, `SDL_AddTimer` and SDL's locks run on the
 [cooperative threads](#threads) above. Not available: OpenGL/Vulkan/`SDL_GPU`,
 audio recording, camera.
 
+### Godot
+
+Godot 4.7 games run on gasm with the Compatibility renderer: the engine is one
+module (`godot.wasm`), the game is a `.pck` exported by the Godot editor and
+given as the asset `game.pck`:
+
+```sh
+gasm-run godot.wasm --asset game.pck=mygame.pck
+```
+
+GDScript, 2D and 3D (Compatibility renderer on `gasm:gl`), Godot's physics,
+audio, keyboard, mouse, gamepads and `user://` saves (on `gasm:storage`) work;
+threads, networking, C# and GDExtension don't. How to export, the details and
+the five example projects (2D, physics, 3D, UI and saves, audio):
+[guests/godot](https://github.com/emdzej/gasm/blob/main/guests/godot/README.md).
+
 ## Checklist
 
 - [ ] `crate-type = ["cdylib"]`, built for `wasm32-unknown-unknown` in release mode

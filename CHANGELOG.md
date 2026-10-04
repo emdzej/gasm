@@ -8,6 +8,19 @@ the package versions (`gasm-sdk`, `gasm-host`, `@emdzej/gasm-host`).
 
 ## Unreleased
 
+Games:
+- Godot 4.7 (guests/godot): a gasm platform for Godot (MIT), so Godot games
+  exported as a `.pck` run on every runner with the Compatibility renderer on
+  gasm:gl: `gasm-run godot.wasm --asset game.pck=mygame.pck`, or the player
+  (open or drop a `.pck`). GDScript, 2D and 3D, Godot Physics, audio (mixed per
+  frame), keyboard, text, mouse, gamepads, `user://` on gasm:storage. Five example
+  projects (hello2d, platformer, scene3d, ui, audio) are determinism cases and
+  demos. `make godot` builds the engine (wasi-sdk, LTO, `wasm-opt -Oz`: 32 MB,
+  8 MB gzipped) and exports the examples with the Godot editor
+  (`scripts/fetch-godot.sh` pins the source, the editor and SCons). The release
+  bundles have `godot.wasm`, the example packs and `run-godot`.
+- C SDK: `gasm_key_name(code)` in `gasm.h` (the W3C name of a key code).
+
 SDKs:
 - Rust: OpenGL ES through glow. `gasm::gles` is the GLES 3.0 C API on gasm:gl
   (the same functions as the C SDK's `gasm_gl.c`), and `sdk/glow` is glow 0.17

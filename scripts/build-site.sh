@@ -16,6 +16,11 @@ for g in sumo triangle textured inputtest nes doom scummvm scummvm-run test-patt
   [ -f "build/$g.wasm" ] || { echo "missing build/$g.wasm; run 'make guests' first" >&2; exit 1; }
   cp "build/$g.wasm" "$PLAY/build/"
 done
+# Godot: the engine and the example projects' packs
+[ -f build/godot.wasm ] || { echo "missing build/godot.wasm; run 'make godot' first" >&2; exit 1; }
+mkdir -p "$PLAY/build/godot"
+cp build/godot.wasm "$PLAY/build/"
+cp build/godot/*.pck "$PLAY/build/godot/"
 # The DOOM demo's default WAD: shareware episode 1 (freely distributable).
 [ -f roms/doom1.wad ] || scripts/fetch-roms.sh doom1 >/dev/null
 mkdir -p "$PLAY/roms" && cp roms/doom1.wad "$PLAY/roms/"

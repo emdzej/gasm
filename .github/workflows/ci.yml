@@ -69,6 +69,17 @@ jobs:
       - name: gfx validation, JS (tests/gfx-cases.json; natively in the unit tests)
         run: node scripts/gfx-model-test.mjs
 
+      # Godot (guests/godot): its source tree with SCons' objects and the editor, so only
+      # what changed is rebuilt (a cold build takes a while)
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            tools/godot-src
+            tools/godot-editor
+            tools/scons
+          key: godot-${{ runner.os }}-${{ hashFiles('scripts/fetch-godot.sh', 'guests/godot/godot.patch', 'guests/godot/platform/**', 'sdk/c/src/gasm_gl.c', 'spec/abi.json') }}
+          restore-keys: godot-${{ runner.os }}-
+
       - name: Build games + native runner
         run: make
 
@@ -111,7 +122,9 @@ jobs:
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: games-ci
-          path: build/*.wasm
+          path: |
+            build/*.wasm
+            build/godot/*.pck
 
   # Same suites on the other platforms with the games built above: every runner must
   # match the golden hashes (tests/golden/determinism.txt), so all platforms agree.

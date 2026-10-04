@@ -78,6 +78,17 @@ extern "C" {
     out.push('enum {');
     for (const [k, v] of c.values) out.push(`    ${k} = ${v},`);
     out.push('};\n');
+    if (c.group === 'keys') {
+      // the W3C name of a key code (KeyboardEvent.code), for ports that map keys by name
+      out.push('/* The W3C KeyboardEvent.code name of GASM_KEY_* `code`, or "" for an unknown code. */');
+      out.push('static inline const char *gasm_key_name(uint32_t code) {');
+      out.push('    static const char *const names[] = {');
+      out.push('        "",');
+      for (let i = 0; i < c.values.length; i += 6) out.push(`        ${c.values.slice(i, i + 6).map((v) => JSON.stringify(v[2])).join(', ')},`);
+      out.push('    };');
+      out.push('    return code < sizeof names / sizeof names[0] ? names[code] : "";');
+      out.push('}\n');
+    }
   }
   for (const m of gasmModules) {
     out.push(`/* ---- ${m.name}${m.optional ? ' (optional)' : ''} ${'-'.repeat(Math.max(4, 66 - m.name.length))} */`);

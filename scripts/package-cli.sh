@@ -12,7 +12,8 @@ cp "$BIN/gasm-run$EXE" "$BIN/gasm-relay$EXE" "$PKG/"
 # ANGLE next to gasm-run, for gasm:gl games (with its license notices)
 scripts/package-angle.sh "$PLATFORM" "$PKG"
 cp build/sumo.wasm build/nes.wasm build/doom.wasm build/triangle.wasm build/test-pattern.wasm build/inputtest.wasm build/scummvm-run.wasm \
-  build/sdl3-snake.wasm build/sdl3-woodeneye.wasm build/gltest.wasm "$PKG/games/"
+  build/sdl3-snake.wasm build/sdl3-woodeneye.wasm build/gltest.wasm build/godot.wasm "$PKG/games/"
+mkdir -p "$PKG/games/godot" && cp build/godot/*.pck "$PKG/games/godot/"
 # license notices of the third-party code in the games (scripts/third-party-notices.sh)
 [ -f build/THIRD-PARTY.txt ] && cp build/THIRD-PARTY.txt "$PKG/games/"
 cat > "$PKG/games/scummvm-LICENSE.txt" <<TXT
@@ -70,6 +71,16 @@ cd "$(dirname "$0")"
 args=${*:---auto-detect -p /}
 exec ./gasm-run games/scummvm-run.wasm --asset-dir "$dir" --param "args=$args"
 SH
+  cat > "$PKG/run-godot.sh" <<'SH'
+#!/bin/sh
+# A Godot 4.7 game exported as a .pck (Compatibility renderer):
+#   ./run-godot.sh path/to/game.pck      (default: the 3D example)
+# The examples: games/godot/{hello2d,platformer,scene3d,ui,audio}.pck
+pck=${1:-games/godot/scene3d.pck}
+pck=$(cd "$(dirname "$pck")" && pwd)/$(basename "$pck")
+cd "$(dirname "$0")"
+exec ./gasm-run games/godot.wasm --asset "game.pck=$pck"
+SH
   cat > "$PKG/run-relay.sh" <<'SH'
 #!/bin/sh
 cd "$(dirname "$0")" && exec ./gasm-relay "${1:-0.0.0.0:9000}"
@@ -82,6 +93,7 @@ else
   printf '@echo off\r\nrem Sumo vs. the bot: run-sumo.cmd    Online: run-sumo.cmd ws://HOST:9000 [room]\r\ncd /d "%%~dp0"\r\nif "%%~1"=="" (gasm-run.exe games\\sumo.wasm) else (if "%%~2"=="" (gasm-run.exe games\\sumo.wasm --allow-net --param relay=%%1 --param room=sumo) else (gasm-run.exe games\\sumo.wasm --allow-net --param relay=%%1 --param room=%%2))\r\n' > "$PKG/run-sumo.cmd"
   printf '@echo off\r\nrem run-nes.cmd path\\to\\game.nes\r\ncd /d "%%~dp0"\r\ngasm-run.exe games\\nes.wasm --rom %%1\r\n' > "$PKG/run-nes.cmd"
   printf '@echo off\r\ncd /d "%%~dp0"\r\ngasm-relay.exe 0.0.0.0:9000\r\n' > "$PKG/run-relay.cmd"
+  printf '@echo off\r\nrem run-godot.cmd path\\to\\game.pck (a Godot 4.7 export; default: the 3D example)\r\ncd /d "%%~dp0"\r\nset pck=%%~f1\r\nif "%%~1"=="" set pck=games\\godot\\scene3d.pck\r\ngasm-run.exe games\\godot.wasm --asset "game.pck=%%pck%%"\r\n' > "$PKG/run-godot.cmd"
   printf '@echo off\r\nrem run-scummvm.cmd path\\to\\game-folder (detects the game and starts it)\r\ncd /d "%%~dp0"\r\ngasm-run.exe games\\scummvm-run.wasm --asset-dir %%1 --param "args=--auto-detect -p /"\r\n' > "$PKG/run-scummvm.cmd"
   printf '@echo off\r\nrem run-doom.cmd path\\to\\doom1.wad [DOOM options, e.g. -warp 1 1 -skill 4] (any IWAD: doom1.wad, doom.wad, doom2.wad, Freedoom)\r\ncd /d "%%~dp0"\r\ngasm-run.exe games\\doom.wasm --asset wad=%%1 --param "args=%%2 %%3 %%4 %%5 %%6 %%7 %%8 %%9"\r\n' > "$PKG/run-doom.cmd"
 fi
@@ -97,7 +109,8 @@ https://gasm.emdzej.pl
                    inputtest.wasm (shows keyboard, mouse, gamepads),
                    scummvm-run.wasm (ScummVM, GPL-3.0; bring your own games),
                    sdl3-snake.wasm, sdl3-woodeneye.wasm (SDL 3's demos, unchanged),
-                   gltest.wasm (OpenGL ES 3 on gasm:gl)
+                   gltest.wasm (OpenGL ES 3 on gasm:gl),
+                   godot.wasm + godot/*.pck (Godot 4.7: run-godot <game.pck>)
   libEGL, libGLESv2 ANGLE (OpenGL ES for gasm:gl games), with SwiftShader for
                    machines without a GPU; licenses in ANGLE-NOTICES.txt
 
