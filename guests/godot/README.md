@@ -12,6 +12,10 @@ gasm-run godot.wasm --asset game.pck=mygame.pck
 
 In the player: `?game=godot-scene3d`, or open your own `.pck` with the engine.
 
+**Making a game for it** (project settings, exporting, input, saves, testing,
+shipping): [Godot games on gasm](https://gasm.emdzej.pl/dev/godot). This README
+is about the port itself.
+
 ## Examples
 
 Each example project shows one part of Godot on gasm. They are determinism

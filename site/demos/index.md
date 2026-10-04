@@ -25,7 +25,7 @@ host with WebGPU for 3D.
 
 [Godot](https://godotengine.org) 4.7 runs on gasm with the Compatibility
 renderer on `gasm:gl`: one engine module, and each game is a `.pck` exported by
-the Godot editor ([how](https://github.com/emdzej/gasm/blob/main/guests/godot/README.md)).
+the Godot editor ([how](/dev/godot)).
 Each example shows one part of the engine:
 
 <div class="demo-grid">

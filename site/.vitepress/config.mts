@@ -40,6 +40,7 @@ export default defineConfig({
           { text: 'Overview', link: '/dev/' },
           { text: 'Writing games', link: '/dev/games' },
           { text: 'Choosing a graphics API', link: '/dev/graphics' },
+          { text: 'Godot games', link: '/dev/godot' },
           { text: 'Writing runners', link: '/dev/runners' },
           { text: 'Packages', link: '/dev/packages' },
           { text: 'Badge', link: '/dev/badge' },

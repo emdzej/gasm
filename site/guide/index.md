@@ -356,6 +356,23 @@ between the peers in a room and announces joins and leaves. It knows nothing
 about the games. Handshakes time out after 10 s, and a peer that stops reading
 is disconnected instead of buffering everyone's traffic.
 
+### Godot games
+
+Godot 4.7 games come as a `.pck` and run on the Godot engine module
+(`games/godot.wasm` in the release bundles):
+
+```sh
+./run-godot.sh mygame.pck                          # release bundle (run-godot.cmd on Windows)
+gasm-run godot.wasm --asset game.pck=mygame.pck    # anywhere
+```
+
+The examples are in `games/godot/` (`hello2d`, `platformer`, `scene3d`, `ui`,
+`audio`). In the browser player, choose **Godot: your game (.pck)** and open or
+drop the file. The first native start compiles the engine (a few seconds);
+`gasm-run godot.wasm --compile godot.cwasm` once, then run `godot.cwasm` with
+`--allow-precompiled`, makes it instant. Making games for it:
+[Godot games on gasm](/dev/godot).
+
 ## 8. Which ROMs work
 
 The NES game uses tetanes-core, an accurate, cycle-based emulator that supports

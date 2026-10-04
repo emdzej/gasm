@@ -760,7 +760,7 @@ GDScript, 2D and 3D (Compatibility renderer on `gasm:gl`), Godot's physics,
 audio, keyboard, mouse, gamepads and `user://` saves (on `gasm:storage`) work;
 threads, networking, C# and GDExtension don't. How to export, the details and
 the five example projects (2D, physics, 3D, UI and saves, audio):
-[guests/godot](https://github.com/emdzej/gasm/blob/main/guests/godot/README.md).
+[Godot games on gasm](/dev/godot).
 
 ## Checklist
 
