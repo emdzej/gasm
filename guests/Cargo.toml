@@ -1,7 +1,7 @@
 # Rust guests (games) for gasm. Build: make guests  (wasm32-unknown-unknown)
 [workspace]
 resolver = "3"
-members = ["gasm", "sumo", "nes", "triangle", "textured", "inputtest", "loopdemo", "assetcheck", "parity", "glowtest", "eguidemo"]
+members = ["gasm", "sumo", "nes", "triangle", "textured", "inputtest", "loopdemo", "assetcheck", "parity", "glowtest", "eguidemo", "rthreadtest"]
 
 # glow with its native backend on wasm32 (sdk/glow; games outside this repository:
 # glow = { git = "https://github.com/emdzej/gasm" })
@@ -19,3 +19,8 @@ codegen-units = 1
 panic = "abort"
 debug = false
 strip = "debuginfo"   # keep the name section for readable wasm backtraces
+
+# build scripts (gasm-sdk's links the stack-pointer helper) aren't stripped: rustup's
+# rust-objcopy can't find libLLVM.dylib on some macOS installs
+[profile.release.build-override]
+strip = false

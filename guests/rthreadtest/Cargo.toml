@@ -1,0 +1,13 @@
+[package]
+name = "rthreadtest"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+publish = false
+description = "Cooperative threads in Rust (gasm::thread, gasm::sync): deterministic schedule, drawn into the frame"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+gasm = { package = "gasm-sdk", path = "../gasm" }

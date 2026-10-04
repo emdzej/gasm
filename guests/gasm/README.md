@@ -55,6 +55,9 @@ What's in it:
 - **`main_loop!`:** for games with their own loop (`main_loop!(run)`, or
   `main_loop!(run, on_exit)` to export `gasm_exit` too), with Binaryen's
   Asyncify. Games using `game!` don't carry its export or imports.
+- **`thread`, `sync`:** cooperative threads for `threaded_main_loop!` games
+  (`thread::spawn`, `Mutex`, `Condvar`, `Semaphore`), deterministic: one wasm
+  thread, switched with Asyncify.
 - **Native builds:** on non-wasm targets the crate links an in-process stub
   host (`gasm::native`), so the same game builds natively for debugging and
   parity tests.

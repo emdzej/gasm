@@ -1,7 +1,7 @@
 # Threads for guests
 
-Status: **part A implemented** for C, POSIX threads and SDL 3 (see "As
-built" and "Plan"; a Rust API is still to do); part B is a proposal. Two designs that
+Status: **part A implemented** for C, POSIX threads, SDL 3 and Rust (see "As
+built" and "Plan"); part B is a proposal. Two designs that
 complement each other:
 **cooperative threads** inside the guest (no ABI change, deterministic), and
 **real wasm threads** as an optional capability later (parallel, not
@@ -99,8 +99,11 @@ driven inside the guest.
   leaves out with `SDL_SKIP`, as it does for the other replaced drivers.
   `SDL_AddTimer` then works (its thread waits on the clock above), and the
   synchronous async I/O can stay or move to a thread.
-- **Rust**: `gasm::thread::spawn` with the same scheduler, later; `std::thread`
-  on `wasm32-unknown-unknown` can't be redirected.
+- **Rust**: `gasm::thread` (`spawn`, `Builder`, `JoinHandle`, `yield_now`,
+  `sleep`, `wait_frame`) and `gasm::sync` (`Mutex`, `Condvar`, `Semaphore`),
+  the same scheduler ported to Rust, driven by `gasm::threaded_main_loop!`.
+  `std::thread` on `wasm32-unknown-unknown` can't be redirected, so games use
+  these instead; closures needn't be `Send`.
 
 ### Interaction with frames
 
@@ -163,8 +166,14 @@ driven inside the guest.
    `poll_oneoff` isn't available). Not covered: `pthread_exit`, cancellation,
    C11 `<threads.h>` (musl calls internal pthread names there). Example and
    test: `guests/pthreadtest`, plain POSIX code, in the determinism suite.
-4. Docs (site dev guide), Rust API later. **Docs done**; the Rust API is on the
-   roadmap.
+4. Docs (site dev guide), Rust API. **Done.** Rust can't read or set the wasm
+   stack pointer on stable, so `gasm-sdk` ships the two functions as wasm
+   assembly (`guests/gasm/sp/gasm_sp.s`), assembled once into a 360-byte
+   `libgasm_sp.a` (`scripts/build-rust-sp.sh`) that its `build.rs` links on
+   wasm32: games need no assembler. The scheduler state that is read between an
+   unwind and `asyncify_stop_unwind` lives in plain statics, and a thread is
+   resumed by id (not index), since threads come and go while it is suspended.
+   Test: `guests/rthreadtest` (default, `mode=many`, `mode=deadlock`).
 
 ### As built (phase 1)
 

@@ -16,6 +16,8 @@
 pub mod sys;
 
 pub mod gles;
+pub mod sync;
+pub mod thread;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub mod native;
@@ -861,12 +863,18 @@ pub mod main_loop {
 
     /// Return to the runner; continues in the next frame (input and time are per frame).
     pub fn wait_frame() {
+        if crate::thread::available() {
+            return crate::thread::wait_frame(); // threaded_main_loop!
+        }
         let f = unsafe { std::ptr::read_volatile(&raw const WAIT) };
         f()
     }
 
     /// Frames waited so far.
     pub fn frames() -> u32 {
+        if crate::thread::available() {
+            return crate::thread::frames();
+        }
         unsafe { FRAMES }
     }
 
@@ -935,6 +943,41 @@ pub mod main_loop {
             }
         }
     }
+}
+
+/// Like [`main_loop!`], with cooperative threads ([`thread`], [`sync`]): `main`
+/// runs as the first thread, [`thread::spawn`] starts more. The frame driver is the
+/// thread scheduler. Asyncify only (no `gasm_run` export): run `wasm-opt --asyncify
+/// --pass-arg=asyncify-removelist@gasm_frame,gasm_loop_frame` on the module.
+#[macro_export]
+macro_rules! threaded_main_loop {
+    ($main:path) => {
+        #[unsafe(no_mangle)]
+        pub extern "C" fn gasm_abi_version() -> i32 {
+            $crate::ABI_VERSION
+        }
+        #[unsafe(no_mangle)]
+        pub extern "C" fn gasm_init() -> i32 {
+            $crate::thread::__set_main($main);
+            0
+        }
+        #[unsafe(no_mangle)]
+        pub extern "C" fn gasm_frame() {
+            gasm_loop_frame()
+        }
+        #[unsafe(no_mangle)]
+        #[inline(never)]
+        pub extern "C" fn gasm_loop_frame() {
+            $crate::thread::__threaded_loop_frame()
+        }
+    };
+    ($main:path, $exit:path) => {
+        $crate::threaded_main_loop!($main);
+        #[unsafe(no_mangle)]
+        pub extern "C" fn gasm_exit() {
+            $exit()
+        }
+    };
 }
 
 /// Export the gasm entry points for a game with its own main loop (see [`main_loop`]).

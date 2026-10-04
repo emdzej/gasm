@@ -16,6 +16,13 @@ SDKs:
   `glow::Context::from_loader_function_cstr(gasm::gles::get_proc_address)`
   works, and so do crates built on glow, such as egui_glow (`guests/eguidemo`:
   egui's demo, unchanged). Examples and determinism cases: `glowtest`, `eguidemo`.
+- Rust: cooperative threads. `gasm::thread` (`spawn`, `Builder::stack_size`,
+  `JoinHandle::join`/`is_finished`, `yield_now`, `sleep`, `wait_frame`) and
+  `gasm::sync` (`Mutex`, `Condvar` with timeouts, `Semaphore`) on the same
+  deterministic scheduler as the C SDK, with `gasm::threaded_main_loop!` (an
+  Asyncify build, as for `main_loop!`). Closures needn't be `Send`. `gasm-sdk`
+  now has a build script: on wasm32 it links a 360-byte helper that reads and
+  sets the wasm stack pointer (stable Rust can't). Test: `guests/rthreadtest`.
 - Rust: a game no longer has to be `Send` on wasm32 (guests are
   single-threaded), so it can hold `Rc`, egui state and the like.
 

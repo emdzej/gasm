@@ -25,7 +25,7 @@ for n in node ${NODE24:-} "$HOME"/.nvm/versions/node/v2[4-9]*/bin/node; do
 done
 [ -n "$NODE_JSPI" ] || echo "note: no Node with JSPI (24+): run builds are checked natively only"
 [ -d roms ] && [ -n "$(ls roms/*.nes 2>/dev/null)" ] && [ -f roms/freedoom2.wad ] && [ -f roms/doom1.wad ] && [ -f roms/bass/sky.dnr ] && [ -d roms/scumm/dott-dos-ni-demo-en ] && [ -f roms/drascula/flac/audio/track28.flac ] || scripts/fetch-roms.sh
-for g in nes test-pattern gltest glowtest eguidemo sumo triangle textured inputtest threadtest pthreadtest sdl3-threads loopdemo loopdemo-run loopdemo-c loopdemo-c-run doom scummvm scummvm-run sdl3-snake sdl3-woodeneye sdl3-callbacks sdl3-classic sdl3-classic-run; do "$NATIVE" build/$g.wasm --compile build/$g.cwasm 2>/dev/null; done
+for g in nes test-pattern gltest glowtest eguidemo sumo triangle textured inputtest threadtest pthreadtest rthreadtest sdl3-threads loopdemo loopdemo-run loopdemo-c loopdemo-c-run doom scummvm scummvm-run sdl3-snake sdl3-woodeneye sdl3-callbacks sdl3-classic sdl3-classic-run; do "$NATIVE" build/$g.wasm --compile build/$g.cwasm 2>/dev/null; done
 
 pass=0; fail=0
 run() { "$@" 2>/dev/null | grep -E '^(frames|video)' | tr '\n' ' '; }
@@ -79,6 +79,9 @@ check threadtest-many     threadtest 40 --param mode=many
 # POSIX threads (gasm_pthread.c): timed condition waits, once, keys, recursive mutex,
 # rwlock across frames, semaphores, spinlocks, nanosleep
 check pthreadtest         pthreadtest 60
+# the same scheduler in Rust (gasm::thread, gasm::sync; threaded_main_loop!)
+check rthreadtest         rthreadtest 40
+check rthreadtest-many    rthreadtest 40 --param mode=many
 # OpenGL ES 3 (gasm:gl via <GLES3/gl3.h>): uploads, uniforms, a mapped buffer, query and
 # fence readiness by frame, and the GL errors of deliberate mistakes (the error log is uploaded)
 check gltest              gltest 120
@@ -129,12 +132,14 @@ check freedoom2-save-load doom 1100 --asset wad=roms/freedoom2.wad --param "args
 
 # threads that wait for each other trap with the list of who waits for what
 for runner in "$NATIVE" "$NODE"; do
-  out=$($runner build/threadtest.wasm --headless 10 --param mode=deadlock 2>&1)
-  if grep -q 'gasm_thread: deadlock' <<<"$out" && grep -q 'thread 2 waits on' <<<"$out"; then
-    pass=$((pass + 1)); printf 'PASS  %-22s %s\n' "thread-deadlock" "${runner##*/}"
-  else
-    fail=$((fail + 1)); printf 'FAIL  thread-deadlock (%s): no deadlock report\n' "$runner"
-  fi
+  for g in threadtest rthreadtest; do
+    out=$($runner build/$g.wasm --headless 10 --param mode=deadlock 2>&1)
+    if grep -q 'thread: deadlock' <<<"$out" && grep -q 'thread 2 waits on' <<<"$out"; then
+      pass=$((pass + 1)); printf 'PASS  %-22s %s\n' "$g-deadlock" "${runner##*/}"
+    else
+      fail=$((fail + 1)); printf 'FAIL  %s-deadlock (%s): no deadlock report\n' "$g" "$runner"
+    fi
+  done
 done
 
 # video_set_aspect outside 1/8..8 traps on every runner

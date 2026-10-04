@@ -621,6 +621,42 @@ covered: `pthread_exit`, cancellation, process-shared objects and C11
   who waits for what.
 - Each thread costs its C stack plus a 256 KiB Asyncify buffer.
 
+**In Rust**, `gasm::thread` and `gasm::sync` are the same scheduler, shaped like
+`std::thread` and `std::sync` (`std::thread` itself can't run on
+`wasm32-unknown-unknown`). The game uses `threaded_main_loop!` instead of
+`main_loop!`:
+
+```rust
+use gasm::{sync::Mutex, thread};
+use std::{rc::Rc, time::Duration};
+
+fn run() -> i32 {
+    let progress = Rc::new(Mutex::new(0));
+    let p = progress.clone();
+    let loader = thread::spawn(move || {
+        for step in 1..=10 {
+            thread::sleep(Duration::from_millis(100));   // frame time; others run
+            *p.lock() = step;
+        }
+        "level 1"
+    });
+    while !loader.is_finished() {
+        draw_progress(*progress.lock());
+        thread::wait_frame();
+    }
+    let level = loader.join();
+    ...
+}
+gasm::threaded_main_loop!(run);
+```
+
+Closures needn't be `Send` (it is one wasm thread: `Rc` is fine); `Condvar`
+(with `wait_timeout`) and `Semaphore` are in `gasm::sync`; `thread_local!`
+values are shared by all threads. Build it with
+`wasm-opt --asyncify --pass-arg=asyncify-removelist@gasm_frame,gasm_loop_frame -O2`,
+as a `main_loop!` game, without a run build. Example:
+[`guests/rthreadtest`](https://github.com/emdzej/gasm/blob/main/guests/rthreadtest/src/lib.rs).
+
 ### OpenGL ES 3
 
 GLES 3 / WebGL 2 renderers build unchanged with the SDK's drop-in headers:

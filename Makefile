@@ -22,7 +22,7 @@ TOOLCHAIN ?= stable
 RUSTC_W  := $(shell $(RUSTUP) which --toolchain $(TOOLCHAIN) rustc 2>/dev/null)
 CARGO_W  := $(shell $(RUSTUP) which --toolchain $(TOOLCHAIN) cargo 2>/dev/null)
 RUST_OUT := guests/target/wasm32-unknown-unknown/release
-RUST_GAMES := sumo nes triangle textured inputtest loopdemo assetcheck glowtest eguidemo
+RUST_GAMES := sumo nes triangle textured inputtest loopdemo assetcheck glowtest eguidemo rthreadtest
 RUST_SRC := $(shell find guests/gasm sdk/glow $(addprefix guests/,$(RUST_GAMES)) -name '*.rs' -o -name Cargo.toml 2>/dev/null) \
   guests/Cargo.toml guests/Cargo.lock guests/.cargo/config.toml
 
@@ -55,7 +55,7 @@ $(FLAGS_DIR)/$(1): FORCE
 	@echo '$(2)' | cmp -s - $$@ || echo '$(2)' > $$@
 endef
 
-GUESTS   := $(BUILD)/test-pattern.wasm $(BUILD)/gltest.wasm $(BUILD)/glowtest.wasm $(BUILD)/eguidemo.wasm $(BUILD)/nes.wasm $(BUILD)/sumo.wasm $(BUILD)/triangle.wasm $(BUILD)/textured.wasm $(BUILD)/inputtest.wasm $(BUILD)/loopdemo.wasm $(BUILD)/loopdemo-c.wasm $(BUILD)/threadtest.wasm $(BUILD)/pthreadtest.wasm $(BUILD)/assetcheck.wasm $(BUILD)/doom.wasm $(BUILD)/scummvm.wasm \
+GUESTS   := $(BUILD)/test-pattern.wasm $(BUILD)/gltest.wasm $(BUILD)/glowtest.wasm $(BUILD)/eguidemo.wasm $(BUILD)/nes.wasm $(BUILD)/sumo.wasm $(BUILD)/triangle.wasm $(BUILD)/textured.wasm $(BUILD)/inputtest.wasm $(BUILD)/loopdemo.wasm $(BUILD)/loopdemo-c.wasm $(BUILD)/threadtest.wasm $(BUILD)/pthreadtest.wasm $(BUILD)/rthreadtest.wasm $(BUILD)/assetcheck.wasm $(BUILD)/doom.wasm $(BUILD)/scummvm.wasm \
   $(BUILD)/sdl3-snake.wasm $(BUILD)/sdl3-woodeneye.wasm $(BUILD)/sdl3-callbacks.wasm $(BUILD)/sdl3-classic.wasm \
   $(BUILD)/sdl3-threads.wasm
 # made by the same recipes as the Asyncify builds
@@ -313,6 +313,11 @@ $(RUST_OUT)/%.wasm: $(BUILD)/.rust-guests ;
 $(BUILD)/loopdemo.wasm: $(RUST_OUT)/loopdemo.wasm $(WASM_OPT)
 	@mkdir -p $(@D)
 	$(WASM_OPT) $< -O2 -o $(@:.wasm=-run.wasm)
+	$(WASM_OPT) $< --asyncify --pass-arg=asyncify-removelist@gasm_frame,gasm_loop_frame -O2 -o $@
+
+# cooperative threads in Rust (gasm::threaded_main_loop!): Asyncify only, no run build
+$(BUILD)/rthreadtest.wasm: $(RUST_OUT)/rthreadtest.wasm $(WASM_OPT)
+	@mkdir -p $(@D)
 	$(WASM_OPT) $< --asyncify --pass-arg=asyncify-removelist@gasm_frame,gasm_loop_frame -O2 -o $@
 
 # cooperative threads (gasm_thread.h): the loop helper with GASM_LOOP_THREADS, Asyncify only

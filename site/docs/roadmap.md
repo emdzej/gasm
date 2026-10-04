@@ -24,13 +24,11 @@ Rust through glow
 ([design/gasm-gl.md](https://github.com/emdzej/gasm/blob/main/design/gasm-gl.md)).
 
 1. **Godot** on `gasm:gl`.
-2. **Cooperative threads in Rust.**
 
 ## Runtime and ABI
 
 | Item | What it gives | Status |
 |---|---|---|
-| Cooperative threads in Rust | `gasm::thread::spawn` and locks on the same scheduler (the C API, POSIX threads and SDL threads are done: [design/threads.md](https://github.com/emdzej/gasm/blob/main/design/threads.md), part A). `std::thread` on `wasm32-unknown-unknown` can't be redirected. | not started |
 | Stack switching beyond JSPI | Browsers without JSPI (and Node 22) still need the Asyncify builds; wasm's stack-switching proposal would cover them too. | waiting on engines |
 | Real wasm threads | Shared memory and atomics, opt-in, for guests that need parallel CPU (physics, job systems, Godot's worker pool). Not deterministic. | proposal, after cooperative threads: [design/threads.md](https://github.com/emdzej/gasm/blob/main/design/threads.md) (part B) |
 | Guest memory limit | A cap on linear memory growth. Today a guest can grow to the engine maximum (4 GiB for wasm32); needed before running untrusted content. | not started |
