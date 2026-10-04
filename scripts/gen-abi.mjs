@@ -438,6 +438,26 @@ async function keymapCheck() {
     ? [] : ['runners/native/src/default-keymap.txt differs from gasm-host.js DEFAULT_KEYMAP'];
 }
 
+// The null GL's limits (WebGL 2's minimums) exist twice: null_limit in runners/native/src/gl.rs
+// and NULL_LIMITS in runners/web/lib/gl.js. Both must answer every pname alike (0 by default).
+async function nullLimitsCheck() {
+  const { NULL_LIMITS } = await import(join(ROOT, 'runners/web/lib/gl.js'));
+  const src = read('runners/native/src/gl.rs');
+  const body = src.slice(src.indexOf('fn null_limit('), src.indexOf('\n}\n', src.indexOf('fn null_limit(')));
+  const native = {};
+  for (const m of body.matchAll(/^\s*((?:0x[0-9A-Fa-f]+\s*\|?\s*)+)=>\s*&\[([^\]]*)\]/gm)) {
+    for (const k of m[1].split('|')) native[Number(k.trim())] = m[2].split(',').map((x) => Number(x.trim()));
+  }
+  const errors = [];
+  const keys = new Set([...Object.keys(NULL_LIMITS).map(Number), ...Object.keys(native).map(Number)]);
+  for (const k of [...keys].sort((a, b) => a - b)) {
+    const js = (NULL_LIMITS[k] ?? [0]).join(','), rs = (native[k] ?? [0]).join(',');
+    if (js !== rs) errors.push(`null GL limit 0x${k.toString(16).toUpperCase().padStart(4, '0')}: gl.rs [${rs}], gl.js [${js}]`);
+  }
+  if (!Object.keys(native).length) errors.push('runners/native/src/gl.rs: null_limit table not found');
+  return errors;
+}
+
 // ---- main ----------------------------------------------------------------------------------
 
 const outputs = {
@@ -445,7 +465,7 @@ const outputs = {
   'runners/native/src/gl_sigs.rs': genGlSigs(), 'guests/gasm/src/native_gl.rs': genGlStub(),
 };
 if (process.argv.includes('--check')) {
-  const errors = [...(await conformance()), ...(await keymapCheck())];
+  const errors = [...(await conformance()), ...(await keymapCheck()), ...(await nullLimitsCheck())];
   for (const [p, content] of Object.entries(outputs)) {
     if (read(p) !== content) errors.push(`${p} is out of date: run node scripts/gen-abi.mjs`);
   }

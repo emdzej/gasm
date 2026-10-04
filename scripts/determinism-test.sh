@@ -97,6 +97,16 @@ check godot-platformer    godot 420 $GP/platformer.pck --input '30-400:KEY(Arrow
 check godot-scene3d       godot 300 $GP/scene3d.pck --input '100-160:KEY(ArrowLeft),200-205:KEY(Space)'
 check godot-ui            godot 90 $GP/ui.pck --input '20:PTR(200,126),21-22:PTR(200,126,L),23:PTR(200,126),30:"Ada",50:PTR(500,303),51-53:PTR(500,303,L),54:PTR(500,303),70:PTR(190,492),71-72:PTR(190,492,L),73:PTR(190,492)'
 check godot-audio         godot 150 $GP/audio.pck --input '60-64:KEY(Digit1),90-94:KEY(Digit5),120-124:KEY(Digit8)'
+# Godot logs an error and carries on (a shader it rejects draws nothing, alike on every
+# runner, so the hashes still agree): the examples must log no errors on either null GL
+for e in hello2d platformer scene3d ui audio; do
+  errs=$( { "$NATIVE" build/godot.wasm $GP/$e.pck --headless 60 2>&1 >/dev/null; $NODE build/godot.wasm $GP/$e.pck --headless 60 2>&1 >/dev/null; } | grep -E '^(SHADER )?ERROR' | sort -u | head -5)
+  if [ -z "$errs" ]; then
+    pass=$((pass + 1)); printf 'PASS  %-22s %s\n' "godot-$e-log" "no errors (gasm-run, headless.mjs)"
+  else
+    fail=$((fail + 1)); printf 'FAIL  %s\n%s\n' "godot-$e-log" "$(echo "$errs" | sed 's/^/  /')"
+  fi
+done
 # SDL3 (sdk/sdl3): SDL's own demos unchanged (snake; woodeneye: WASD, relative mouse, shooting),
 # a callbacks app (audio stream, gamepad events) and a classic main() loop (Asyncify:
 # keyboard state, text input, SDL_Delay, a save file in the pref path)

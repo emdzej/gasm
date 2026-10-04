@@ -1,5 +1,5 @@
 ; Godot on gasm: 3D with the Compatibility renderer (OpenGL ES 3 on gasm:gl):
-; a procedural sky, shadows, PBR materials, 3D physics.
+; a procedural sky, shadows, PBR materials, a custom shader with a varying, 3D physics.
 config_version=5
 
 [application]

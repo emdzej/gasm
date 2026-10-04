@@ -6,6 +6,24 @@ embedders. The ABI version is still 0: additions keep it (see
 guests can probe for newer imports with `gasm.has`. Versions are the git tags and
 the package versions (`gasm-sdk`, `gasm-host`, `@emdzej/gasm-host`).
 
+## Unreleased
+
+Runners:
+- gasm:gl null GL (headless, natively and in Node): reports every WebGL 2
+  minimum limit. `GL_MAX_VERTEX_OUTPUT_COMPONENTS` and
+  `GL_MAX_FRAGMENT_INPUT_COMPONENTS` were 0, so Godot rejected every shader
+  with a `varying` in headless runs ("Too many varyings"); the uniform-block,
+  uniform-component, texel-offset, LOD-bias and element-index limits were 0
+  too, and `0x8C8A` answered 4 (it is
+  `MAX_TRANSFORM_FEEDBACK_INTERLEAVED_COMPONENTS`, 64; `SEPARATE_ATTRIBS` is
+  `0x8C8B`). `gen-abi.mjs --check` now compares the native and JS tables.
+  Hashes of guests that query these limits change.
+
+Games:
+- Godot scene3d example: a custom spatial shader with a `varying`. The
+  determinism suite also fails when a Godot example logs an error on either
+  null GL.
+
 ## 0.8.0 (2026-10-04)
 
 Games:

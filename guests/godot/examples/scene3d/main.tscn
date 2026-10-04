@@ -1,6 +1,7 @@
-[gd_scene load_steps=10 format=3]
+[gd_scene load_steps=13 format=3]
 
 [ext_resource type="Script" path="res://main.gd" id="1"]
+[ext_resource type="Shader" path="res://stripes.gdshader" id="2"]
 
 [sub_resource type="ProceduralSkyMaterial" id="sky_mat"]
 sky_top_color = Color(0.32, 0.5, 0.82, 1)
@@ -40,6 +41,18 @@ albedo_color = Color(0.95, 0.75, 0.3, 1)
 metallic = 0.9
 roughness = 0.25
 
+[sub_resource type="CylinderMesh" id="pillar_mesh"]
+top_radius = 0.35
+bottom_radius = 0.35
+height = 3.0
+
+[sub_resource type="ShaderMaterial" id="pillar_mat"]
+shader = ExtResource("2")
+
+[sub_resource type="CylinderShape3D" id="pillar_shape"]
+radius = 0.35
+height = 3.0
+
 [node name="Main" type="Node3D"]
 script = ExtResource("1")
 
@@ -70,6 +83,16 @@ shape = SubResource("floor_shape")
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2.2, 0)
 mesh = SubResource("torus_mesh")
 surface_material_override/0 = SubResource("torus_mat")
+
+[node name="Pillar" type="StaticBody3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 3.5, 1.5, -2.5)
+
+[node name="Mesh" type="MeshInstance3D" parent="Pillar"]
+mesh = SubResource("pillar_mesh")
+surface_material_override/0 = SubResource("pillar_mat")
+
+[node name="Shape" type="CollisionShape3D" parent="Pillar"]
+shape = SubResource("pillar_shape")
 
 [node name="Bodies" type="Node3D" parent="."]
 

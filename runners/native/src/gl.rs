@@ -147,21 +147,36 @@ fn image_bytes(w: i64, h: i64, d: i64, bpp: i64, s: &Store) -> i64 {
 
 /// WebGL 2's guaranteed minimums (and fixed answers), reported by null GLs.
 fn null_limit(pname: u32) -> &'static [i64] {
+    // the same table as NULL_LIMITS in runners/web/lib/gl.js (gen-abi.mjs --check)
     match pname {
-        0x0D33 | 0x851C | 0x84E8 => &[2048],
-        0x8073 | 0x88FF => &[256],
-        0x8872 | 0x8B4C | 0x8869 => &[16],
-        0x8B4D => &[32],
-        0x8DFB => &[256],
-        0x8DFD => &[224],
-        0x8DFC => &[15],
-        0x8CDF | 0x8824 | 0x8D57 | 0x8C8A => &[4],
-        0x8A2F => &[24],
-        0x8A30 => &[16384],
-        0x8A34 => &[256],
-        0x0D3A => &[4096, 4096],
-        0x846D | 0x846E => &[1, 1],
-        0x821B => &[3],
+        0x0D33 | 0x851C | 0x84E8 => &[2048], // texture, cube map, renderbuffer size
+        0x8073 | 0x88FF => &[256],           // 3D texture size, array texture layers
+        0x8872 | 0x8B4C | 0x8869 => &[16],   // texture units (fragment, vertex), vertex attribs
+        0x8B4D => &[32],                     // combined texture units
+        0x8DFB => &[256],                    // vertex uniform vectors
+        0x8DFD => &[224],                    // fragment uniform vectors
+        0x8DFC => &[15],                     // varying vectors
+        0x8B4B | 0x9125 => &[60],            // varying components, fragment input components
+        0x9122 => &[64],                     // vertex output components
+        0x8B4A => &[1024],                   // vertex uniform components
+        0x8B49 => &[896],                    // fragment uniform components
+        0x8CDF | 0x8824 | 0x8D57 => &[4],    // color attachments, draw buffers, samples
+        0x8A2F => &[24],                     // uniform buffer bindings
+        0x8A30 => &[16384],                  // uniform block size
+        0x8A34 => &[256],                    // uniform buffer offset alignment
+        0x8A2B | 0x8A2D => &[12],            // vertex, fragment uniform blocks
+        0x8A2E => &[24],                     // combined uniform blocks
+        0x8A31 => &[50176],                  // combined vertex uniform components
+        0x8A33 => &[50048],                  // combined fragment uniform components
+        0x8904 => &[-8],                     // min program texel offset
+        0x8905 => &[7],                      // max program texel offset
+        0x84FD => &[2],                      // texture LOD bias
+        0x8D6B => &[16777215],               // element index (2^24 - 1)
+        0x8C8A => &[64],                     // transform feedback interleaved components
+        0x8C8B | 0x8C80 => &[4],             // transform feedback separate attribs, components
+        0x0D3A => &[4096, 4096],             // viewport dims
+        0x846D | 0x846E => &[1, 1],          // point size, line width ranges
+        0x821B => &[3],                      // major version
         _ => &[0],
     }
 }

@@ -25,7 +25,7 @@ cases (the same hashes on wasmtime JIT, AOT and V8) and demos on the website.
 |---|---|
 | [`examples/hello2d`](examples/hello2d) | GDScript, drawing, an imported SVG texture, text, input actions |
 | [`examples/platformer`](examples/platformer) | 2D physics (`CharacterBody2D`, static bodies), `Area2D` signals, a following camera, gamepad |
-| [`examples/scene3d`](examples/scene3d) | 3D in the Compatibility renderer: procedural sky, fog, a shadowed sun, PBR materials, 3D physics |
+| [`examples/scene3d`](examples/scene3d) | 3D in the Compatibility renderer: procedural sky, fog, a shadowed sun, PBR materials, a custom shader (`stripes.gdshader`, with a `varying`), 3D physics |
 | [`examples/ui`](examples/ui) | Controls (`LineEdit`, `CheckBox`, `HSlider`, `OptionButton`, `ItemList`), text input, saves with `ConfigFile` in `user://` |
 | [`examples/audio`](examples/audio) | `AudioStreamGenerator` synthesis, a WAV built in code, a reverb bus, the spectrum analyzer |
 
