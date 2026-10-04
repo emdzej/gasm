@@ -31,6 +31,15 @@ jobs:
           ref: ${{ env.TAG }}
       - name: Rust toolchain
         run: rustup toolchain install stable --profile minimal --target wasm32-unknown-unknown
+      # the Godot tree as CI caches it (a cold build takes a while)
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            tools/godot-src
+            tools/godot-editor
+            tools/scons
+          key: godot-${{ runner.os }}-${{ hashFiles('scripts/fetch-godot.sh', 'guests/godot/godot.patch', 'guests/godot/platform/**', 'sdk/c/src/gasm_gl.c', 'spec/abi.json') }}
+          restore-keys: godot-${{ runner.os }}-
       - name: Build games
         run: make guests
       - name: License notices for the games (THIRD-PARTY.txt)
@@ -187,7 +196,7 @@ jobs:
           | File | What |
           |---|---|
           | \`gasm-$VERSION-macos-apps.zip\` | **Sumo.app, NES.app, Triangle.app, Test Pattern.app**, double-click to play (unsigned: right-click, then Open the first time) |
-          | \`gasm-$VERSION-macos-universal.tar.gz\` | gasm-run + gasm-relay (Apple Silicon + Intel) with games and launch scripts |
+          | \`gasm-$VERSION-macos-universal.tar.gz\` | gasm-run + gasm-relay (Apple Silicon + Intel) with games and launch scripts, ANGLE for OpenGL ES games, Godot (\`run-godot <game.pck>\`) |
           | \`gasm-$VERSION-linux-x86_64.tar.gz\`, \`gasm-$VERSION-linux-arm64.tar.gz\` | same for Linux (x86_64, arm64) |
           | \`gasm-$VERSION-windows-x86_64.zip\` | same for Windows |
           | \`gasm-$VERSION-games-wasm.zip\` | just the games: the same .wasm files run on every runner and at https://gasm.emdzej.pl/demos/ (license notices in THIRD-PARTY.txt) |
