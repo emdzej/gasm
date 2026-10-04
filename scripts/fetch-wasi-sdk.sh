@@ -2,6 +2,10 @@
 # Download wasi-sdk (clang + wasi-libc + libc++ for wasm32) into tools/wasi-sdk.
 # The archive is checked against a pinned SHA-256 (another version needs WASI_SDK_SHA256).
 # tools/wasi-sdk/.version records what is installed; the Makefile depends on it.
+# The sysroot (wasi-libc, libc++) and the compiler runtime come from wasi-sdk's
+# host-independent archives, not the host SDK's own copies (those are built per
+# host and embed different source paths): the same libraries on every machine, so
+# a guest built on macOS and one built on Linux are the same bytes.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 . scripts/lib.sh
@@ -17,7 +21,13 @@ esac
 if [ "$VERSION" != "$PINNED" ]; then
   SHA=${WASI_SDK_SHA256:?wasi-sdk $VERSION is not pinned: set WASI_SDK_SHA256 to its archive checksum}
 fi
-STAMP="$VERSION-$PLAT"
+SYSROOT_SHA=9d813544eeebe38b7b8f2244ed591de46b6db812c6dd1a257ff9f0d2a905a2be
+RT_SHA=eee3e634dcf71aa22b1333391623cf5c9965a637dc428a27b1a858c026c587f1
+if [ "$VERSION" != "$PINNED" ]; then
+  SYSROOT_SHA=${WASI_SYSROOT_SHA256:?set WASI_SYSROOT_SHA256 for wasi-sysroot $VERSION}
+  RT_SHA=${WASI_RT_SHA256:?set WASI_RT_SHA256 for libclang_rt $VERSION}
+fi
+STAMP="$VERSION-$PLAT+sysroot"
 [ -f tools/wasi-sdk/.version ] && [ "$(cat tools/wasi-sdk/.version)" = "$STAMP" ] && exit 0
 URL=https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-$VERSION/wasi-sdk-$VERSION.0-$PLAT.tar.gz
 mkdir -p tools
@@ -26,7 +36,20 @@ trap 'rm -rf "$TMP"' EXIT
 echo "fetching $URL"
 download "$URL" "$TMP/wasi-sdk.tar.gz" "$SHA"
 tar xzf "$TMP/wasi-sdk.tar.gz" -C "$TMP"
-rm -rf tools/wasi-sdk && mv "$TMP/wasi-sdk-$VERSION.0-$PLAT" tools/wasi-sdk
+REL=https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-$VERSION
+download "$REL/wasi-sysroot-$VERSION.0.tar.gz" "$TMP/sysroot.tar.gz" "$SYSROOT_SHA"
+download "$REL/libclang_rt-$VERSION.0.tar.gz" "$TMP/rt.tar.gz" "$RT_SHA"
+SDK=$TMP/wasi-sdk-$VERSION.0-$PLAT
+rm -rf "$SDK/share/wasi-sysroot"
+tar xzf "$TMP/sysroot.tar.gz" -C "$SDK/share" && mv "$SDK/share/wasi-sysroot-$VERSION.0" "$SDK/share/wasi-sysroot"
+tar xzf "$TMP/rt.tar.gz" -C "$TMP"
+for d in "$TMP/libclang_rt-$VERSION.0"/*/; do
+  t=$(basename "$d")
+  for lib in "$SDK"/lib/clang/*/lib; do
+    [ -d "$lib/$t" ] && cp "$d"/* "$lib/$t/"
+  done
+done
+rm -rf tools/wasi-sdk && mv "$SDK" tools/wasi-sdk
 [ "$(uname -s)" = Darwin ] && xattr -dr com.apple.quarantine tools/wasi-sdk 2>/dev/null || true
 echo "$STAMP" > tools/wasi-sdk/.version
 tools/wasi-sdk/bin/clang --version | head -1
