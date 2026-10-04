@@ -658,6 +658,31 @@ if (glGetError() != GL_NO_ERROR) ...   // GL errors are reported, they don't tra
 
 Example: [`guests/gltest`](https://github.com/emdzej/gasm/blob/main/guests/gltest/main.c).
 
+**From Rust, through [glow](https://github.com/grovesNL/glow).** `gasm::gles`
+has the same GLES 3.0 functions as `gasm_gl.c`, and
+[`sdk/glow`](https://github.com/emdzej/gasm/tree/main/sdk/glow) is glow with its
+native backend on wasm32 (upstream glow uses web-sys there). Patch it in, then
+use glow as usual; crates built on glow, like egui_glow, work unchanged:
+
+```toml
+[dependencies]
+gasm = { package = "gasm-sdk", version = "0.8" }
+glow = "0.17"
+
+[patch.crates-io]
+glow = { git = "https://github.com/emdzej/gasm" }
+```
+
+```rust
+use glow::HasContext;
+let gl = unsafe { glow::Context::from_loader_function_cstr(gasm::gles::get_proc_address) };
+unsafe { gl.clear_color(0.1, 0.1, 0.2, 1.0) };
+```
+
+Examples: [`guests/glowtest`](https://github.com/emdzej/gasm/blob/main/guests/glowtest/src/lib.rs)
+(glow's API) and [`guests/eguidemo`](https://github.com/emdzej/gasm/blob/main/guests/eguidemo/src/lib.rs)
+(egui's demo through egui_glow, with gasm's pointer and keys as egui input).
+
 ### SDL 3
 
 SDL programs build for gasm with their source unchanged:

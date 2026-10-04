@@ -1,0 +1,161 @@
+diff --color -ruN a/Cargo.toml b/Cargo.toml
+--- a/Cargo.toml	2026-10-04 07:37:24
++++ b/Cargo.toml	2026-10-04 07:39:17
+@@ -23,7 +23,7 @@
+ autoexamples = false
+ autotests = false
+ autobenches = false
+-description = "GL on Whatever: a set of bindings to run GL (Open GL, OpenGL ES, and WebGL) anywhere, and avoid target-specific code."
++description = "(gasm fork: the native backend on wasm32-unknown-unknown, see GASM.md) GL on Whatever: a set of bindings to run GL (Open GL, OpenGL ES, and WebGL) anywhere, and avoid target-specific code."
+ homepage = "https://github.com/grovesNL/glow.git"
+ readme = "README.md"
+ license = "MIT OR Apache-2.0 OR Zlib"
+@@ -52,71 +52,6 @@
+ version = "0.4.16"
+ optional = true
+ 
+-[target.'cfg(target_arch = "wasm32")'.dependencies.js-sys]
+-version = "~0.3"
+-
+-[target.'cfg(target_arch = "wasm32")'.dependencies.slotmap]
+-version = "1"
+-
+-[target.'cfg(target_arch = "wasm32")'.dependencies.wasm-bindgen]
+-version = "~0.2"
+-
+-[target.'cfg(target_arch = "wasm32")'.dependencies.web_sys]
+-version = "~0.3.60"
+-features = [
+-    "Document",
+-    "Element",
+-    "HtmlCanvasElement",
+-    "HtmlImageElement",
+-    "HtmlVideoElement",
+-    "ImageBitmap",
+-    "ImageData",
+-    "VideoFrame",
+-    "WebGlActiveInfo",
+-    "WebGlBuffer",
+-    "WebGlFramebuffer",
+-    "WebGlProgram",
+-    "WebGlQuery",
+-    "WebGlRenderbuffer",
+-    "WebGlRenderingContext",
+-    "WebGl2RenderingContext",
+-    "WebGlSampler",
+-    "WebGlShader",
+-    "WebGlShaderPrecisionFormat",
+-    "WebGlSync",
+-    "WebGlTexture",
+-    "WebGlTransformFeedback",
+-    "WebGlUniformLocation",
+-    "WebGlVertexArrayObject",
+-    "Window",
+-    "AngleInstancedArrays",
+-    "ExtBlendMinmax",
+-    "ExtColorBufferFloat",
+-    "ExtColorBufferHalfFloat",
+-    "ExtDisjointTimerQuery",
+-    "ExtFragDepth",
+-    "ExtShaderTextureLod",
+-    "ExtSRgb",
+-    "ExtTextureFilterAnisotropic",
+-    "OesElementIndexUint",
+-    "OesStandardDerivatives",
+-    "OesTextureFloat",
+-    "OesTextureFloatLinear",
+-    "OesTextureHalfFloat",
+-    "OesTextureHalfFloatLinear",
+-    "OesVertexArrayObject",
+-    "WebglColorBufferFloat",
+-    "WebglCompressedTextureAstc",
+-    "WebglCompressedTextureEtc",
+-    "WebglCompressedTextureEtc1",
+-    "WebglCompressedTexturePvrtc",
+-    "WebglCompressedTextureS3tc",
+-    "WebglCompressedTextureS3tcSrgb",
+-    "WebglDebugRendererInfo",
+-    "WebglDebugShaders",
+-    "WebglDepthTexture",
+-    "WebglDrawBuffers",
+-    "WebglLoseContext",
+-    "OvrMultiview2",
+-]
+-package = "web-sys"
++# gasm: upstream cfgs (chlorine, docs_rs) warn when glow is a path or git dependency
++[lints.rust]
++unexpected_cfgs = "allow"
+diff --color -ruN a/GASM.md b/GASM.md
+--- a/GASM.md	1970-01-01 01:00:00
++++ b/GASM.md	2026-10-04 07:37:24
+@@ -0,0 +1,30 @@
++# glow for gasm
++
++[glow](https://github.com/grovesNL/glow) 0.17.0 with its native backend on
++`wasm32-unknown-unknown`, where it calls the OpenGL ES 3.0 functions of the gasm
++Rust SDK (`gasm::gles`, on the `gasm:gl` imports) instead of WebGL through
++web-sys, which gasm guests don't have. Made by `scripts/update-glow.sh` from the
++crates.io release and `sdk/glow.patch`:
++
++- `src/lib.rs`: the native backend on every target (the web backend is removed).
++- `src/gl46.rs`: function pointers are table indices on wasm32, so only null
++  means "not loaded".
++- `Cargo.toml`: no web dependencies.
++
++Use it in a gasm game:
++
++```toml
++[dependencies]
++glow = "0.17"
++gasm-sdk = "0.8"
++
++[patch.crates-io]
++glow = { git = "https://github.com/emdzej/gasm" }
++```
++
++```rust
++let gl = unsafe { glow::Context::from_loader_function_cstr(gasm::gles::get_proc_address) };
++```
++
++Everything that depends on glow 0.17 (egui_glow, ...) uses it too. glow is
++MIT / Apache-2.0 / zlib licensed (LICENSE-*).
+diff --color -ruN a/src/gl46.rs b/src/gl46.rs
+--- a/src/gl46.rs	2026-10-04 07:37:24
++++ b/src/gl46.rs	2026-10-04 07:37:40
+@@ -4563,7 +4563,9 @@
+     // reported to give "error code" values such as -1 or small non-null values.
+     // To help guard against this silliness, we consider these values to also
+     // just be a result of null.
+-    if p_usize == core::usize::MAX || p_usize < 8 {
++    // gasm: on wasm32 a function pointer is a table index, so small values are valid
++    let bogus = if cfg!(target_arch = "wasm32") { p_usize == 0 } else { p_usize == core::usize::MAX || p_usize < 8 };
++    if bogus {
+         ptr.store(null_mut(), RELAX);
+         false
+     } else {
+diff --color -ruN a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs	2026-10-04 07:37:24
++++ b/src/lib.rs	2026-10-04 07:37:49
+@@ -12,18 +12,13 @@
+ mod version;
+ pub use version::Version;
+ 
+-#[cfg(any(not(target_arch = "wasm32"), target_os = "emscripten"))]
++// gasm: the native backend on every target. On wasm32-unknown-unknown it calls
++// the GLES 3.0 functions a loader gives it, e.g. gasm::gles::get_proc_address:
++//   glow::Context::from_loader_function_cstr(gasm::gles::get_proc_address)
++// (upstream glow uses WebGL through web-sys there, which gasm guests don't have).
+ mod native;
+-#[cfg(any(not(target_arch = "wasm32"), target_os = "emscripten"))]
+ pub use native::*;
+-#[cfg(any(not(target_arch = "wasm32"), target_os = "emscripten"))]
+ mod gl46;
+-
+-#[cfg(all(target_arch = "wasm32", not(target_os = "emscripten")))]
+-#[path = "web_sys.rs"]
+-mod web;
+-#[cfg(all(target_arch = "wasm32", not(target_os = "emscripten")))]
+-pub use web::*;
+ 
+ pub type Shader = <Context as HasContext>::Shader;
+ pub type Program = <Context as HasContext>::Program;

@@ -45,6 +45,10 @@ What's in it:
 - **`input`, `keys`:** raw keyboard, pointer, gamepads and joysticks.
 - **`gfx`:** a WebGPU subset with WGSL shaders and JSON descriptors;
   `gfx::destroy` frees objects.
+- **`gles`:** the OpenGL ES 3.0 C API on gasm:gl (`gles::get_proc_address`),
+  for [glow](https://github.com/grovesNL/glow) with the gasm fork patched in
+  (`[patch.crates-io] glow = { git = "https://github.com/emdzej/gasm" }`), so
+  glow-based crates such as egui_glow run unchanged.
 - **`net`:** WebSocket-style messages.
 - **`storage`:** per-game saves; `storage::try_set` says why a write failed
   (`storage::Error`: `Key`, `Size`, `Quota`, `Io`).

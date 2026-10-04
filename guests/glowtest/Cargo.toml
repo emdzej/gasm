@@ -1,0 +1,14 @@
+[package]
+name = "glowtest"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+publish = false
+description = "OpenGL ES 3 from Rust through glow (sdk/glow) on gasm:gl"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+gasm = { package = "gasm-sdk", path = "../gasm" }
+glow = "0.17"   # the gasm fork, from [patch.crates-io] in the workspace

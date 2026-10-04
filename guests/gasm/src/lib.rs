@@ -15,6 +15,8 @@
 
 pub mod sys;
 
+pub mod gles;
+
 #[cfg(not(target_arch = "wasm32"))]
 pub mod native;
 
@@ -701,8 +703,12 @@ pub trait Game: Sized + 'static {
 
 #[doc(hidden)]
 pub struct GameCell<T>(pub UnsafeCell<Option<T>>);
-// Wasm guests are single-threaded and the runner never calls exports concurrently;
-// natively (tests), the exports must not be called from several threads at once.
+// Wasm guests are single-threaded and the runner never calls exports concurrently,
+// so a game needn't be Send there (it may hold Rc, egui state, ...); natively (tests,
+// the stub host) the exports must not be called from several threads at once.
+#[cfg(target_arch = "wasm32")]
+unsafe impl<T> Sync for GameCell<T> {}
+#[cfg(not(target_arch = "wasm32"))]
 unsafe impl<T: Send> Sync for GameCell<T> {}
 
 /// # Safety

@@ -35,6 +35,9 @@ try {
   const send = (method, params = {}) => new Promise((r) => { const i = ++id; pending.set(i, r); ws.send(JSON.stringify({ id: i, method, params })); });
   await send('Runtime.enable');
   await send('Page.enable');
+  // the profile persists (/tmp/gasm-chrome): never test a cached app.js or .wasm
+  await send('Network.enable');
+  await send('Network.setCacheDisabled', { cacheDisabled: true });
   await send('Page.navigate', { url });
   const t0 = Date.now();
   const VK = { ShiftLeft: [16, 'Shift'], ShiftRight: [16, 'Shift'], ControlLeft: [17, 'Control'], AltLeft: [18, 'Alt'],

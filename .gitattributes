@@ -1,2 +1,6 @@
 # Test fixtures are byte-exact (hashes depend on them): never convert line endings.
 tests/fixtures/** -text
+
+# The glow fork and its patch are byte-exact (CRLF sources): scripts/update-glow.sh rebuilds them.
+sdk/glow/** -text
+sdk/glow.patch -text

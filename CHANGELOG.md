@@ -8,6 +8,17 @@ the package versions (`gasm-sdk`, `gasm-host`, `@emdzej/gasm-host`).
 
 ## Unreleased
 
+SDKs:
+- Rust: OpenGL ES through glow. `gasm::gles` is the GLES 3.0 C API on gasm:gl
+  (the same functions as the C SDK's `gasm_gl.c`), and `sdk/glow` is glow 0.17
+  with its native backend on wasm32: with
+  `[patch.crates-io] glow = { git = "https://github.com/emdzej/gasm" }`,
+  `glow::Context::from_loader_function_cstr(gasm::gles::get_proc_address)`
+  works, and so do crates built on glow, such as egui_glow (`guests/eguidemo`:
+  egui's demo, unchanged). Examples and determinism cases: `glowtest`, `eguidemo`.
+- Rust: a game no longer has to be `Send` on wasm32 (guests are
+  single-threaded), so it can hold `Rc`, egui state and the like.
+
 Runners:
 - Native `gasm:gl`: gasm-run draws OpenGL ES games with ANGLE (Metal on macOS,
   Direct3D 11 on Windows, Vulkan on Linux, SwiftShader without a GPU or with

@@ -1,7 +1,12 @@
 # Rust guests (games) for gasm. Build: make guests  (wasm32-unknown-unknown)
 [workspace]
 resolver = "3"
-members = ["gasm", "sumo", "nes", "triangle", "textured", "inputtest", "loopdemo", "assetcheck", "parity"]
+members = ["gasm", "sumo", "nes", "triangle", "textured", "inputtest", "loopdemo", "assetcheck", "parity", "glowtest", "eguidemo"]
+
+# glow with its native backend on wasm32 (sdk/glow; games outside this repository:
+# glow = { git = "https://github.com/emdzej/gasm" })
+[patch.crates-io]
+glow = { path = "../sdk/glow" }
 
 [workspace.package]
 edition = "2024"

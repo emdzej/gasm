@@ -13,7 +13,7 @@ you need, not about where the game runs.
 | Headless | frames hashed; `--screenshot` | null GPU, uploads hashed; `--screenshot` renders | null GL, uploads hashed; `--screenshot` renders with ANGLE |
 | Mistakes | — | trap (the game stops with a message) | GL errors (`glGetError`), the game carries on; bad pointers trap |
 | C / C++ | `gasm.h` | `gasm.h` (raw imports) | drop-in `<GLES3/gl3.h>`: existing code compiles |
-| Rust | `gasm::present` | `gasm::gfx` | raw `gasm::sys::gl_*` only (a `glow` backend is on the [roadmap](/docs/roadmap)) |
+| Rust | `gasm::present` | `gasm::gfx` | glow (the gasm fork, `sdk/glow`), so glow-based crates such as egui_glow work |
 | Upscaling filters | sharp, xbr, fsr, crt, integer scaling | no (you render at drawable size) | no |
 | Worker mode (browser) | yes | yes (OffscreenCanvas + WebGPU in the worker) | no, main thread |
 | Extra download natively | none | none | ANGLE, shipped next to `gasm-run` (on macOS about 6 MB, plus 17 MB of SwiftShader) |

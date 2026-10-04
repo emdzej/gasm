@@ -23,6 +23,7 @@ for f in sharp xbr fsr crt; do
 done
 shot sky scummvm 2400 --asset-dir roms/bass --param "args=-p / sky" --input '600-603:KEY(Escape)' \
   --screenshot-filtered "$TMP/sky.png" --filter xbr --window 960x720
+shot egui eguidemo 120 --input '40:PTR(1225,628),41-43:PTR(1225,628,L),44:PTR(600,300)' --screenshot "$TMP/egui.png"
 shot woodeneye sdl3-woodeneye 400 --input '50-150:KEY(KeyW),100-200:MOVE(8,0)' \
   --screenshot-filtered "$TMP/woodeneye.png" --window 960x720
 
@@ -46,7 +47,7 @@ for i, t in enumerate(tiles):
 strip.save(f'{tmp}/filters.png')
 EOF
 
-for n in sumo textured doom sky woodeneye gltest player filters; do
+for n in sumo textured doom sky woodeneye gltest egui player filters; do
   cwebp -quiet -q 85 "$TMP/$n.png" -o "$OUT/$n.webp"
 done
 ls -la "$OUT"

@@ -1,9 +1,9 @@
 # `gasm:gl`: OpenGL ES 3.0 for guests
 
-> **Status: phases 1 to 3 implemented** (the ABI, the browser runner on
+> **Status: phases 1 to 4 implemented** (the ABI, the browser runner on
 > WebGL 2, the null GL of both headless runners, the C drop-in headers,
-> `guests/gltest`, ANGLE in gasm-run). Left: the Rust `glow` backend, Worker
-> mode and the Godot port ([roadmap](https://github.com/emdzej/gasm/blob/main/site/docs/roadmap.md)).
+> `guests/gltest`, ANGLE in gasm-run, glow for Rust). Left: Worker mode and the
+> Godot port ([roadmap](https://github.com/emdzej/gasm/blob/main/site/docs/roadmap.md)).
 > The normative description is the
 > [`gasm:gl` section of ABI.md](https://github.com/emdzej/gasm/blob/main/spec/ABI.md).
 > Where the implementation differs from the plan below:
@@ -22,6 +22,14 @@
 >   (`angle.rs`, `libloading`). The model runs every call first; the backend
 >   (`gl_backend.rs`) executes only calls that recorded no GL error, as WebGL
 >   does in the browser runner, so hashes don't depend on the backend.
+> - glow's `HasContext` is sealed, so it can't be implemented outside glow, and
+>   on `wasm32-unknown-unknown` glow only has its web-sys backend. Instead
+>   `gasm::gles` implements the GLES 3.0 C API on the imports (the Rust twin of
+>   `gasm_gl.c`; `get_proc_address` is the loader), and `sdk/glow` is glow
+>   0.17.0 with its native backend on wasm32 (`sdk/glow.patch`, 3 small changes,
+>   rebuilt by `scripts/update-glow.sh`). Games use it with `[patch.crates-io]`,
+>   so crates built on glow (egui_glow) work unchanged: `guests/glowtest`,
+>   `guests/eguidemo`.
 > - Linux windows are X11 (XWayland on Wayland); `--gl-software` (SwiftShader)
 >   works on Linux and Windows, and is the automatic fallback when the GPU path
 >   fails. CI checks gltest on ANGLE on all four platforms

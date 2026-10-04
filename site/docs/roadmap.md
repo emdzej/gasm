@@ -19,10 +19,11 @@ Done recently: stack switching (`gasm_run`,
 [design/stack-switching.md](https://github.com/emdzej/gasm/blob/main/design/stack-switching.md)),
 cooperative threads in C, POSIX and SDL 3
 ([design/threads.md](https://github.com/emdzej/gasm/blob/main/design/threads.md))
-and `gasm:gl` on every runner: WebGL 2 in browsers, ANGLE natively
+and `gasm:gl` on every runner: WebGL 2 in browsers, ANGLE natively, and from
+Rust through glow
 ([design/gasm-gl.md](https://github.com/emdzej/gasm/blob/main/design/gasm-gl.md)).
 
-1. **`gasm:gl` for Rust** (`glow`), then **Godot** on `gasm:gl`.
+1. **Godot** on `gasm:gl`.
 2. **Cooperative threads in Rust.**
 
 ## Runtime and ABI
@@ -46,8 +47,9 @@ and `gasm:gl` on every runner: WebGL 2 in browsers, ANGLE natively
 | `gasm:gl` on SwiftShader on macOS | `--gl-software` needs a Vulkan loader there (Electron doesn't ship one); Metal is always available, so it only matters for tests. | not planned |
 | ANGLE built from source | The libraries come from Electron 43, the last release that ships them as separate files; a newer ANGLE means building it (depot_tools) or another distribution. | when needed |
 | `gasm:gl` in Worker mode | WebGL 2 on a transferred `OffscreenCanvas`; `gasm:gl` games run on the main thread for now. | not started |
-| `gasm:gl` for Rust | A `glow::HasContext` implementation over `gasm::sys::gl_*` (egui_glow and other glow code). | not started |
-| Godot | A `platform/gasm` port on `gasm:gl`. | after native `gasm:gl` |
+| glow upstream | Rust GL code runs on a fork of glow (`sdk/glow`: its native backend on wasm32), used through `[patch.crates-io]`. Upstream support (a loader-based backend on `wasm32-unknown-unknown`) would make the patch unnecessary. | idea |
+| A display scale | Guests only see drawable pixels, so UI code guesses a scale (the egui demo uses the drawable height). A `gasm.display_scale()` import would give the real one. | idea |
+| Godot | A `platform/gasm` port on `gasm:gl`. | next |
 | `gasm:gfx` render targets | Render-to-texture. | not started |
 | `gasm:gfx` cube maps, render bundles | Skyboxes and environment maps; cheaper repeated draws. | not started |
 | Batched gfx commands | One call per frame for draw-heavy guests instead of one per command. | not started |
