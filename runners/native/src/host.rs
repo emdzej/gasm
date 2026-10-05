@@ -275,6 +275,10 @@ pub struct Host {
     pub net: Net,
     /// gasm:fetch (denied until the runner sets a policy: `Fetch::new`)
     pub fetch: crate::fetch::Fetch,
+    /// gasm:clipboard: what the game may read this frame and what it copied
+    pub clipboard: Clipboard,
+    /// gasm:files: saves queued for the player (written between frames)
+    pub files: crate::files::Files,
     pub storage: Storage,
     /// false during catch-up frames: gfx begin_frame returns 0
     pub show_frame: bool,
@@ -330,6 +334,8 @@ impl Host {
             gfx,
             gl: Default::default(),
             fetch: Default::default(),
+            clipboard: Default::default(),
+            files: Default::default(),
             memory_limit: MemoryLimit(Some(DEFAULT_MEMORY_LIMIT)),
             catch_up: false,
             frame_index: 0,
@@ -450,6 +456,18 @@ pub(crate) fn guest_slice_mut(mem: &mut [u8], ptr: u32, len: u64) -> wasmtime::R
 
 /// The "copied only if it fits" convention: copy `src` to `dst` if `src.len() <= cap`;
 /// returns the full length either way.
+/// gasm:clipboard's state. The runner owns the system clipboard: it sets `pasted` for
+/// the frame that carries the player's paste key press (cleared after it) and takes
+/// `copied` after each frame. Headless runs never paste.
+#[derive(Default)]
+pub struct Clipboard {
+    pub pasted: Option<String>,
+    pub copied: Option<String>,
+}
+
+/// The largest text gasm:clipboard passes either way
+pub const CLIPBOARD_MAX: usize = 1 << 20;
+
 fn copy_if_fits(mem: &mut [u8], dst: u32, cap: u32, src: &[u8]) -> wasmtime::Result<i32> {
     if src.len() <= cap as usize {
         guest_slice_mut(mem, dst, src.len() as u64)?.copy_from_slice(src);
@@ -1003,6 +1021,42 @@ fn add_fetch_imports(linker: &mut Linker<Host>) -> wasmtime::Result<()> {
     Ok(())
 }
 
+fn add_clipboard_imports(linker: &mut Linker<Host>) -> wasmtime::Result<()> {
+    const M: &str = "gasm:clipboard";
+    linker.func_wrap(M, "set_text", |mut c: Caller<'_, Host>, ptr: u32, len: u32| -> wasmtime::Result<i32> {
+        if len as usize > CLIPBOARD_MAX {
+            return Ok(-1);
+        }
+        let text = guest_str(&c, ptr, len)?;
+        c.data_mut().clipboard.copied = Some(text);
+        Ok(0)
+    })?;
+    linker.func_wrap(M, "get_text", |mut c: Caller<'_, Host>, dst: u32, cap: u32| -> wasmtime::Result<i32> {
+        let mem = memory(&c)?;
+        let (data, host) = mem.data_and_store_mut(&mut c);
+        match &host.clipboard.pasted {
+            Some(t) => copy_if_fits(data, dst, cap, t.as_bytes()),
+            None => Ok(-1),
+        }
+    })?;
+    Ok(())
+}
+
+fn add_files_imports(linker: &mut Linker<Host>) -> wasmtime::Result<()> {
+    const M: &str = "gasm:files";
+    linker.func_wrap(M, "save", |mut c: Caller<'_, Host>, np: u32, nl: u32, mp: u32, ml: u32, ptr: u32, len: u32| -> wasmtime::Result<i32> {
+        let (name, mime) = (guest_str(&c, np, nl)?, guest_str(&c, mp, ml)?);
+        let mem = memory(&c)?;
+        let (data, host) = mem.data_and_store_mut(&mut c);
+        let bytes = guest_slice(data, ptr, len as u64)?;
+        Ok(host.files.save(&name, &mime, bytes))
+    })?;
+    linker.func_wrap(M, "state", |c: Caller<'_, Host>, handle: i32| -> wasmtime::Result<i32> {
+        c.data().files.state(handle).ok_or_else(|| format_err!("gasm:files: invalid handle {handle}"))
+    })?;
+    Ok(())
+}
+
 fn add_storage_imports(linker: &mut Linker<Host>) -> wasmtime::Result<()> {
     const M: &str = "gasm:storage";
     linker.func_wrap(M, "get", |mut c: Caller<'_, Host>, kp: u32, kl: u32, dst: u32, cap: u32| -> wasmtime::Result<i32> {
@@ -1203,6 +1257,8 @@ impl Game {
         add_net_imports(&mut linker)?;
         add_fetch_imports(&mut linker)?;
         add_storage_imports(&mut linker)?;
+        add_clipboard_imports(&mut linker)?;
+        add_files_imports(&mut linker)?;
         let mut store = Store::new(engine, host);
         store.data_mut().memory_limit = MemoryLimit(opts.memory_limit);
         store.limiter(|h| &mut h.memory_limit);
@@ -1299,6 +1355,8 @@ impl Game {
         if self.ended {
             return Err(Stop::Trap("the guest is not running".into()));
         }
+        // the last frame's saves (gasm:files)
+        self.with_host(|h| h.files.flush());
         if !self.watches.is_empty() {
             let mut watches = std::mem::take(&mut self.watches);
             self.with_host(|h| watches.iter_mut().for_each(|w| _ = w.poll(&mut h.assets)));
@@ -1347,6 +1405,9 @@ impl Game {
     /// Best-effort "the player is quitting" notification (optional `gasm_exit` export).
     /// A suspended `gasm_run` guest gets it on top of its run, which then ends.
     pub fn exit(&mut self) {
+        if self.store.is_some() || self.running.is_some() {
+            self.with_host(|h| h.files.flush());
+        }
         if self.running.is_some() {
             if let Some(ex) = &self.exchange {
                 ex.set(Cmd::Exit);
@@ -1369,6 +1430,7 @@ impl Game {
                     eprintln!("[gasm] gasm_exit trapped: {t}");
                 }
             }
+            store.data_mut().files.flush(); // saved on the way out
         }
     }
 

@@ -32,6 +32,8 @@
 #define GASM_NET_IMPORT(name) __attribute__((import_module("gasm:net"), import_name(name)))
 #define GASM_FETCH_IMPORT(name) __attribute__((import_module("gasm:fetch"), import_name(name)))
 #define GASM_STORAGE_IMPORT(name) __attribute__((import_module("gasm:storage"), import_name(name)))
+#define GASM_CLIPBOARD_IMPORT(name) __attribute__((import_module("gasm:clipboard"), import_name(name)))
+#define GASM_FILES_IMPORT(name) __attribute__((import_module("gasm:files"), import_name(name)))
 #define GASM_EXPORT(name) __attribute__((export_name(name)))
 #else
 #define GASM_IMPORT(name)
@@ -40,6 +42,8 @@
 #define GASM_NET_IMPORT(name)
 #define GASM_FETCH_IMPORT(name)
 #define GASM_STORAGE_IMPORT(name)
+#define GASM_CLIPBOARD_IMPORT(name)
+#define GASM_FILES_IMPORT(name)
 #define GASM_EXPORT(name)
 #endif
 
@@ -109,6 +113,14 @@ enum {
     GASM_INPUT_KEYS_RAW = 1u << 0,
     GASM_INPUT_POINTER_HIDDEN = 1u << 1,
     GASM_INPUT_POINTER_LOCKED = 1u << 2,
+};
+
+/* ---- file save states -------------------------------------------------------- */
+/* gasm_files_state results. */
+enum {
+    GASM_FILES_PENDING = 0,
+    GASM_FILES_SAVED = 1,
+    GASM_FILES_FAILED = 2,
 };
 
 /* ---- storage errors ---------------------------------------------------------- */
@@ -847,6 +859,35 @@ GASM_STORAGE_IMPORT("count") uint32_t gasm_storage_count(void);
 /* Key index (0 .. count-1, sorted): its length (copied only if <= cap; cap = 0
  * queries), or -1 if out of range. */
 GASM_STORAGE_IMPORT("key") int32_t gasm_storage_key(uint32_t index, char *dst, uint32_t cap);
+
+/* ---- gasm:clipboard (optional) ---------------------------------------------------- */
+/* Text on the system clipboard. Copying is always allowed; pasting is the
+ * player's choice: the text is readable only during the frame that carries the
+ * paste key press (Ctrl+V, Cmd+V on macOS), never otherwise. Headless runs
+ * have an empty clipboard. Text is UTF-8, up to 1 MiB. */
+
+/* 0: the runner puts it on the clipboard after this frame; -1: refused (over 1
+ * MiB, or no clipboard). Invalid UTF-8 traps. */
+GASM_CLIPBOARD_IMPORT("set_text") int32_t gasm_clipboard_set_text(const char *text, uint32_t text_len);
+/* The pasted text's length in bytes (copied only if <= cap; cap = 0 queries),
+ * or -1 outside a paste frame or with nothing to paste. */
+GASM_CLIPBOARD_IMPORT("get_text") int32_t gasm_clipboard_get_text(char *dst, uint32_t cap);
+
+/* ---- gasm:files (optional) -------------------------------------------------------- */
+/* Files for the player, outside the game: save hands the runner a copy to keep
+ * where the player finds it (natively Pictures/<game>/ for images,
+ * Downloads/<game>/ otherwise, or --save-dir; a download in browsers). The
+ * game never learns the path. Headless runs write nothing unless given
+ * --save-dir. */
+
+/* A handle > 0 (the runner saves it after this frame), or -1: refused (saving
+ * is off, name empty or over 255 bytes, mime not type/subtype, over 256 MiB,
+ * or 16 saves still pending). name is a file name; the runner keeps only its
+ * last path component and makes it safe and unique. Invalid UTF-8 traps. */
+GASM_FILES_IMPORT("save") int32_t gasm_files_save(const char *name, uint32_t name_len, const char *mime, uint32_t mime_len, const void *data, uint32_t len);
+/* GASM_FILES_PENDING (0), GASM_FILES_SAVED (1) or GASM_FILES_FAILED (2:
+ * cancelled or not written). A handle save never returned traps. */
+GASM_FILES_IMPORT("state") int32_t gasm_files_state(int32_t handle);
 
 #ifdef __cplusplus
 }

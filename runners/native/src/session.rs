@@ -26,6 +26,8 @@ pub struct Session {
     pub fetch: crate::fetch::FetchMode,
     /// `--app-id`: the game's identity in gasm:fetch's User-Agent
     pub app_id: Option<String>,
+    /// gasm:files: where the game's saves for the player go
+    pub save: crate::files::SaveTarget,
     pub storage: Storage,
     pub load: LoadOptions,
     /// where ANGLE is (gasm:gl games): None searches the usual places (`angle::find`)
@@ -86,6 +88,7 @@ impl Session {
         let mut host = Host::new(self.assets, self.params, audio, gfx, Net::with_policy(policy.clone()), self.storage);
         host.fetch = crate::fetch::Fetch::new(policy, self.fetch);
         host.fetch.set_app_id(self.app_id.as_deref());
+        host.files = crate::files::Files::new(self.save);
         if self.gl_stats {
             host.gl.stats = Some(Default::default());
         }

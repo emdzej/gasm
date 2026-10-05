@@ -184,12 +184,39 @@ does GETs and a POST.
   `--allow-net=api.example.org` for just that host. In browsers the API must
   send CORS headers (`Access-Control-Allow-Origin`).
 - **Headers:** `HTTPRequest`'s `Accept-Encoding` and `User-Agent` are dropped
-  (browsers don't let pages set them either); bodies arrive decompressed.
+  (browsers don't let pages set them either); bodies arrive decompressed. To
+  identify the game to an API, launch it with `--app-id 'mygame/1.0 (+https://…)'`:
+  the runner sends that as its User-Agent.
 - **Tests:** record the responses once (`--allow-net --fetch-record DIR`), then
   replay them in headless runs (`--fetch-replay DIR`): they complete at the next
   frame on every runner, so hashes compare.
 - `get_response_body_length()` is -1 (the length is known at the end), and
   there's no blocking mode or `StreamPeer`, as on Godot's web platform.
+
+## Clipboard
+
+`DisplayServer.clipboard_set()` copies text (the runner puts it on the system
+clipboard), and pasting into a `LineEdit` or `TextEdit` with Ctrl+V (Cmd+V on
+macOS) works, through [`gasm:clipboard`](/docs/abi#gasm-clipboard-optional-text-on-the-system-clipboard).
+The game can read the clipboard only while it handles the player's paste key
+press, so `clipboard_get()` anywhere else (a "Paste" button, the context menu)
+returns an empty string. No images; the runner's F2 copies the game's frame.
+
+## Saving files for the player
+
+A photo mode or an export goes through the `Gasm` singleton (gasm's own API;
+the editor doesn't know it, so look it up by name), on
+[`gasm:files`](/docs/abi#gasm-files-optional-files-for-the-player):
+
+```gdscript
+if Engine.has_singleton("Gasm"):
+    var gasm = Engine.get_singleton("Gasm")
+    var id: int = gasm.save_file(image.save_png_to_buffer(), "photo-001.png", "image/png")
+    # later: gasm.save_state(id) is 1 when saved, 2 if it failed, 0 while pending
+```
+
+Natively the picture lands in `Pictures/<game>/` (other types in
+`Downloads/<game>/`), in the browser it's a download.
 
 ## Limits
 

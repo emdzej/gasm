@@ -107,6 +107,7 @@ pub fn run(session: Session, opts: Options) -> Result<i32, String> {
         splash: None,
         copy_pending: false,
         clipboard: None,
+        paste: None,
     };
     event_loop.run_app(&mut app).map_err(|e| e.to_string())?;
     app.result
@@ -240,19 +241,29 @@ struct App {
     copy_pending: bool,
     /// kept open: on X11 and Wayland the copied image lives as long as its owner
     clipboard: Option<arboard::Clipboard>,
+    /// the player pressed the paste key: the clipboard's text, for the next frame (gasm:clipboard)
+    paste: Option<String>,
 }
 
-/// Put a frame (RGBA8, top to bottom) on the system clipboard (opened on first use).
+/// The system clipboard, opened on first use.
+fn open_clipboard(clipboard: &mut Option<arboard::Clipboard>) -> Option<&mut arboard::Clipboard> {
+    if clipboard.is_none() {
+        match arboard::Clipboard::new() {
+            Ok(c) => *clipboard = Some(c),
+            Err(e) => eprintln!("[gasm] clipboard: unavailable ({e})"),
+        }
+    }
+    clipboard.as_mut()
+}
+
+/// Put a frame (RGBA8, top to bottom) on the system clipboard.
 fn copy_frame(clipboard: &mut Option<arboard::Clipboard>, w: u32, h: u32, mut rgba: Vec<u8>) {
     // opaque, as the window shows it (GL frames can carry any alpha)
     for px in rgba.chunks_exact_mut(4) {
         px[3] = 255;
     }
-    if clipboard.is_none() {
-        match arboard::Clipboard::new() {
-            Ok(c) => *clipboard = Some(c),
-            Err(e) => return eprintln!("[gasm] copy: no clipboard ({e})"),
-        }
+    if open_clipboard(clipboard).is_none() {
+        return;
     }
     let img = arboard::ImageData { width: w as usize, height: h as usize, bytes: rgba.into() };
     match clipboard.as_mut().map(|c| c.set_image(img)) {
@@ -423,8 +434,11 @@ impl App {
                 }
                 if first {
                     host.input = RawInput { keys: Some(keys), key_events: std::mem::take(&mut self.key_events), pointer: Some(pointer), gamepads: Some(raw_pads.clone()) };
+                    // pasted text goes with the frame that carries the paste key press
+                    host.clipboard.pasted = self.paste.take();
                 } else {
                     host.input.key_events.clear();
+                    host.clipboard.pasted = None;
                     host.input.pointer = Some(pointer);
                 }
                 host.show_frame = k + 1 == steps;
@@ -435,14 +449,19 @@ impl App {
                 self.frames_run += 1;
                 let shot = self.opts.screenshot.as_ref().filter(|(n, _)| *n == self.frames_run).map(|(_, p)| p.clone());
                 let copy = std::mem::take(&mut self.copy_pending);
-                let (img, copied) = game.with_host(|h| {
+                let (img, copied, text) = game.with_host(|h| {
                     let img = shot.as_ref().and_then(|_| h.gl.read_frame());
                     // the copy key: the GL frame, else the last 2D frame
                     let copied = copy.then(|| h.gl.read_frame().or_else(|| (h.width > 0).then(|| (h.width as u32, h.height as u32, h.rgba.clone())))).flatten();
                     let show = h.show_frame;
                     h.gl.end_frame(show);
-                    (img, copied)
+                    (img, copied, h.clipboard.copied.take())
                 });
+                if let Some(t) = text {
+                    if let Some(Err(e)) = open_clipboard(&mut self.clipboard).map(|c| c.set_text(t)) {
+                        eprintln!("[gasm] clipboard: {e}");
+                    }
+                }
                 match copied {
                     Some((w, h, rgba)) => copy_frame(&mut self.clipboard, w, h, rgba),
                     None if copy => eprintln!("[gasm] copy: nothing to copy (gasm:gfx games can't be copied yet)"),
@@ -629,6 +648,13 @@ impl ApplicationHandler for App {
                     // the copy key also goes to the game
                     if Some(code) == self.opts.copy_key && event.state == ElementState::Pressed && !event.repeat {
                         self.copy_pending = true;
+                    }
+                    // the paste key (Ctrl+V, Cmd+V): the game may read the clipboard's text in the next frame
+                    let modifier = [KeyCode::ControlLeft, KeyCode::ControlRight, KeyCode::SuperLeft, KeyCode::SuperRight].iter().any(|k| self.keys.contains(k));
+                    if code == KeyCode::KeyV && modifier && event.state == ElementState::Pressed {
+                        self.paste = open_clipboard(&mut self.clipboard)
+                            .and_then(|c| c.get_text().ok())
+                            .filter(|t| t.len() <= host::CLIPBOARD_MAX);
                     }
                     let k = keymap::gasm_key(code);
                     if !event.repeat && k != 0 {

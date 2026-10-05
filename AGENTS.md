@@ -9,7 +9,9 @@ gasm is a portable game runtime on WebAssembly. **Guests** (games) are single
 `.wasm` modules. **Runners** (native Rust, browser JS, headless Node) implement
 the ABI in [`spec/ABI.md`](spec/ABI.md): the core `gasm` module plus optional
 `gasm:gfx` (WebGPU subset), `gasm:gl` (OpenGL ES 3.0, WebGL 2 rules: WebGL 2 / ANGLE / null GL), `gasm:net` (WebSocket-style messages),
-`gasm:fetch` (HTTP made by the runner) and `gasm:storage` (per-game key/value). Determinism across runners is the core
+`gasm:fetch` (HTTP made by the runner), `gasm:storage` (per-game key/value),
+`gasm:clipboard` (text; paste only in the paste key's frame) and `gasm:files`
+(files saved for the player). Determinism across runners is the core
 property: most tests assert bit-identical hashes.
 
 ## Layout
@@ -30,8 +32,8 @@ property: most tests assert bit-identical hashes.
 | `guests/godot/` | Godot 4.7 for gasm: `platform/gasm` (MIT: OS, display server with input, audio driver, FileAccess on assets/storage, entry points) + `godot.patch` (WebGL paths in `drivers/gles3` also for gasm; `HTTPClientTCP` left out for `http_client_gasm.cpp`, `HTTPClient` on gasm:fetch). Examples: hello2d, platformer, scene3d, ui, audio, http. `scripts/fetch-godot.sh` puts the engine (MIT) in `tools/godot-src`, SCons in `tools/scons`, the editor in `tools/godot-editor`; `make godot` builds `build/godot.wasm` and exports `examples/*` to `build/godot/*.pck` |
 | `guests/scummvm/` | ScummVM: gasm backend (MIT, `backend/` -> `backends/platform/gasm`) + `configure.patch` (`wasm32-gasm` host). `scripts/fetch-scummvm.sh` puts ScummVM (GPL-3.0) in `tools/scummvm-src`; `scripts/build-scummvm-libs.sh` builds zlib, libmad, libogg/libvorbis, libFLAC (pinned release tarballs) into `tools/scummvm-libs`; `make scummvm` builds with wasi-sdk and runs `wasm-opt --asyncify` (`scripts/fetch-binaryen.sh`); `scripts/package-scummvm-src.sh` packs exactly the files the build used plus the library sources (verify: a clean `make scummvm` from the tarball is byte-identical) |
 | `guests/doom/` | DOOM: gasm platform layer (MIT) for doomgeneric. `scripts/fetch-doom.sh` puts the GPL-2.0 engine (+ chocolate-doom OPL music) in `tools/doom-src` and applies `engine.patch`; `scripts/package-doom-src.sh` packs the complete source shipped with releases and the site |
-| `runners/native/` | crate `gasm-host` (workspace root; one `target/`): the library has the host (`host.rs`, `switching.rs` stack switching for `gasm_run`, `wasi.rs` WASI subset, `gfx.rs`, `present.rs` 2D filters, `net.rs` (+ `NetPolicy`, the `--allow-net` host list), `fetch.rs` (gasm:fetch, record/replay), `storage.rs`, `assets.rs`) and both runners (`headless.rs`, `window.rs` + `keymap.rs` behind the default `window` feature); `src/main.rs` (`gasm-run`) only parses arguments. `relay/`: crate `gasm-relay` (no runtime deps, not on crates.io); `relay.Dockerfile` |
-| `runners/web/` | npm package `@emdzej/gasm-host`: `gasm-host.js` re-exports `lib/` (`host.js`, `wasi.js`, `gfx.js` GfxModel + NullGfx, `gl.js`, `net.js`, `fetch.js`, `storage.js`, `assets.js`, `input.js` keys/keymap/BrowserInput, `audio.js`) + `.d.ts`; `gasm-worker.js`: Worker mode; `webgpu-gfx.js`; `gasm-present.js` (2D frames on WebGL 2: letterbox + upscaling filters, GLSL ports of `runners/native/src/present.rs`); `headless.mjs` = `gasm-headless`. Not published: `app.js`/`index.html` (the player), `opfs.html`/`opfs.js` (csfs OPFS import; csfs is a devDependency vendored by `scripts/vendor-web.sh`), `testdata.js` |
+| `runners/native/` | crate `gasm-host` (workspace root; one `target/`): the library has the host (`host.rs`, `switching.rs` stack switching for `gasm_run`, `wasi.rs` WASI subset, `gfx.rs`, `present.rs` 2D filters, `net.rs` (+ `NetPolicy`, the `--allow-net` host list), `fetch.rs` (gasm:fetch, record/replay), `files.rs` (gasm:files), `storage.rs`, `assets.rs`) and both runners (`headless.rs`, `window.rs` + `keymap.rs` behind the default `window` feature); `src/main.rs` (`gasm-run`) only parses arguments. `relay/`: crate `gasm-relay` (no runtime deps, not on crates.io); `relay.Dockerfile` |
+| `runners/web/` | npm package `@emdzej/gasm-host`: `gasm-host.js` re-exports `lib/` (`host.js`, `wasi.js`, `gfx.js` GfxModel + NullGfx, `gl.js`, `net.js`, `fetch.js`, `files.js`, `storage.js`, `assets.js`, `input.js` keys/keymap/BrowserInput, `audio.js`) + `.d.ts`; `gasm-worker.js`: Worker mode; `webgpu-gfx.js`; `gasm-present.js` (2D frames on WebGL 2: letterbox + upscaling filters, GLSL ports of `runners/native/src/present.rs`); `headless.mjs` = `gasm-headless`. Not published: `app.js`/`index.html` (the player), `opfs.html`/`opfs.js` (csfs OPFS import; csfs is a devDependency vendored by `scripts/vendor-web.sh`), `testdata.js` |
 | `runners/native/src/gl.rs`, `gl_backend.rs`, `angle.rs`, `gles.rs` | `gasm:gl` natively: the model (mirrors `runners/web/lib/gl.js`, null GL), the ANGLE backend it forwards passing calls to, the EGL loader, the generated GLES function table (`scripts/gen-gl-headers.py`, which also writes the C SDK's `GLES3/gl3.h` + `gasm_gl.c`). ANGLE comes from Electron 43.7.7 (`scripts/fetch-angle.sh` → `tools/angle/<platform>`, `package-angle.sh` for bundles) |
 | `guests/gasm/src/gles.rs`, `gles_gen.rs`; `sdk/glow/` | Rust guests' GLES 3.0 C API on gasm:gl (`gasm::gles::get_proc_address`; the forwarding half generated by `gen-gl-headers.py`); glow 0.17 with its native backend on wasm32, made by `scripts/update-glow.sh` from crates.io + `sdk/glow.patch` (never edit `sdk/glow` by hand; CRLF sources, `-text`). The guests workspace patches it in; examples `glowtest`, `eguidemo` |
 | `runners/native/src/assets.rs`, `keymap.rs` | file-backed assets, `--asset-dir`, case-insensitive lookup; keyboard layouts (`default-keymap.txt` must equal the JS `DEFAULT_KEYMAP`, checked by `gen-abi.mjs --check`) |
@@ -58,7 +60,7 @@ node scripts/fetch-test.mjs   # gasm:fetch against scripts/fetch-server.mjs: nat
 scripts/gl-native-test.sh     # gasm:gl on ANGLE: gltest hashes == null GL, frame drawn
 node scripts/gl-web-test.mjs  # Chrome: gltest/glowtest on WebGL 2 == golden hashes, no WebGL errors
 node scripts/opfs-test.mjs    # Chrome: OPFS + Worker mode == Node, memory flat
-node scripts/clipboard-test.mjs # Chrome: the player's copy key (F2) puts 2D, gl and gfx frames on the clipboard
+node scripts/player-test.mjs    # Chrome: copy key (F2) for 2D/gl/gfx, gasm:clipboard paste+copy (Godot too), gasm:files downloads
 make parity                   # NES native Rust build == wasm build
 node scripts/present-test.mjs # Chrome: 2D filters, WebGL 2 == native wgpu == tests/golden/present (skips without a GPU)
                               # UPDATE_GOLDEN=1 re-records the golden images
@@ -324,6 +326,15 @@ from the repo root, then
   every redirect hop natively. `tests/fixtures/fetch` is recorded from
   `scripts/fetch-server.mjs` on port 8787 (no `Date` header): re-record with
   `--fetch-record` when the guests' requests change.
+- **clipboard and files:** pasted text is offered only to the frame that carries
+  the paste key press (natively the window runner reads the system clipboard on
+  Ctrl/Cmd+V; in the player the page's `paste` event, passed as a step's `paste`,
+  which Worker mode carries too); copied text and saves leave between frames.
+  Headless runs never paste and write saves only with `--save-dir`, and a save is
+  `SAVED` by the next frame on both runners (reproducible). `files.rs` and
+  `lib/files.js` refuse the same saves and make names safe the same way (never
+  overwriting: `name (2).ext`). Godot reaches gasm:files through the `Gasm`
+  singleton (`platform/gasm/api`).
 - **net:** runners flush queued messages and do a WebSocket close handshake on
   exit. Lockstep peers finish the frames they have inputs for after a leave notice.
   TLS is rustls with the **ring** backend (no cmake/NASM on CI); the crypto

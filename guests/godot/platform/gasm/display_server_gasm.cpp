@@ -69,11 +69,40 @@ void DisplayServerGasm::register_gasm_driver() {
 	register_create_function("gasm", create_func, get_rendering_drivers_func);
 }
 
+static bool has_clipboard() {
+	static const bool has = gasm_has_str("gasm:clipboard") == 1;
+	return has;
+}
+
+void DisplayServerGasm::clipboard_set(const String &p_text) {
+	if (has_clipboard()) {
+		CharString text = p_text.utf8();
+		gasm_clipboard_set_text(text.get_data(), text.length());
+	}
+}
+
+String DisplayServerGasm::clipboard_get() const {
+	int n = has_clipboard() ? gasm_clipboard_get_text(nullptr, 0) : -1;
+	if (n <= 0) {
+		return String();
+	}
+	Vector<uint8_t> text;
+	text.resize(n);
+	gasm_clipboard_get_text((char *)text.ptrw(), n);
+	return String::utf8((const char *)text.ptr(), n);
+}
+
+bool DisplayServerGasm::clipboard_has() const {
+	return has_clipboard() && gasm_clipboard_get_text(nullptr, 0) > 0;
+}
+
 bool DisplayServerGasm::has_feature(DisplayServerEnums::Feature p_feature) const {
 	switch (p_feature) {
 		case DisplayServerEnums::FEATURE_MOUSE:
 		case DisplayServerEnums::FEATURE_CURSOR_SHAPE:
 			return true;
+		case DisplayServerEnums::FEATURE_CLIPBOARD:
+			return has_clipboard();
 		default:
 			return false;
 	}
@@ -128,6 +157,8 @@ void DisplayServerGasm::process_keys() {
 	uint8_t keys[GASM_KEY_STATE_BYTES] = {};
 	bool have_state = gasm_key_state(keys, sizeof keys) >= 0;
 	auto held = [&](uint32_t k) { return have_state && (keys[k / 8] >> (k % 8)) & 1; };
+	static const uint32_t MODIFIER_KEYS[8] = { GASM_KEY_SHIFT_LEFT, GASM_KEY_SHIFT_RIGHT, GASM_KEY_CONTROL_LEFT, GASM_KEY_CONTROL_RIGHT,
+		GASM_KEY_ALT_LEFT, GASM_KEY_ALT_RIGHT, GASM_KEY_META_LEFT, GASM_KEY_META_RIGHT };
 	int32_t len = gasm_key_events(nullptr, 0);
 	if (len > 0) {
 		Vector<uint8_t> ev;
@@ -136,6 +167,11 @@ void DisplayServerGasm::process_keys() {
 		for (int i = 0; i + GASM_KEY_EVENT_BYTES <= len; i += GASM_KEY_EVENT_BYTES) {
 			uint32_t code = ev[i] | (ev[i + 1] << 8);
 			bool down = ev[i + 2] != 0;
+			for (int m = 0; m < 8; m++) {
+				if (MODIFIER_KEYS[m] == code) {
+					modifiers = down ? (modifiers | (1 << m)) : (modifiers & ~(1 << m));
+				}
+			}
 			KeyLocation location = KeyLocation::UNSPECIFIED;
 			Key key = key_from_code(code, &location);
 			if (key == Key::NONE) {
@@ -148,11 +184,18 @@ void DisplayServerGasm::process_keys() {
 			k->set_physical_keycode(key);
 			k->set_key_label(key);
 			k->set_location(location);
-			k->set_shift_pressed(held(GASM_KEY_SHIFT_LEFT) || held(GASM_KEY_SHIFT_RIGHT));
-			k->set_ctrl_pressed(held(GASM_KEY_CONTROL_LEFT) || held(GASM_KEY_CONTROL_RIGHT));
-			k->set_alt_pressed(held(GASM_KEY_ALT_LEFT) || held(GASM_KEY_ALT_RIGHT));
-			k->set_meta_pressed(held(GASM_KEY_META_LEFT) || held(GASM_KEY_META_RIGHT));
+			k->set_shift_pressed(modifiers & 0x03);
+			k->set_ctrl_pressed(modifiers & 0x0c);
+			k->set_alt_pressed(modifiers & 0x30);
+			k->set_meta_pressed(modifiers & 0xc0);
 			input->parse_input_event(k);
+		}
+	}
+	// resync with the runner's state (a key released while the window was unfocused)
+	if (have_state) {
+		modifiers = 0;
+		for (int m = 0; m < 8; m++) {
+			modifiers |= held(MODIFIER_KEYS[m]) << m;
 		}
 	}
 	// typed text: key events with a character (what LineEdit and friends read)

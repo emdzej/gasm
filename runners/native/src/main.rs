@@ -30,6 +30,10 @@ options:
   --allow-net[=<hosts>]    allow the guest to open network connections (gasm:net) and make HTTP
                            requests (gasm:fetch); with a comma-separated list only to those hosts
                            (api.example.org, *.example.org for its subdomains)
+  --save-dir <dir>         where files the game saves for the player go (gasm:files; default:
+                           Pictures/<game>/ for images, Downloads/<game>/ otherwise; headless:
+                           nowhere unless given)
+  --no-save                refuse every file the game wants to save for the player
   --app-id <text>          who the game is in its HTTP requests: gasm:fetch sends
                            User-Agent: <text> gasm-run/<version>, e.g. --app-id 'mygame/1.0 (+https://mygame.example)'
   --fetch-record <dir>     store every gasm:fetch response in <dir> (with --allow-net)
@@ -97,6 +101,8 @@ struct Args {
     storage_dir: Option<String>,
     storage_id: Option<String>,
     app_id: Option<String>,
+    save_dir: Option<String>,
+    no_save: bool,
     window: (u32, u32),
     present: Present,
     keymap: Option<String>,
@@ -136,6 +142,8 @@ fn parse_args() -> Result<Args, String> {
         storage_dir: None,
         storage_id: None,
         app_id: None,
+        save_dir: None,
+        no_save: false,
         window: (960, 720),
         present: Present::default(),
         keymap: None,
@@ -201,6 +209,8 @@ fn parse_args() -> Result<Args, String> {
             "--fetch-replay" => args.fetch = gasm_host::fetch::FetchMode::Replay(val("--fetch-replay")?.into()),
             "--storage-dir" => args.storage_dir = Some(val("--storage-dir")?),
             "--storage-id" => args.storage_id = Some(val("--storage-id")?),
+            "--save-dir" => args.save_dir = Some(val("--save-dir")?),
+            "--no-save" => args.no_save = true,
             "--app-id" => {
                 let id = val("--app-id")?;
                 if !gasm_host::fetch::valid_app_id(&id) {
@@ -322,11 +332,15 @@ fn load_keymap(args: &Args) -> Result<(gasm_host::keymap::Keymap, String, String
     Ok((map, text, source))
 }
 
-fn open_storage(args: &Args) -> Result<Storage, String> {
-    // Namespace = the game file's name (sumo.wasm / sumo.cwasm -> "sumo").
-    let id = args.storage_id.clone().unwrap_or_else(|| {
+/// The game's id: --storage-id, else the game file's name (sumo.wasm / sumo.cwasm -> "sumo").
+fn game_id(args: &Args) -> String {
+    args.storage_id.clone().unwrap_or_else(|| {
         std::path::Path::new(&args.wasm).file_stem().map_or("game".into(), |s| s.to_string_lossy().into_owned())
-    });
+    })
+}
+
+fn open_storage(args: &Args) -> Result<Storage, String> {
+    let id = game_id(args);
     if !storage::valid_key(&id) {
         return Err(format!("invalid storage id {id:?} (use [A-Za-z0-9._-])"));
     }
@@ -372,6 +386,12 @@ fn run(args: Args) -> Result<i32, String> {
         allow_hosts: args.allow_hosts.clone(),
         fetch: args.fetch.clone(),
         app_id: args.app_id.clone(),
+        save: match (&args.save_dir, args.no_save, args.headless) {
+            (_, true, _) => gasm_host::files::SaveTarget::Off,
+            (Some(d), _, _) => gasm_host::files::SaveTarget::Dir(d.into()),
+            (None, _, Some(_)) => gasm_host::files::SaveTarget::Discard,
+            (None, _, None) => gasm_host::files::SaveTarget::Defaults { game: game_id(&args) },
+        },
         storage: open_storage(&args)?,
         load: LoadOptions {
             allow_precompiled: args.allow_precompiled,

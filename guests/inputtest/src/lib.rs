@@ -7,6 +7,10 @@
 //!
 //! It reads the keyboard itself (`KEYS_RAW`), so the keymap doesn't turn keys into
 //! pads; gamepads still do. Everything shown goes into the video hash.
+//!
+//! Clipboard (`gasm:clipboard`): pasted text is logged ("pasted ..."), and C copies
+//! "copied by inputtest" (scripts/player-test.mjs). Files (`gasm:files`): S saves
+//! inputtest.txt for the player and logs the save's state ("save: ...").
 
 use gasm::input::{self, Pointer};
 use gasm::keys;
@@ -20,6 +24,9 @@ struct InputTest {
     motion: (f32, f32),
     clicks: u32,
     flash: Vec<u8>, // per key: frames left to outline after an event
+    saves: u32,
+    /// the last save, until it's done
+    save: Option<gasm::files::Save>,
 }
 
 fn rect(fb: &mut [u8], x: i32, y: i32, w: i32, h: i32, c: [u8; 3]) {
@@ -55,7 +62,7 @@ impl gasm::Game for InputTest {
             let ratio = (n.parse().map_err(|_| "aspect: bad num")?, d.parse().map_err(|_| "aspect: bad den")?);
             gasm::log!("aspect {}:{} shown by the runner: {}", ratio.0, ratio.1, gasm::video_set_aspect(ratio.0, ratio.1));
         }
-        Ok(InputTest { fb: vec![0; W * H * 4], wheel: (0.0, 0.0), motion: (0.0, 0.0), clicks: 0, flash: vec![0; keys::NAMES.len()] })
+        Ok(InputTest { fb: vec![0; W * H * 4], wheel: (0.0, 0.0), motion: (0.0, 0.0), clicks: 0, flash: vec![0; keys::NAMES.len()], saves: 0, save: None })
     }
 
     fn frame(&mut self) {
@@ -67,6 +74,26 @@ impl gasm::Game for InputTest {
         for e in input::key_events().unwrap_or_default() {
             gasm::log!("key {} {}", keys::NAMES[e.code as usize], if e.down { "down" } else { "up" });
             self.flash[e.code as usize] = 8;
+            if e.down && keys::NAMES[e.code as usize] == "KeyC" && gasm::clipboard::available() {
+                gasm::clipboard::set_text("copied by inputtest");
+            }
+            if e.down && keys::NAMES[e.code as usize] == "KeyS" && gasm::files::available() {
+                self.saves += 1;
+                self.save = gasm::files::save("inputtest.txt", "text/plain", format!("inputtest save {}\n", self.saves).as_bytes());
+                gasm::log!("save: {}", if self.save.is_some() { "queued" } else { "refused" });
+            }
+        }
+        if let Some(s) = self.save {
+            match s.state() {
+                gasm::files::State::Pending => {}
+                done => {
+                    gasm::log!("save: {}", if done == gasm::files::State::Saved { "saved" } else { "failed" });
+                    self.save = None;
+                }
+            }
+        }
+        if let Some(t) = gasm::clipboard::available().then(gasm::clipboard::pasted).flatten() {
+            gasm::log!("pasted {t:?}");
         }
         for code in 1..keys::NAMES.len() as u32 {
             let (cx, cy) = ((code - 1) % 16, (code - 1) / 16);

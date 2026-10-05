@@ -111,8 +111,8 @@ jobs:
       - name: gasm:gl in Chrome (WebGL 2 hashes == golden, no WebGL errors)
         run: CHROME=$(command -v google-chrome || command -v chromium) node scripts/gl-web-test.mjs
 
-      - name: The player's copy key in Chrome (frames on the clipboard)
-        run: CHROME=$(command -v google-chrome || command -v chromium) node scripts/clipboard-test.mjs
+      - name: The player in Chrome (copy key, gasm:clipboard, gasm:files downloads)
+        run: CHROME=$(command -v google-chrome || command -v chromium) node scripts/player-test.mjs
 
       - name: "gasm:fetch (native == Node == Chrome, denials, record/replay)"
         run: CHROME=$(command -v google-chrome || command -v chromium) node scripts/fetch-test.mjs

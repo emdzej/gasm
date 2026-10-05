@@ -16,6 +16,8 @@ func _ready() -> void:
 	%Save.pressed.connect(save)
 	%Reset.pressed.connect(reset)
 	volume.value_changed.connect(func(v): %VolumeBar.value = v)
+	# typed or pasted (gasm:clipboard: scripts/player-test.mjs pastes into it)
+	name_edit.text_changed.connect(func(t): print("ui: name=%s" % t))
 	load_settings()
 
 func load_settings() -> void:

@@ -24,6 +24,8 @@ struct State {
     params: BTreeMap<String, String>,
     storage: BTreeMap<String, Vec<u8>>,
     storage_used: usize,
+    /// gasm:files saves so far (handles 1..=saves)
+    saves: u32,
     pads: [u32; 4],
     text: String,
     input_mode: u32,
@@ -54,6 +56,7 @@ static STATE: Mutex<State> = Mutex::new(State {
     params: BTreeMap::new(),
     storage: BTreeMap::new(),
     storage_used: 0,
+    saves: 0,
     pads: [0; 4],
     text: String::new(),
     input_mode: 0,
@@ -352,6 +355,29 @@ pub mod abi {
             s.storage_used = used;
             s.storage.insert(k, v);
             0
+        })
+    }
+    // gasm:clipboard: copies are accepted and dropped, nothing is ever pasted (as headless runs)
+    pub unsafe fn clipboard_set_text(_text: *const u8, len: u32) -> i32 {
+        if len > 1 << 20 { -1 } else { 0 }
+    }
+    pub unsafe fn clipboard_get_text(_dst: *mut u8, _cap: u32) -> i32 {
+        -1
+    }
+    // gasm:files: saves are accepted and complete at once (as headless runs without --save-dir)
+    pub unsafe fn files_save(_name: *const u8, name_len: u32, _mime: *const u8, _mime_len: u32, _data: *const u8, len: u32) -> i32 {
+        if name_len == 0 || name_len > 255 || len as usize > 256 << 20 {
+            return -1;
+        }
+        with(|s| {
+            s.saves += 1;
+            s.saves as i32
+        })
+    }
+    pub unsafe fn files_state(handle: i32) -> i32 {
+        with(|s| {
+            assert!(handle > 0 && handle as u32 <= s.saves, "gasm:files: invalid handle {handle}");
+            crate::sys::GASM_FILES_SAVED
         })
     }
     pub unsafe fn storage_count() -> u32 {

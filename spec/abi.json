@@ -373,6 +373,30 @@
       ]
     },
     {
+      "name": "gasm:clipboard",
+      "optional": true,
+      "c_macro": "GASM_CLIPBOARD_IMPORT",
+      "c_prefix": "gasm_clipboard_",
+      "rust_prefix": "clipboard_",
+      "doc": "Text on the system clipboard. Copying is always allowed; pasting is the player's choice: the text is readable only during the frame that carries the paste key press (Ctrl+V, Cmd+V on macOS), never otherwise. Headless runs have an empty clipboard. Text is UTF-8, up to 1 MiB.",
+      "functions": [
+        { "name": "set_text", "params": [{ "name": "text", "type": "str" }], "result": "i32", "doc": "0: the runner puts it on the clipboard after this frame; -1: refused (over 1 MiB, or no clipboard). Invalid UTF-8 traps." },
+        { "name": "get_text", "params": [{ "name": "dst", "type": "ptr", "c": "char *", "rust": "*mut u8" }, { "name": "cap", "type": "u32" }], "result": "i32", "doc": "The pasted text's length in bytes (copied only if <= cap; cap = 0 queries), or -1 outside a paste frame or with nothing to paste." }
+      ]
+    },
+    {
+      "name": "gasm:files",
+      "optional": true,
+      "c_macro": "GASM_FILES_IMPORT",
+      "c_prefix": "gasm_files_",
+      "rust_prefix": "files_",
+      "doc": "Files for the player, outside the game: save hands the runner a copy to keep where the player finds it (natively Pictures/<game>/ for images, Downloads/<game>/ otherwise, or --save-dir; a download in browsers). The game never learns the path. Headless runs write nothing unless given --save-dir.",
+      "functions": [
+        { "name": "save", "params": [{ "name": "name", "type": "str" }, { "name": "mime", "type": "str" }, { "name": "data", "type": "ptr", "c": "const void *", "rust": "*const u8" }, { "name": "len", "type": "u32" }], "result": "i32", "doc": "A handle > 0 (the runner saves it after this frame), or -1: refused (saving is off, name empty or over 255 bytes, mime not type/subtype, over 256 MiB, or 16 saves still pending). name is a file name; the runner keeps only its last path component and makes it safe and unique. Invalid UTF-8 traps." },
+        { "name": "state", "params": [{ "name": "handle", "type": "i32" }], "result": "i32", "doc": "GASM_FILES_PENDING (0), GASM_FILES_SAVED (1) or GASM_FILES_FAILED (2: cancelled or not written). A handle save never returned traps." }
+      ]
+    },
+    {
       "name": "wasi_snapshot_preview1",
       "optional": true,
       "wasi": true,
@@ -391,6 +415,7 @@
     { "group": "net states", "c_enum": true, "values": [["GASM_NET_CONNECTING", "0"], ["GASM_NET_OPEN", "1"], ["GASM_NET_CLOSED", "2"], ["GASM_NET_ERROR", "3"]] },
     { "group": "fetch states", "c_enum": true, "values": [["GASM_FETCH_PENDING", "0"], ["GASM_FETCH_HEADERS", "1"], ["GASM_FETCH_DONE", "2"], ["GASM_FETCH_FAILED", "3"]] },
     { "group": "input modes", "c_enum": true, "doc": "input_mode flags.", "values": [["GASM_INPUT_KEYS_RAW", "1u << 0"], ["GASM_INPUT_POINTER_HIDDEN", "1u << 1"], ["GASM_INPUT_POINTER_LOCKED", "1u << 2"]] },
+    { "group": "file save states", "c_enum": true, "rust_type": "i32", "doc": "gasm_files_state results.", "values": [["GASM_FILES_PENDING", "0"], ["GASM_FILES_SAVED", "1"], ["GASM_FILES_FAILED", "2"]] },
     { "group": "storage errors", "c_enum": true, "rust_type": "i32", "doc": "gasm_storage_set results.", "values": [["GASM_STORAGE_OK", "0"], ["GASM_STORAGE_ERR_KEY", "-1"], ["GASM_STORAGE_ERR_SIZE", "-2"], ["GASM_STORAGE_ERR_QUOTA", "-3"], ["GASM_STORAGE_ERR_IO", "-4"]] },
     { "group": "pointer", "c_enum": true, "doc": "pointer() layout and bits: little-endian fields at the GASM_POINTER_OFF_* byte offsets: f32 x, y (drawable px), fx, fy (frame px), dx, dy (relative motion), wheel_x, wheel_y (lines; y > 0 = down), u32 buttons, pressed, released, flags.", "values": [["GASM_POINTER_BYTES", "48"], ["GASM_POINTER_OFF_X", "0"], ["GASM_POINTER_OFF_Y", "4"], ["GASM_POINTER_OFF_FX", "8"], ["GASM_POINTER_OFF_FY", "12"], ["GASM_POINTER_OFF_DX", "16"], ["GASM_POINTER_OFF_DY", "20"], ["GASM_POINTER_OFF_WHEEL_X", "24"], ["GASM_POINTER_OFF_WHEEL_Y", "28"], ["GASM_POINTER_OFF_BUTTONS", "32"], ["GASM_POINTER_OFF_PRESSED", "36"], ["GASM_POINTER_OFF_RELEASED", "40"], ["GASM_POINTER_OFF_FLAGS", "44"], ["GASM_MOUSE_LEFT", "1u << 0"], ["GASM_MOUSE_RIGHT", "1u << 1"], ["GASM_MOUSE_MIDDLE", "1u << 2"], ["GASM_MOUSE_BACK", "1u << 3"], ["GASM_MOUSE_FORWARD", "1u << 4"], ["GASM_POINTER_INSIDE", "1u << 0"], ["GASM_POINTER_IS_HIDDEN", "1u << 1"], ["GASM_POINTER_IS_LOCKED", "1u << 2"]] },
     { "group": "gamepad", "c_enum": true, "doc": "gamepad() layout: little-endian fields at the GASM_GAMEPAD_OFF_* byte offsets: u32 flags, u32 button count, u32 axis count, f32 button values (32), f32 axis values (16). Standard mapping (W3C): buttons 0 south, 1 east, 2 west, 3 north, 4/5 shoulders, 6/7 triggers, 8 select, 9 start, 10/11 stick clicks, 12-15 d-pad up/down/left/right, 16 home; axes 0/1 left stick x/y, 2/3 right stick x/y (y > 0 = down).", "values": [["GASM_GAMEPAD_BYTES", "204"], ["GASM_GAMEPAD_BUTTONS", "32"], ["GASM_GAMEPAD_AXES", "16"], ["GASM_GAMEPAD_OFF_FLAGS", "0"], ["GASM_GAMEPAD_OFF_BUTTON_COUNT", "4"], ["GASM_GAMEPAD_OFF_AXIS_COUNT", "8"], ["GASM_GAMEPAD_OFF_BUTTONS", "12"], ["GASM_GAMEPAD_OFF_AXES", "140"], ["GASM_GAMEPAD_CONNECTED", "1u << 0"], ["GASM_GAMEPAD_STANDARD", "1u << 1"]] },

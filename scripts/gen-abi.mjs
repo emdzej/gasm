@@ -354,7 +354,7 @@ async function conformance() {
   const hostJs = read('runners/web/lib/host.js');
   const inputJs = read('runners/web/lib/input.js');
   const nativeRs = read('guests/gasm/src/native.rs');
-  const jsMethod = { gasm: 'gasmImports() {', 'gasm:gfx': 'gfxImports() {', 'gasm:net': 'netImports() {', 'gasm:fetch': 'fetchImports() {', 'gasm:storage': 'storageImports() {' };
+  const jsMethod = { gasm: 'gasmImports() {', 'gasm:gfx': 'gfxImports() {', 'gasm:net': 'netImports() {', 'gasm:fetch': 'fetchImports() {', 'gasm:storage': 'storageImports() {', 'gasm:clipboard': 'clipboardImports() {', 'gasm:files': 'filesImports() {' };
 
   for (const m of gasmModules.filter((m) => m !== glModule)) {
     const want = new Map(m.functions.map((f) => [f.name, f]));

@@ -227,6 +227,12 @@ export interface GasmHostOptions {
   fetchReplay?: ((key: string) => FetchRecord | null) | null;
   /** Called with every completed live gasm:fetch response (to record them). */
   fetchRecord?: ((key: string, response: FetchRecord & { method: string; url: string }) => void) | null;
+  /** gasm:files: a file the guest saves for the player, after the frame (name already made safe).
+   *  Return true when saved (a download, a file), false or a rejected promise if not. null: refuse every save.
+   *  Default: accept and drop. */
+  onSaveFile?: ((name: string, mime: string, bytes: Uint8Array) => boolean | Promise<boolean>) | null;
+  /** gasm:clipboard: text the guest copied (after the frame); put it on the clipboard (`navigator.clipboard.writeText`). */
+  onCopyText?: (text: string) => void;
   /** 2D frames from gasm.video_present (RGBA8, tightly packed). */
   onPresent?: (rgba: Uint8ClampedArray, width: number, height: number, aspect: [num: number, den: number] | null) => void;
   /** Audio from gasm.audio_push: interleaved f32 at the guest's rate. */
@@ -258,6 +264,8 @@ export declare function splashHash(): number;
 
 /** The default memory cap (1 GiB), as natively. */
 export declare const DEFAULT_MEMORY_LIMIT: number;
+/** The largest text gasm:clipboard passes either way. */
+export declare const CLIPBOARD_MAX: number;
 /** The trap message of a guest past its memory limit (the same natively). */
 export declare function memoryLimitMessage(limit: number): string;
 
@@ -273,6 +281,8 @@ export interface FrameStep {
   /** text_input for the frame (undefined: keep host.text) */
   text?: string | null;
   input?: RawInput;
+  /** gasm:clipboard: the clipboard's text, on the frame that carries the player's paste key (Ctrl/Cmd+V) */
+  paste?: string;
 }
 
 /**
@@ -409,3 +419,14 @@ export declare function preloadAssets(entries: [string, Blob][], options?: Folde
 export declare function fileAssets(entries: [string, Blob][], options?: { prefix?: string; log?: (message: string) => void }): AssetTable;
 /** Worker only: lazy synchronous reads from an OPFS directory (FileSystemSyncAccessHandle). */
 export declare function opfsAssets(dir: string | FileSystemDirectoryHandle, options?: { prefix?: string; log?: (message: string) => void }): Promise<AssetTable>;
+
+/** gasm:files states (gasm_files_state). */
+export declare const FILES_PENDING: 0, FILES_SAVED: 1, FILES_FAILED: 2;
+/** The largest file a guest can save (256 MiB). */
+export declare const MAX_SAVE: number;
+/** A file name reduced to its last path component, safe on every file system. */
+export declare function safeName(name: string): string;
+export declare function validMime(mime: string): boolean;
+export declare class FileSaves {
+  constructor(onSave: ((name: string, mime: string, bytes: Uint8Array) => boolean | Promise<boolean>) | null, log: (msg: string) => void);
+}

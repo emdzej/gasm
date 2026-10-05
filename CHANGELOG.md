@@ -8,6 +8,24 @@ the package versions (`gasm-sdk`, `gasm-host`, `@emdzej/gasm-host`).
 
 ## Unreleased
 
+ABI:
+- `gasm:clipboard` (optional): `set_text` and `get_text`. Copying is always
+  allowed; pasted text is readable only during the frame that carries the
+  player's paste key press (Ctrl/Cmd+V). Both runners (the window runner and the
+  player; headless runs have an empty clipboard), the Rust SDK
+  (`gasm::clipboard`), and Godot's `DisplayServer.clipboard_*`, so pasting into
+  `LineEdit`/`TextEdit` works. `GasmHost` takes `onCopyText` and a step's
+  `paste`.
+- `gasm:files` (optional): `save(name, mime, data)` and `state(handle)`: files
+  for the player (NiP #11). Natively images go to `Pictures/<game>/`, the rest
+  to `Downloads/<game>/` (`--save-dir`, `--no-save`; names made safe, never
+  overwritten); the player offers a download; headless runs write only with
+  `--save-dir` (both runners). Rust SDK `gasm::files`; Godot:
+  `Engine.get_singleton("Gasm").save_file(bytes, name, mime)`. `GasmHost` takes
+  `onSaveFile`.
+- Godot: modifier keys follow the frame's key events in order, so a quick
+  Ctrl+V (Ctrl released within the same frame) is still Ctrl+V.
+
 Runners:
 - A screenshot on the clipboard (NiP #6): F2 copies the game's frame, in
   `gasm-run`'s window (2D and `gasm:gl` games; `--copy-key <code|none>`) and in

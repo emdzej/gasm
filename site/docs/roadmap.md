@@ -43,7 +43,8 @@ splash screen, OpenGL ES through SDL 3, and a guest memory limit.
 | Player consent | The runner asks the player before a game reaches anything outside itself: network connections (`gasm:net`, `gasm:fetch`; per host), files beyond its own assets, other external resources. Natively a prompt in the window (`--allow-net` and friends answer it in advance), in the browser one in the page. Four answers: **this time** (allowed until the game ends), **always** (remembered for this game), **no** (denied this time, asked again next run) or **no, and don't ask again** (denied and remembered). Denied requests get the same refusal games see today. Remembered answers can be changed: per game, and a way to clear them all (natively a command-line option, in the browser a control in the player). Open: which resources count (assets outside the asset dir? storage?), how fine-grained a question is (per host?), what headless runs do, and how it fits the capabilities manifest below. | to be discussed |
 | Capabilities manifest | Custom section `gasm.manifest` declaring required and optional imports, network hosts and platform extensions (`gasm:ext/*`), so runners can check a game before running it. | not started |
 | `.gasm` packages | One file bundling `game.wasm`, its assets and a manifest. | not started |
-| `gasm:files` | A file picker run by the runner: the game only sees what the player picks. | not started |
+| Opening files (`gasm:files`) | A file picker run by the runner (importing a map, a replay): the game only sees what the player picks. Saving for the player already works (`gasm:files.save`). | not started |
+| Asking before a save | `gasm-run` writes a game's saves to a default folder (or `--save-dir`, or refuses them with `--no-save`); a native save dialog for each would let the player pick the place. | idea |
 | WIT / Component Model | Move the ABI to WIT once browsers don't need transpiling for components. | waiting on browsers |
 
 ## Graphics

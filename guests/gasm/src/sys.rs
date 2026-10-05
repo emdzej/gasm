@@ -688,6 +688,26 @@ mod imports {
         pub fn storage_key(index: u32, dst: *mut u8, cap: u32) -> i32;
     }
 
+    #[link(wasm_import_module = "gasm:clipboard")]
+    unsafe extern "C" {
+        /// 0: the runner puts it on the clipboard after this frame; -1: refused (over 1 MiB, or no clipboard). Invalid UTF-8 traps.
+        #[link_name = "set_text"]
+        pub fn clipboard_set_text(text: *const u8, text_len: u32) -> i32;
+        /// The pasted text's length in bytes (copied only if <= cap; cap = 0 queries), or -1 outside a paste frame or with nothing to paste.
+        #[link_name = "get_text"]
+        pub fn clipboard_get_text(dst: *mut u8, cap: u32) -> i32;
+    }
+
+    #[link(wasm_import_module = "gasm:files")]
+    unsafe extern "C" {
+        /// A handle > 0 (the runner saves it after this frame), or -1: refused (saving is off, name empty or over 255 bytes, mime not type/subtype, over 256 MiB, or 16 saves still pending). name is a file name; the runner keeps only its last path component and makes it safe and unique. Invalid UTF-8 traps.
+        #[link_name = "save"]
+        pub fn files_save(name: *const u8, name_len: u32, mime: *const u8, mime_len: u32, data: *const u8, len: u32) -> i32;
+        /// GASM_FILES_PENDING (0), GASM_FILES_SAVED (1) or GASM_FILES_FAILED (2: cancelled or not written). A handle save never returned traps.
+        #[link_name = "state"]
+        pub fn files_state(handle: i32) -> i32;
+    }
+
     #[link(wasm_import_module = "wasi_snapshot_preview1")]
     unsafe extern "C" {
         /// End the game; 0 is a normal exit.
@@ -702,7 +722,7 @@ pub use imports::*;
 pub use crate::native::abi::*;
 
 /// Every import module and `module.function` of this ABI version (what `gasm::has` can report).
-pub const IMPORTS: [&str; 299] = [
+pub const IMPORTS: [&str; 305] = [
     "gasm", "gasm.log", "gasm.has", "gasm.time_ms",
     "gasm.utc_offset_minutes", "gasm.set_frame_rate", "gasm.video_present", "gasm.video_set_aspect",
     "gasm.audio_config", "gasm.audio_push", "gasm.input_pad", "gasm.text_input",
@@ -777,7 +797,9 @@ pub const IMPORTS: [&str; 299] = [
     "gasm:fetch", "gasm:fetch.request", "gasm:fetch.state", "gasm:fetch.status",
     "gasm:fetch.headers", "gasm:fetch.read", "gasm:fetch.close", "gasm:storage",
     "gasm:storage.get", "gasm:storage.set", "gasm:storage.delete", "gasm:storage.count",
-    "gasm:storage.key", "wasi_snapshot_preview1", "wasi_snapshot_preview1.proc_exit",
+    "gasm:storage.key", "gasm:clipboard", "gasm:clipboard.set_text", "gasm:clipboard.get_text",
+    "gasm:files", "gasm:files.save", "gasm:files.state", "wasi_snapshot_preview1",
+    "wasi_snapshot_preview1.proc_exit",
 ];
 
 // ---- buttons
@@ -828,6 +850,12 @@ pub const GASM_FETCH_FAILED: u32 = 3;
 pub const GASM_INPUT_KEYS_RAW: u32 = 1 << 0;
 pub const GASM_INPUT_POINTER_HIDDEN: u32 = 1 << 1;
 pub const GASM_INPUT_POINTER_LOCKED: u32 = 1 << 2;
+
+// ---- file save states
+/// gasm_files_state results.
+pub const GASM_FILES_PENDING: i32 = 0;
+pub const GASM_FILES_SAVED: i32 = 1;
+pub const GASM_FILES_FAILED: i32 = 2;
 
 // ---- storage errors
 /// gasm_storage_set results.

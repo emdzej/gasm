@@ -11,11 +11,12 @@
 //
 // The implementation is split by concern under lib/; this module re-exports it all.
 
-export { ABI_VERSION, DEFAULT_MEMORY_LIMIT, FNV_INIT, GasmHost, memoryLimitMessage, ProcExit, STACK_SWITCHING, TITLE_MAX_BYTES, VirtualClock, cleanTitle, fnv32, staticTitle } from './lib/host.js';
+export { ABI_VERSION, CLIPBOARD_MAX, DEFAULT_MEMORY_LIMIT, FNV_INIT, GasmHost, memoryLimitMessage, ProcExit, STACK_SWITCHING, TITLE_MAX_BYTES, VirtualClock, cleanTitle, fnv32, staticTitle } from './lib/host.js';
 export { Splitmix } from './lib/wasi.js';
 export { BUF_COPY_DST, BUF_INDEX, BUF_STORAGE, BUF_UNIFORM, BUF_VERTEX, GfxModel, MAX_BIND_GROUPS, MAX_TEXTURE_SIZE, MAX_VERTEX_BUFFERS, NullGfx, OFFSET_ALIGNMENT, clampRect } from './lib/gfx.js';
 export { MAX_CONNECTIONS, NET_CLOSED, NET_CONNECTING, NET_ERROR, NET_OPEN, NetConnections } from './lib/net.js';
 export { SPLASH_FRAMES, SPLASH_H, SPLASH_HOLD, SPLASH_W, splashFrame, splashHash } from './lib/splash.js';
+export { FILES_FAILED, FILES_PENDING, FILES_SAVED, FileSaves, MAX_SAVE, safeName, validMime } from './lib/files.js';
 export { FETCH_DONE, FETCH_FAILED, FETCH_HEADERS, FETCH_PENDING, FetchRequests, NetPolicy, recordKey } from './lib/fetch.js';
 export {
   IdbStorage, MemoryStorage, STORAGE_ERR_IO, STORAGE_ERR_KEY, STORAGE_ERR_QUOTA, STORAGE_ERR_SIZE, STORAGE_MAX_VALUE, STORAGE_QUOTA,

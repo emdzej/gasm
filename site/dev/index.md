@@ -69,6 +69,8 @@ gasm:gfx    width · height · create_shader · create_buffer · write_buffer
 gasm:net    open · state · send · recv · close
 gasm:fetch  request · state · status · headers · read · close
 gasm:storage get · set · delete · count · key
+gasm:clipboard set_text · get_text
+gasm:files  save · state
 ```
 
 Full details: [ABI v0 specification](/docs/abi). What each release added:

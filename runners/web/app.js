@@ -91,7 +91,9 @@ let typed = '';
 addEventListener('keydown', (e) => {
   if (typing(e)) return;
   // a game reading the raw keyboard gets every key (Space doesn't scroll, F5 doesn't reload)
-  if (running && inputMode() & INPUT_KEYS_RAW && e.code !== 'Escape') e.preventDefault();
+  // (except the paste shortcut: preventing it would cancel the paste event)
+  const paste = e.code === 'KeyV' && (e.ctrlKey || e.metaKey);
+  if (running && inputMode() & INPUT_KEYS_RAW && e.code !== 'Escape' && !paste) e.preventDefault();
   if (e.key === 'Enter') typed += '\n';
   else if (e.key === 'Backspace') typed += '\b';
   else if (e.key.length === 1 && !e.ctrlKey && !e.metaKey) typed += e.key;
@@ -101,6 +103,22 @@ addEventListener('keydown', (e) => {
   e.preventDefault();
 });
 const takeTyped = () => { const t = typed; typed = ''; return t; };
+// gasm:clipboard: the player pasted (Ctrl/Cmd+V): the text goes with the next frame, the one
+// that carries the key press; text the game copies goes on the clipboard
+let pasted;
+addEventListener('paste', (e) => { if (running && !typing(e)) pasted = e.clipboardData?.getData('text/plain') ?? ''; });
+const takePasted = () => { const t = pasted; pasted = undefined; return t; };
+// gasm:files: a file the game saves for the player is a download
+function saveFile(name, mime, bytes) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([bytes], { type: mime }));
+  a.download = name;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 60000);
+  log(`saved ${name}`);
+  return true;
+}
+const copyText = (t) => navigator.clipboard.writeText(t).catch((e) => log(`clipboard: ${e.message}`));
 // F2 (?copykey=<KeyboardEvent.code> or none): copy the game's frame to the clipboard, as
 // gasm-run does. The key also reaches the game. A WebGL or WebGPU canvas can only be read
 // in the task that drew it, so the copy happens right after the next frame.
@@ -140,7 +158,7 @@ function readPads(gamepads) {
 function batch(n) {
   return Array.from({ length: n }, (_, k) => {
     const input = rawInput.frame(k === 0);
-    return { pads: readPads(input.gamepads), text: k === 0 ? takeTyped() : '', input };
+    return { pads: readPads(input.gamepads), text: k === 0 ? takeTyped() : '', input, ...(k === 0 && pasted !== undefined ? { paste: takePasted() } : {}) };
   });
 }
 
@@ -490,7 +508,7 @@ async function start({ romBytes } = {}) {
       if (folder) specs.push({ kind: 'files', entries: folder.entries, prefix });
       const start = (canvasOpt) => GasmWorker.start({
         wasm: module, assets: specs, params, storage: namespace, allowNet: true, keyboard: true,
-        hashing: hashFrames > 0, virtualTime: hashFrames > 0, onLog: log, onAudio, onTitle: showTitle, ...canvasOpt,
+        hashing: hashFrames > 0, virtualTime: hashFrames > 0, onLog: log, onAudio, onTitle: showTitle, onCopyText: copyText, onSaveFile: saveFile, ...canvasOpt,
       });
       if (usesGfx) {
         const size = canvasSize();
@@ -527,7 +545,7 @@ async function start({ romBytes } = {}) {
         log(`storage unavailable (${e.message}); saves won't persist`);
         return new MemoryStorage();
       });
-      const h = new GasmHost({ assets, params, gfx, gl, storage, allowNet: true, onPresent: present, onAudio, onLog: log, onTitle: showTitle,
+      const h = new GasmHost({ assets, params, gfx, gl, storage, allowNet: true, onPresent: present, onAudio, onLog: log, onTitle: showTitle, onCopyText: copyText, onSaveFile: saveFile,
                                virtualTime: hashFrames > 0 });
       h.text = '';     // the page has a keyboard
       if (stale()) { h.shutdown(); gfx?.device.destroy(); return; }

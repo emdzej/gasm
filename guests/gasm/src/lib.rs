@@ -327,6 +327,75 @@ pub mod storage {
     }
 }
 
+/// Text on the system clipboard (`gasm:clipboard`, optional: check [`clipboard::available`]).
+/// Copying is always allowed; pasted text is readable only during the frame that carries
+/// the player's paste key press (Ctrl+V, Cmd+V on macOS).
+pub mod clipboard {
+    use crate::sys;
+
+    /// Whether the runner has a clipboard.
+    pub fn available() -> bool {
+        crate::has("gasm:clipboard")
+    }
+
+    /// Put text on the clipboard (after this frame). False if refused (over 1 MiB, no clipboard).
+    pub fn set_text(text: &str) -> bool {
+        unsafe { sys::clipboard_set_text(text.as_ptr(), text.len() as u32) == 0 }
+    }
+
+    /// The text the player pasted this frame, or None (not a paste frame, nothing to paste).
+    pub fn pasted() -> Option<String> {
+        let n = unsafe { sys::clipboard_get_text(std::ptr::null_mut(), 0) };
+        if n < 0 {
+            return None;
+        }
+        let mut buf = vec![0u8; n as usize];
+        unsafe { sys::clipboard_get_text(buf.as_mut_ptr(), n as u32) };
+        Some(String::from_utf8_lossy(&buf).into_owned())
+    }
+}
+
+/// Files for the player (`gasm:files`, optional: check [`files::available`]): `save` hands
+/// the runner a copy to keep where the player finds it (Pictures/<game>/ for images,
+/// Downloads/<game>/ otherwise, a download in browsers). The game never learns the path.
+pub mod files {
+    use crate::sys;
+
+    /// Whether the runner can save files for the player.
+    pub fn available() -> bool {
+        crate::has("gasm:files")
+    }
+
+    /// A save handed to the runner: poll [`Save::state`].
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub struct Save(i32);
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub enum State {
+        Pending,
+        Saved,
+        /// cancelled or not written
+        Failed,
+    }
+
+    impl Save {
+        pub fn state(self) -> State {
+            match unsafe { sys::files_state(self.0) } {
+                sys::GASM_FILES_PENDING => State::Pending,
+                sys::GASM_FILES_SAVED => State::Saved,
+                _ => State::Failed,
+            }
+        }
+    }
+
+    /// Save `data` as `name` (a file name, e.g. "photo-001.png") of type `mime`
+    /// ("image/png"). None if the runner refused (saving off, bad name or type, too big).
+    pub fn save(name: &str, mime: &str, data: &[u8]) -> Option<Save> {
+        let h = unsafe { sys::files_save(name.as_ptr(), name.len() as u32, mime.as_ptr(), mime.len() as u32, data.as_ptr(), data.len() as u32) };
+        (h > 0).then(|| Save(h))
+    }
+}
+
 // ---- raw input ---------------------------------------------------------------------
 
 /// Raw keyboard, pointer and gamepads (next to the virtual [`pad`]s).

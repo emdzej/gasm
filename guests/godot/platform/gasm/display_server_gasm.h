@@ -31,6 +31,9 @@ class DisplayServerGasm : public DisplayServerHeadless {
 	static Vector<String> get_rendering_drivers_func();
 
 	void process_keys();
+	// Shift, Ctrl, Alt, Meta (left and right) as of the key event being processed: the
+	// frame's key state is as of its end, when a quick Ctrl+V may have released Ctrl
+	uint8_t modifiers = 0;
 	void process_pointer();
 	void process_joypads();
 	void apply_mouse_mode();
@@ -40,6 +43,13 @@ public:
 
 	String get_name() const override { return "gasm"; }
 	bool has_feature(DisplayServerEnums::Feature p_feature) const override;
+
+	// gasm:clipboard: copying always works; pasted text is readable only in the frame
+	// that carries the player's paste key press (Ctrl/Cmd+V), which is when Godot's
+	// text fields ask for it
+	void clipboard_set(const String &p_text) override;
+	String clipboard_get() const override;
+	bool clipboard_has() const override;
 
 	int get_screen_count() const override { return 1; }
 	Size2i screen_get_size(int p_screen = DisplayServerEnums::SCREEN_OF_MAIN_WINDOW) const override { return window_get_size(); }

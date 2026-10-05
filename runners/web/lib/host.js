@@ -2,6 +2,7 @@
 // "gasm", "gasm:gfx", "gasm:net" and "gasm:storage" imports and the WASI subset
 // (lib/wasi.js) exactly like runners/native/src/host.rs.
 
+import { FileSaves } from './files.js';
 import { AssetTable, isAssetProvider, memoryAssets } from './assets.js';
 import { GfxModel, NullGfx, clampRect } from './gfx.js';
 import { GlHost, glImports } from './gl.js';
@@ -72,12 +73,14 @@ export const STACK_SWITCHING = typeof WebAssembly.Suspending === 'function' && t
 
 /** The default cap on guest memory, as natively (1 GiB). */
 export const DEFAULT_MEMORY_LIMIT = 1 << 30;
+/** The largest text gasm:clipboard passes either way (bytes; UTF-16 units for pasted text). */
+export const CLIPBOARD_MAX = 1 << 20;
 /** The trap message when a guest needs more memory than allowed (the same natively). */
 export const memoryLimitMessage = (limit) => `the game needs more memory than its limit (${Math.floor(limit / 1048576)} MiB; see --memory-limit)`;
 
 export class GasmHost {
   constructor({ assets = {}, params = {}, gfx = new NullGfx(), storage = new MemoryStorage(), allowNet = false,
-                onPresent = () => {}, onAudio = () => {}, onLog = console.log, onTitle = () => {},
+                onPresent = () => {}, onAudio = () => {}, onLog = console.log, onTitle = () => {}, onCopyText = () => {}, onSaveFile = () => true,
                 getPad = () => 0, virtualTime = false, stackSwitching = STACK_SWITCHING, gl = null,
                 fetchReplay = null, fetchRecord = null, memoryLimit = DEFAULT_MEMORY_LIMIT, userAgent = null } = {}) {
     // GasmAssetProvider ({ size(name), readAt(name, offset, dst), names() }), or a plain
@@ -97,7 +100,13 @@ export class GasmHost {
     this.onPresent = onPresent;      // (rgba: Uint8ClampedArray, w, h)
     this.onAudio = onAudio;          // (samples: Float32Array interleaved, rate, channels)
     this.onLog = onLog;
-    this.onTitle = onTitle;          // (title: string | null) after a frame that changed it; null = default
+    this.onTitle = onTitle;
+    // gasm:clipboard: (text) after a frame that copied text; put it on the clipboard
+    this.onCopyText = onCopyText;
+    this.pasted = null;              // the player's pasted text, during the frame that carries the paste key
+    this.copied = null;
+    // gasm:files: (name, mime, bytes) -> boolean | Promise<boolean>, after the frame; null: refuse saves
+    this.files = new FileSaves(onSaveFile, (m) => this.onLog(m));          // (title: string | null) after a frame that changed it; null = default
     this.title = null;               // set_title, cleaned
     // gasm_run guests (JSPI): the guest's run is one suspended call; frames are async
     this.stackSwitching = stackSwitching && STACK_SWITCHING;
@@ -387,6 +396,24 @@ export class GasmHost {
   }
 
   // ---- gasm:storage -------------------------------------------------------------
+  clipboardImports() {
+    return {
+      set_text: (ptr, len) => {
+        if (len > CLIPBOARD_MAX) return -1;
+        this.copied = this.str(ptr, len);
+        return 0;
+      },
+      get_text: (dst, cap) => (this.pasted === null ? -1 : this.copyIfFits(dst, cap, new TextEncoder().encode(this.pasted))),
+    };
+  }
+
+  filesImports() {
+    return {
+      save: (np, nl, mp, ml, ptr, len) => this.files.save(this.str(np, nl), nl, this.str(mp, ml), this.bytes(ptr, len)),
+      state: (h) => this.files.state(h),
+    };
+  }
+
   storageImports() {
     const st = this.storage;
     return {
@@ -464,7 +491,7 @@ export class GasmHost {
     this.gl.model.hash = (b) => { if (this.hashing) this.videoHash = fnv32(this.videoHash, b); };
     const known = {
       gasm: this.gasmImports(), 'gasm:gfx': this.gfxImports(), 'gasm:gl': glImports(this.gl), 'gasm:net': this.netImports(),
-      'gasm:fetch': this.fetchImports(), 'gasm:storage': this.storageImports(),
+      'gasm:fetch': this.fetchImports(), 'gasm:storage': this.storageImports(), 'gasm:clipboard': this.clipboardImports(), 'gasm:files': this.filesImports(),
     };
     for (const [mod, fns] of Object.entries(known)) {
       this.provided.add(mod);
@@ -541,6 +568,8 @@ export class GasmHost {
     } finally {
       this.frameIndex++; // a frame that exits or traps still counts (as in the other runners)
       if (this.titleChanged) { this.titleChanged = false; this.onTitle(this.title); }
+      if (this.copied !== null) { const t = this.copied; this.copied = null; this.onCopyText(t); }
+      this.files.flush();
     }
   }
 
@@ -571,6 +600,8 @@ export class GasmHost {
     } finally {
       this.frameIndex++;
       if (this.titleChanged) { this.titleChanged = false; this.onTitle(this.title); }
+      if (this.copied !== null) { const t = this.copied; this.copied = null; this.onCopyText(t); }
+      this.files.flush();
     }
   }
 
@@ -590,6 +621,7 @@ export class GasmHost {
     this.getPad = (p) => s.pads?.[p] ?? 0;
     if (s.text !== undefined) this.text = s.text;
     this.input = s.input ?? NO_INPUT;
+    this.pasted = typeof s.paste === 'string' && s.paste.length <= CLIPBOARD_MAX ? s.paste : null;
     this.showFrame = show;
     this.gfx.used = false;
   }
@@ -628,6 +660,7 @@ export class GasmHost {
   /** exit(), then close network connections (flushing them) and the storage. */
   async shutdown() {
     this.exit();
+    this.files.flush();   // saved on the way out (gasm_exit)
     this.fetch.closeAll();
     await this.net.closeAll();
     await this.storage.flush?.();

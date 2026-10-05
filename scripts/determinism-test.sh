@@ -193,6 +193,21 @@ for runner in "$NATIVE" "$NODE"; do
   fi
 done
 
+# gasm:files: S saves inputtest.txt; with --save-dir both runners write the same files
+# (a second save doesn't overwrite the first), with --no-save it's refused
+for runner in "$NATIVE" "$NODE"; do
+  dir=$(mktemp -d)
+  out=$($runner build/inputtest.wasm --headless 40 --save-dir "$dir" --input '10:KEY(KeyS),20:KEY(KeyS)' 2>&1)
+  off=$($runner build/inputtest.wasm --headless 15 --no-save --input '10:KEY(KeyS)' 2>&1)
+  if [ "$(grep -c 'save: saved' <<<"$out")" = 2 ] && [ "$(cat "$dir/inputtest.txt")" = "inputtest save 1" ] \
+     && [ "$(cat "$dir/inputtest (2).txt")" = "inputtest save 2" ] && grep -q 'save: refused' <<<"$off"; then
+    pass=$((pass + 1)); printf 'PASS  %-22s %s\n' "files-save" "${runner##*/}"
+  else
+    fail=$((fail + 1)); printf 'FAIL  files-save (%s)\n%s\n%s\n' "$runner" "$(grep -E 'save|files' <<<"$out" | tail -4)" "$(ls "$dir")"
+  fi
+  rm -rf "$dir"
+done
+
 echo "$pass passed, $fail failed"
 if [ -n "$UPDATE" ] && [ "$fail" -eq 0 ]; then
   mkdir -p "$(dirname "$GOLDEN")"

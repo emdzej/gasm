@@ -266,6 +266,9 @@ gasm-run <game.wasm|game.cwasm> [options]
 --mute                   no audio output
 --no-splash              start without the gasm splash screen
 --copy-key <code>        copy the game's frame to the clipboard on this key (default F2, or none)
+--save-dir <dir>         where files the game saves for you go (default Pictures/<game>/ for
+                         images, Downloads/<game>/ otherwise)
+--no-save                refuse every file the game wants to save for you
 --app-id <text>          who the game is in its HTTP requests (User-Agent: <text> gasm-run/<version>)
 --compile <out.cwasm>    ahead-of-time compile to native code and exit
 --allow-precompiled      accept a .cwasm (native code: only files you compiled yourself)

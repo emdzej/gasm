@@ -39,7 +39,7 @@ const inWorker = typeof WorkerGlobalScope !== 'undefined' && globalThis instance
 export class GasmWorker {
   static async start({
     wasm, assets = [], params = {}, storage = null, allowNet = false, keyboard = false, memoryLimit = undefined,
-    hashing = false, virtualTime = false, onLog = console.log, onAudio = () => {}, onTitle = () => {},
+    hashing = false, virtualTime = false, onLog = console.log, onAudio = () => {}, onTitle = () => {}, onCopyText = () => {}, onSaveFile = () => true,
     canvas = null, size = null, url = null,
   }) {
     // written out literally so bundlers (Vite, webpack) find and emit the worker
@@ -48,6 +48,8 @@ export class GasmWorker {
       : new Worker(new URL('./gasm-worker.js', import.meta.url), { type: 'module', name: 'gasm-guest' });
     const w = new GasmWorker(worker, onLog, onAudio);
     w.onTitle = onTitle;
+    w.onCopyText = onCopyText;
+    w.onSaveFile = onSaveFile;
     // a compiled Module is shared with the worker (no copy, no second compile); bytes are transferred
     const module = wasm instanceof WebAssembly.Module;
     const bytes = module || wasm instanceof ArrayBuffer ? wasm : wasm.buffer.slice(wasm.byteOffset, wasm.byteOffset + wasm.byteLength);
@@ -75,6 +77,8 @@ export class GasmWorker {
     this.stats = null;
     this.title = null;    // the guest's set_title, as of the last batch
     this.onTitle = () => {};
+    this.onCopyText = () => {};
+    this.onSaveFile = () => true;
     worker.onmessage = (e) => this.message(e.data);
     worker.onerror = (e) => this.fail(new Error(e.message || 'worker error'));
   }
@@ -88,6 +92,12 @@ export class GasmWorker {
       this.onTitle(m.title);
     }
     if (m.type === 'done') {
+      if (m.copied !== null) this.onCopyText(m.copied);
+      // gasm:files: the worker counted these as saved; the page offers them to the player
+      for (const s of m.saves) {
+        try { Promise.resolve(this.onSaveFile(s.name, s.mime, s.bytes)).catch((e) => this.onLog(`[gasm] files: ${s.name}: ${e.message}`)); }
+        catch (e) { this.onLog(`[gasm] files: ${s.name}: ${e.message}`); }
+      }
       for (const a of m.audio) this.onAudio(a.samples, a.rate, a.channels);
       this.frameRate = m.frameRate;
       this.stats = m.stats;
@@ -163,7 +173,7 @@ async function buildAssets(specs, log) {
 }
 
 if (inWorker) {
-  let host = null, gfx = null, keyboard = false, audio = [];
+  let host = null, gfx = null, keyboard = false, audio = [], copied = null, saves = [];
   const post = (m, transfer = []) => globalThis.postMessage(m, transfer);
   const log = (msg) => post({ type: 'log', msg });
   const stats = () => ({
@@ -189,6 +199,8 @@ if (inWorker) {
           assets, params: m.params, storage, allowNet: m.allowNet, virtualTime: m.virtualTime, onLog: log,
           ...(m.memoryLimit !== undefined ? { memoryLimit: m.memoryLimit } : {}),
           onAudio: (samples, rate, channels) => audio.push({ samples, rate, channels }), ...(gfx ? { gfx } : {}),
+          onCopyText: (t) => { copied = t; },
+          onSaveFile: (name, mime, bytes) => { saves.push({ name, mime, bytes }); return true; },
         });
         host.hashing = m.hashing;
         await host.load(m.wasm);
@@ -209,8 +221,10 @@ if (inWorker) {
       let frame = null;
       if (!gfx && video) frame = { rgba: host.rgba.slice(), width: host.width, height: host.height, aspect: host.aspect };
       const out = audio; audio = [];
-      const transfer = [...(frame ? [frame.rgba.buffer] : []), ...out.map((a) => a.samples.buffer)];
-      post({ type: 'done', frame, audio: out, stats: stats(), frameIndex: host.frameIndex, frameRate: host.frameRate, inputMode: host.inputMode, title: host.title, exit, error }, transfer);
+      const text = copied; copied = null;
+      const files = saves; saves = [];
+      const transfer = [...(frame ? [frame.rgba.buffer] : []), ...out.map((a) => a.samples.buffer), ...files.map((f) => f.bytes.buffer)];
+      post({ type: 'done', frame, audio: out, stats: stats(), frameIndex: host.frameIndex, frameRate: host.frameRate, inputMode: host.inputMode, title: host.title, copied: text, saves: files, exit, error }, transfer);
     } else if (m.type === 'setAsset') {
       host?.setAsset(m.name, m.bytes);
     } else if (m.type === 'removeAsset') {

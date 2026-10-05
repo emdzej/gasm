@@ -47,6 +47,10 @@ export declare class GasmWorker {
     onAudio?: (samples: Float32Array, rate: number, channels: number) => void;
     /** gasm.set_title changed (cleaned; null = the default). */
     onTitle?: (title: string | null) => void;
+    /** gasm:clipboard: text the guest copied, after the batch. */
+    onCopyText?: (text: string) => void;
+    /** gasm:files: a file the guest saved for the player (the worker reports it saved). */
+    onSaveFile?: (name: string, mime: string, bytes: Uint8Array) => boolean | Promise<boolean>;
     url?: URL | string;
   }): Promise<GasmWorker>;
   readonly worker: Worker;

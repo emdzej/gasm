@@ -475,6 +475,48 @@ Where data lives: native: `<data dir>/gasm/<namespace>/<key>`, one file per key
 `~/.local/share`, Windows `%APPDATA%`), override with `--storage-dir`. Browser:
 IndexedDB database `gasm`, keys `<namespace>/<key>`, per site origin.
 
+## `gasm:clipboard` (optional): text on the system clipboard
+
+Copy and paste for text fields and "copy link" buttons. **Copying is always
+allowed; pasting is the player's choice:** a game can read the clipboard only
+during the frame that carries the player's paste key press (Ctrl+V, or Cmd+V on
+macOS), never otherwise, so a game can't read whatever happens to be on the
+clipboard (a password, say) and send it somewhere. Text fields read the
+clipboard when they handle that key, so paste works as players expect.
+
+| Import | Signature | Semantics |
+|---|---|---|
+| `set_text` | `(ptr, len) -> i32` | Copy UTF-8 text: `0` (the runner puts it on the clipboard after this frame), or `-1` if refused (over 1 MiB, no clipboard). Invalid UTF-8 traps. |
+| `get_text` | `(dst, cap) -> i32` | The pasted text's length in bytes (copied only if ≤ `cap`; `cap = 0` queries), or `-1` outside a paste frame or with nothing to paste. |
+
+Natively the window runner uses the system clipboard; in the browser the page
+listens for the `paste` event (games that read the raw keyboard still get the
+paste shortcut's key events) and copies with `navigator.clipboard.writeText`.
+**Headless runs have an empty clipboard** (copies are accepted and dropped), so
+runs stay reproducible; neither direction is hashed. Images aren't supported:
+the runners' copy key (F2) copies the game's frame.
+
+## `gasm:files` (optional): files for the player
+
+For a photo mode's pictures or an editor's exports: files the player keeps
+outside the game, unlike `gasm:storage`, which only the game reads. The game
+hands the runner a copy; **the runner decides where it goes and the game never
+learns the path**.
+
+| Import | Signature | Semantics |
+|---|---|---|
+| `save` | `(name_ptr, name_len, mime_ptr, mime_len, data, len) -> i32` | A handle > 0 (the runner saves the copy after this frame), or `-1`: refused (saving is off, the name empty or over 255 bytes, the type not `type/subtype`, over 256 MiB, or 16 saves still pending). Invalid UTF-8 traps. |
+| `state` | `(handle) -> i32` | `GASM_FILES_PENDING` (0), `GASM_FILES_SAVED` (1) or `GASM_FILES_FAILED` (2: cancelled or not written). A handle `save` never returned traps. |
+
+The name is a suggestion: runners keep its last path component only, replace
+characters file systems refuse, drop leading dots, and never overwrite a file
+(`photo.png`, then `photo (2).png`). Natively images (`image/*`) go to
+`Pictures/<game>/` and everything else to `Downloads/<game>/` (the XDG user
+directories on Linux); `gasm-run --save-dir <dir>` picks the folder and
+`--no-save` refuses every save. Browsers offer the file as a download.
+**Headless runs write nothing** unless given `--save-dir`; either way a save is
+`SAVED` by the next frame, so runs stay reproducible. Saves aren't hashed.
+
 ## WASI subset
 
 Guests may import `wasi_snapshot_preview1` (C with wasi-libc does; Rust on

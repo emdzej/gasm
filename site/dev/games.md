@@ -87,7 +87,7 @@ In this repo, add your crate to `guests/Cargo.toml` (`members`) and to the
 cargo line in the `Makefile`. `make guests` then copies it to `build/`.
 
 Check what you built. Every import should come from `gasm`, `gasm:gfx`,
-`gasm:net`, `gasm:storage` or `wasi_snapshot_preview1`:
+`gasm:net`, `gasm:fetch`, `gasm:storage`, `gasm:clipboard`, `gasm:files` or `wasi_snapshot_preview1`:
 
 ```sh
 node -e 'const m=new WebAssembly.Module(require("fs").readFileSync("hello.wasm"));
@@ -287,6 +287,34 @@ for i in 0..n {
 
 [`guests/textured`](https://github.com/emdzej/gasm/blob/main/guests/textured/src/lib.rs)
 uses all of this in about 300 lines.
+
+### Clipboard (`gasm:clipboard`)
+
+```rust
+use gasm::clipboard;
+
+if clipboard::available() {
+    clipboard::set_text("https://example.org/level/42");   // copy: always allowed
+    if let Some(text) = clipboard::pasted() {               // only in the frame of the player's Ctrl/Cmd+V
+        field.insert(&text);
+    }
+}
+```
+
+Pasted text is there for one frame, the one whose key events include the paste
+shortcut; headless runs never paste.
+
+### Files for the player (`gasm:files`)
+
+```rust
+use gasm::files;
+
+// a photo mode: the runner keeps it in Pictures/<game>/ (a download in browsers)
+if let Some(save) = files::save("photo-001.png", "image/png", &png_bytes) {
+    self.saving = Some(save);                    // poll it: Pending, then Saved or Failed
+}
+if self.saving.is_some_and(|s| s.state() == files::State::Saved) { /* "Saved!" */ }
+```
 
 ### Storage (`gasm:storage`)
 
@@ -794,7 +822,7 @@ the five example projects (2D, physics, 3D, UI and saves, audio):
 
 - [ ] `crate-type = ["cdylib"]`, built for `wasm32-unknown-unknown` in release mode
 - [ ] `gasm::game!(YourGame)` (or the three exports in C)
-- [ ] Imports only `gasm`, `gasm:gfx`, `gasm:gl`, `gasm:net`, `gasm:fetch`, `gasm:storage`, WASI (or unused ones that trap harmlessly)
+- [ ] Imports only `gasm`, `gasm:gfx`, `gasm:gl`, `gasm:net`, `gasm:fetch`, `gasm:storage`, `gasm:clipboard`, `gasm:files`, WASI (or unused ones that trap harmlessly)
 - [ ] Imports newer than your target runners are probed with `gasm::has` first
 - [ ] Frame rate (and audio format) set in `init`
 - [ ] GPU: `"surface"` format, a bind group per pipeline, per-object uniform slots
