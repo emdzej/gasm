@@ -27,6 +27,17 @@ SDKs:
   renderer) are copied into buffers at the draw.
 
 Runners:
+- gasm:gl is much cheaper per call (NiP #10). The model kept vertex array
+  attributes in one table that every draw and delete scanned, so Godot, which
+  makes and frees a buffer and a vertex array per 2D polygon each frame, slowed
+  down with the square of its draw count. Each vertex array now has its own
+  record and buffers know which arrays use them. Natively, imports take their
+  arguments without a heap allocation and the model hashes with FxHash; in JS
+  the imports are bound methods. Godot drawing 660 polylines a frame: 22 -> 97
+  fps on ANGLE (gasm-run), 19 -> 309 frames/s null GL natively, 9 -> 226 in Node.
+  Hashes are unchanged.
+- `gasm-run --gl-stats`: gasm:gl calls a frame, by name, printed when the game
+  ends.
 - `--app-id <text>` (`gasm-run`, `gasm-headless`): gasm:fetch requests identify
   the game, `User-Agent: <text> gasm-run/<version>` (NiP #8). Without it the
   runner sends `gasm-run/<version>` (`gasm-headless/<version>` in Node);

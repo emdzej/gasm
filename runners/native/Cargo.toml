@@ -54,6 +54,8 @@ gilrs = { version = "0.11", optional = true }
 png = "0.18"
 # ANGLE (gasm:gl natively) is loaded at run time
 libloading = "0.8"
+# gasm:gl's model: fast hashing of runner-numbered handles (already in the tree via wasmtime)
+rustc-hash = "2"
 
 # the player's UTC offset (gasm.utc_offset_minutes): localtime_r / GetTimeZoneInformation
 [target.'cfg(unix)'.dependencies]

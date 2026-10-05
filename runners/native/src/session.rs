@@ -32,6 +32,8 @@ pub struct Session {
     pub gl_lib: Option<std::path::PathBuf>,
     /// gasm:gl on SwiftShader (software Vulkan) instead of the GPU
     pub gl_software: bool,
+    /// `--gl-stats`: count gasm:gl calls and print them when the game ends
+    pub gl_stats: bool,
     /// `--watch-asset name=path`: files re-read as assets whenever they change
     /// (create each watch before opening its file, so no change is missed)
     pub watch_assets: Vec<crate::assets::AssetWatch>,
@@ -84,6 +86,9 @@ impl Session {
         let mut host = Host::new(self.assets, self.params, audio, gfx, Net::with_policy(policy.clone()), self.storage);
         host.fetch = crate::fetch::Fetch::new(policy, self.fetch);
         host.fetch.set_app_id(self.app_id.as_deref());
+        if self.gl_stats {
+            host.gl.stats = Some(Default::default());
+        }
         if let Some(a) = gl {
             eprintln!("[gasm] gl: {}", a.renderer);
             host.gl.attach(a);

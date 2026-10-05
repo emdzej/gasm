@@ -1047,6 +1047,7 @@ dependencies = [
  "libloading",
  "png",
  "pollster",
+ "rustc-hash 2.1.3",
  "rustls",
  "rustls-native-certs",
  "rustls-pki-types",

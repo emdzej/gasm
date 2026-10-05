@@ -279,15 +279,29 @@ export class GlHost {
     this.model = new GlModel(this);
     this.objs = Object.fromEntries(KINDS.map((k) => [k, new Map()]));   // name -> WebGL object
     this.names = new WeakMap();   // WebGL object -> name
-    this.vaoElements = new Map([[0, 0]]);   // vertex array -> its ELEMENT_ARRAY_BUFFER
-    // `${vertex array}:${index}` -> { enabled, buffer }: a draw with an enabled attribute
-    // that has no buffer is INVALID_OPERATION (WebGL: no client-side arrays)
-    this.attribs = new Map();
+    // every live vertex array (0 included) -> { elements: its ELEMENT_ARRAY_BUFFER,
+    // enabled[i], buffers[i] }: a draw with an enabled attribute that has no buffer is
+    // INVALID_OPERATION (WebGL: no client-side arrays)
+    this.vaos = new Map([[0, newVao()]]);
+    // buffer -> the vertex array slots (vao * 32 + attribute, or + ELEMENTS) pointing at it,
+    // so deletes touch only their own entries (Godot makes and frees hundreds a frame)
+    this.bufferUsers = new Map();
     this.uniforms = new Map();    // program -> [WebGLUniformLocation | true] by location
     this.programOfLocation = new Map();
     this.ended = new Map();       // query / sync name -> frame it ended / was made
     this.extensions = new Set();
-    this.model.vaoElement = () => this.vaoElements.get(this.model.vertexArray) ?? 0;
+    this.model.vaoElement = () => this.vaos.get(this.model.vertexArray)?.elements ?? 0;
+  }
+  /** Point a slot of a vertex array (an attribute, or ELEMENTS) at a buffer. */
+  setVaoBuffer(vao, slot, n) {
+    const v = this.vaos.get(vao);
+    if (!v) return;
+    const old = slot === ELEMENTS ? v.elements : v.buffers[slot];
+    if (old === n) return;
+    if (slot === ELEMENTS) v.elements = n; else v.buffers[slot] = n;
+    const key = vao * 32 + slot, users = this.bufferUsers.get(old);
+    if (users) { users.delete(key); if (!users.size) this.bufferUsers.delete(old); }
+    if (n) (this.bufferUsers.get(n) ?? this.bufferUsers.set(n, new Set()).get(n)).add(key);
   }
   getError() { return this.ctx ? this.ctx.getError() : 0; }
 
@@ -418,15 +432,19 @@ export class GlHost {
   create_buffer() { return this.create('buffer', () => this.ctx.createBuffer()); }
   delete_buffer(n) {
     for (const [t, b] of this.model.buffers) if (b === n) this.model.buffers.delete(t);
-    for (const [v, b] of this.vaoElements) if (b === n) this.vaoElements.set(v, 0);
-    for (const a of this.attribs.values()) if (a.buffer === n) a.buffer = 0;
+    // detached from every vertex array, as WebGL does
+    for (const key of this.bufferUsers.get(n) ?? []) {
+      const v = this.vaos.get(Math.floor(key / 32)), slot = key % 32;
+      if (v) { if (slot === ELEMENTS) v.elements = 0; else v.buffers[slot] = 0; }
+    }
+    this.bufferUsers.delete(n);
     this.remove('buffer', n, (o) => this.ctx.deleteBuffer(o));
   }
   is_buffer(n) { return this.model.is('buffer', n); }
   bind_buffer(t, n) {
     const m = this.model;
     if (!m.bufferTarget(t) || !m.valid('buffer', n)) return;
-    if (t === GL.ELEMENT_ARRAY_BUFFER) this.vaoElements.set(m.vertexArray, n);
+    if (t === GL.ELEMENT_ARRAY_BUFFER) this.setVaoBuffer(m.vertexArray, ELEMENTS, n);
     else m.buffers.set(t, n);
     this.ctx?.bindBuffer(t, this.obj('buffer', n));
   }
@@ -475,11 +493,13 @@ export class GlHost {
   }
 
   // ---- vertex arrays ---------------------------------------------------------------------
-  create_vertex_array() { const n = this.create('vertexArray', () => this.ctx.createVertexArray()); this.vaoElements.set(n, 0); return n; }
+  create_vertex_array() { const n = this.create('vertexArray', () => this.ctx.createVertexArray()); this.vaos.set(n, newVao()); return n; }
   delete_vertex_array(n) {
     if (this.model.vertexArray === n) this.model.vertexArray = 0;
-    this.vaoElements.delete(n);
-    for (const k of [...this.attribs.keys()]) if (k.startsWith(`${n}:`)) this.attribs.delete(k);
+    if (n !== 0 && this.vaos.has(n)) {
+      for (let slot = 0; slot <= ELEMENTS; slot++) this.setVaoBuffer(n, slot, 0);
+      this.vaos.delete(n);
+    }
     this.remove('vertexArray', n, (o) => this.ctx.deleteVertexArray(o));
   }
   is_vertex_array(n) { return this.model.is('vertexArray', n); }
@@ -488,32 +508,28 @@ export class GlHost {
     this.model.vertexArray = n;
     this.ctx?.bindVertexArray(this.obj('vertexArray', n));
   }
-  /** The attribute's record in the bound vertex array (null: index out of range, INVALID_VALUE). */
+  /** Whether i is an attribute index (else INVALID_VALUE). */
   attrib(i) {
-    if (i >>> 0 >= NULL_LIMITS[0x8869][0]) { this.model.error(GL.INVALID_VALUE); return null; }
-    const k = `${this.model.vertexArray}:${i}`;
-    return this.attribs.get(k) ?? this.attribs.set(k, { enabled: false, buffer: 0 }).get(k);
+    return i >>> 0 < MAX_ATTRIBS || this.model.error(GL.INVALID_VALUE);
   }
-  enable_vertex_attrib_array(i) { const a = this.attrib(i); if (a) { a.enabled = true; this.ctx?.enableVertexAttribArray(i); } }
-  disable_vertex_attrib_array(i) { const a = this.attrib(i); if (a) { a.enabled = false; this.ctx?.disableVertexAttribArray(i); } }
+  enable_vertex_attrib_array(i) { if (this.attrib(i)) { this.vaos.get(this.model.vertexArray).enabled[i] = 1; this.ctx?.enableVertexAttribArray(i); } }
+  disable_vertex_attrib_array(i) { if (this.attrib(i)) { this.vaos.get(this.model.vertexArray).enabled[i] = 0; this.ctx?.disableVertexAttribArray(i); } }
   vertex_attrib_pointer(i, size, type, norm, stride, off) {
-    const a = this.attrib(i);
-    if (!a) return;
+    if (!this.attrib(i)) return;
     if (this.model.boundBuffer(GL.ARRAY_BUFFER) === 0 && off !== 0) return this.model.error(GL.INVALID_OPERATION);
-    a.buffer = this.model.boundBuffer(GL.ARRAY_BUFFER);
+    this.setVaoBuffer(this.model.vertexArray, i, this.model.boundBuffer(GL.ARRAY_BUFFER));
     this.ctx?.vertexAttribPointer(i, size, type, !!norm, stride, off);
   }
   vertex_attrib_ipointer(i, size, type, stride, off) {
-    const a = this.attrib(i);
-    if (!a) return;
+    if (!this.attrib(i)) return;
     if (this.model.boundBuffer(GL.ARRAY_BUFFER) === 0 && off !== 0) return this.model.error(GL.INVALID_OPERATION);
-    a.buffer = this.model.boundBuffer(GL.ARRAY_BUFFER);
+    this.setVaoBuffer(this.model.vertexArray, i, this.model.boundBuffer(GL.ARRAY_BUFFER));
     this.ctx?.vertexAttribIPointer(i, size, type, stride, off);
   }
   /** A draw may go ahead: every enabled attribute of the bound vertex array has a buffer. */
   attribsReady() {
-    const v = `${this.model.vertexArray}:`;
-    for (const [k, a] of this.attribs) if (a.enabled && !a.buffer && k.startsWith(v)) return this.model.error(GL.INVALID_OPERATION);
+    const v = this.vaos.get(this.model.vertexArray);
+    for (let i = 0; i < MAX_ATTRIBS; i++) if (v.enabled[i] && !v.buffers[i]) return this.model.error(GL.INVALID_OPERATION);
     return true;
   }
   vertex_attrib_divisor(i, d) { this.ctx?.vertexAttribDivisor(i, d); }
@@ -967,12 +983,18 @@ export class GlHost {
   resume_transform_feedback() { this.ctx?.resumeTransformFeedback(); }
 }
 
+// vertex attributes (MAX_VERTEX_ATTRIBS, NULL_LIMITS[0x8869]); a vertex array's
+// ELEMENT_ARRAY_BUFFER slot comes after them
+const MAX_ATTRIBS = NULL_LIMITS[0x8869][0];
+const ELEMENTS = MAX_ATTRIBS;
+const newVao = () => ({ elements: 0, enabled: new Uint8Array(MAX_ATTRIBS), buffers: new Uint32Array(MAX_ATTRIBS) });
+
 /** The import object for gasm:gl: every method of GlHost that is an import. */
 export function glImports(gl) {
   const out = {};
   for (const name of Object.getOwnPropertyNames(GlHost.prototype)) {
     if (name === 'constructor' || !/^[a-z0-9_]+$/.test(name) || !name.includes('_') && !GL_SINGLE_WORD.has(name)) continue;
-    out[name] = (...a) => gl[name](...a);
+    out[name] = gl[name].bind(gl);
   }
   return out;
 }

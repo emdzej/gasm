@@ -8,9 +8,10 @@
 //! is read as the i32 the guest passed, as the JS runner sees it, so signed checks
 //! (negative sizes, `end >= start`) agree.
 
-use std::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 
-use wasmtime::{Caller, FuncType, Linker, Val, ValType, bail};
+use std::mem::MaybeUninit;
+use wasmtime::{Caller, FuncType, Linker, Val, ValRaw, ValType, bail};
 
 use crate::host::{Host, guest_slice, guest_slice_mut, memory};
 
@@ -215,6 +216,8 @@ struct Uniforms {
 
 /// The gasm:gl state of one guest (model + null GL).
 pub struct Gl {
+    /// `--gl-stats`: calls by name, printed when the game ends
+    pub stats: Option<GlStats>,
     next: HashMap<Kind, u32>,
     live: HashMap<Kind, HashSet<u32>>,
     errors: Vec<u32>,
@@ -227,10 +230,11 @@ pub struct Gl {
     renderbuffer: u32,
     program: u32,
     vertex_array: u32,
-    vao_elements: HashMap<u32, u32>,
-    /// (vertex array, index) -> (enabled, buffer): a draw with an enabled attribute that has
-    /// no buffer is INVALID_OPERATION (WebGL: no client-side arrays)
-    attribs: HashMap<(u32, u32), (bool, u32)>,
+    /// every live vertex array (0 included)
+    vaos: HashMap<u32, Vao>,
+    /// buffer -> the (vertex array, slot) pairs pointing at it, so deleting a buffer or a
+    /// vertex array touches only its own entries (Godot makes and frees hundreds a frame)
+    buffer_users: HashMap<u32, HashSet<(u32, u8)>>,
     unpack: Store,
     pack: Store,
     shaders: HashMap<u32, (u32, String)>,
@@ -244,29 +248,79 @@ pub struct Gl {
     backend: Option<Box<Backend>>,
 }
 
+/// GL calls by name over the frames that made any (`--gl-stats`); printed on drop, when
+/// the game ends.
+#[derive(Default)]
+pub struct GlStats {
+    calls: HashMap<&'static str, u64>,
+    frames: Option<(u64, u64)>,
+}
+
+impl GlStats {
+    fn count(&mut self, name: &'static str, frame: u64) {
+        *self.calls.entry(name).or_default() += 1;
+        let (first, _) = self.frames.unwrap_or((frame, frame));
+        self.frames = Some((first, frame));
+    }
+
+    /// The report: total calls a frame, then each function's, most first.
+    pub fn report(&self) -> String {
+        let frames = self.frames.map_or(1, |(a, b)| b - a + 1) as f64;
+        let mut calls: Vec<_> = self.calls.iter().map(|(&n, &c)| (n, c)).collect();
+        calls.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(b.0)));
+        let total: u64 = calls.iter().map(|c| c.1).sum();
+        let mut out = format!("[gasm] gl stats: {:.1} calls a frame over {frames} frames", total as f64 / frames);
+        for (n, c) in calls {
+            out += &format!("\n  {:>9.1}  {n}", c as f64 / frames);
+        }
+        out
+    }
+}
+
+impl Drop for GlStats {
+    fn drop(&mut self) {
+        eprintln!("{}", self.report());
+    }
+}
+
+/// Vertex attributes (MAX_VERTEX_ATTRIBS, `null_limit(0x8869)`)
+const MAX_ATTRIBS: usize = 16;
+/// a vertex array's ELEMENT_ARRAY_BUFFER slot, after its attributes
+const ELEMENTS: usize = MAX_ATTRIBS;
+
+/// What the model keeps of a vertex array: its ELEMENT_ARRAY_BUFFER and, per attribute,
+/// (enabled, buffer). A draw with an enabled attribute that has no buffer is
+/// INVALID_OPERATION (WebGL: no client-side arrays).
+#[derive(Clone, Copy, Default)]
+struct Vao {
+    elements: u32,
+    attribs: [(bool, u32); MAX_ATTRIBS],
+}
+
 impl Default for Gl {
     fn default() -> Self {
         Gl {
-            next: HashMap::new(),
-            live: HashMap::new(),
+            stats: None,
+            next: HashMap::default(),
+            live: HashMap::default(),
             errors: Vec::new(),
-            buffers: HashMap::new(),
-            textures: HashMap::new(),
-            texture_targets: HashMap::new(),
+            buffers: HashMap::default(),
+            textures: HashMap::default(),
+            texture_targets: HashMap::default(),
             unit: 0,
-            framebuffers: HashMap::new(),
+            framebuffers: HashMap::default(),
             renderbuffer: 0,
             program: 0,
             vertex_array: 0,
-            vao_elements: HashMap::from([(0, 0)]),
-            attribs: HashMap::new(),
+            vaos: HashMap::from_iter([(0, Vao::default())]),
+            buffer_users: HashMap::default(),
             unpack: STORE,
             pack: STORE,
-            shaders: HashMap::new(),
-            uniforms: HashMap::new(),
-            active: HashMap::new(),
-            query_ended: HashMap::new(),
-            sync_made: HashMap::new(),
+            shaders: HashMap::default(),
+            uniforms: HashMap::default(),
+            active: HashMap::default(),
+            query_ended: HashMap::default(),
+            sync_made: HashMap::default(),
             error_count: 0,
             backend: None,
         }
@@ -327,10 +381,24 @@ impl Gl {
         self.buffers.get(&t).copied().unwrap_or(0)
     }
     fn vao_element(&self) -> u32 {
-        self.vao_elements
-            .get(&self.vertex_array)
-            .copied()
-            .unwrap_or(0)
+        self.vaos.get(&self.vertex_array).map_or(0, |v| v.elements)
+    }
+    /// Point a slot of a vertex array (an attribute, or ELEMENTS) at a buffer.
+    fn set_vao_buffer(&mut self, vao: u32, slot: usize, n: u32) {
+        let Some(v) = self.vaos.get_mut(&vao) else { return };
+        let old = std::mem::replace(if slot == ELEMENTS { &mut v.elements } else { &mut v.attribs[slot].1 }, n);
+        if old == n {
+            return;
+        }
+        if let Some(users) = self.buffer_users.get_mut(&old) {
+            users.remove(&(vao, slot as u8));
+            if users.is_empty() {
+                self.buffer_users.remove(&old);
+            }
+        }
+        if n != 0 {
+            self.buffer_users.entry(n).or_default().insert((vao, slot as u8));
+        }
     }
     fn bound_texture(&self, t: u32) -> u32 {
         let t = if (CUBE_POSITIVE_X..=CUBE_NEGATIVE_Z).contains(&t) {
@@ -343,18 +411,18 @@ impl Gl {
     fn need_texture(&mut self, t: u32) -> bool {
         self.bound_texture(t) != 0 || self.error(INVALID_OPERATION)
     }
-    /// The attribute's record in the bound vertex array (None: out of range, INVALID_VALUE).
-    fn attrib(&mut self, i: u32) -> Option<&mut (bool, u32)> {
-        if i as i64 >= null_limit(0x8869)[0] {
+    /// An attribute index of the bound vertex array (None: out of range, INVALID_VALUE).
+    fn attrib(&mut self, i: u32) -> Option<usize> {
+        if i as usize >= MAX_ATTRIBS {
             self.error(INVALID_VALUE);
             return None;
         }
-        Some(self.attribs.entry((self.vertex_array, i)).or_insert((false, 0)))
+        Some(i as usize)
     }
     /// A draw may go ahead: every enabled attribute of the bound vertex array has a buffer.
     fn attribs_ready(&mut self) -> bool {
-        let v = self.vertex_array;
-        !self.attribs.iter().any(|(&(a, _), &(on, b))| a == v && on && b == 0) || self.error(INVALID_OPERATION)
+        let missing = self.vaos.get(&self.vertex_array).is_some_and(|v| v.attribs.iter().any(|&(on, b)| on && b == 0));
+        !missing || self.error(INVALID_OPERATION)
     }
     fn non_negative(&mut self, v: &[i32]) -> bool {
         v.iter().all(|&x| x >= 0) || self.error(INVALID_VALUE)
@@ -481,12 +549,48 @@ pub(crate) fn add_gl_imports(linker: &mut Linker<Host>) -> wasmtime::Result<()> 
         };
         let ft = FuncType::new(&engine, params.chars().map(ty), result.chars().map(ty));
         let f32_result = result == "f";
-        linker.func_new("gasm:gl", name, ft, move |mut c, args, results| {
-            call(&mut c, name, f32_result, args, results)
-        })?;
+        assert!(params.len() <= MAX_PARAMS && result.len() <= 1, "gl_sigs.rs: {name}");
+        let zero = |c: u8| match c {
+            b'I' => Val::I64(0),
+            b'f' => Val::F32(0),
+            _ => Val::I32(0),
+        };
+        // Unchecked: arguments go from the raw slots to a stack array (func_new collects them
+        // into a heap vector per call, which was a good part of a GL call's cost).
+        // SAFETY: wasmtime calls this with `ft`'s parameters in the first slots, typed as
+        // `params` says, and room for the result in slot 0; we read exactly those and write
+        // the result with its declared type.
+        unsafe {
+            linker.func_new_unchecked("gasm:gl", name, ft, move |mut c, raw| {
+                let mut args = [Val::I32(0); MAX_PARAMS];
+                for (i, t) in params.bytes().enumerate() {
+                    let r = raw[i].assume_init();
+                    args[i] = match t {
+                        b'I' => Val::I64(r.get_i64()),
+                        b'f' => Val::F32(r.get_f32()),
+                        _ => Val::I32(r.get_i32()),
+                    };
+                }
+                let mut res = [result.bytes().next().map_or(Val::I32(0), zero)];
+                let results = &mut res[..result.len()];
+                call(&mut c, name, f32_result, &args[..params.len()], results)?;
+                if let Some(v) = results.first() {
+                    raw[0] = MaybeUninit::new(match *v {
+                        Val::I64(x) => ValRaw::i64(x),
+                        Val::F32(b) => ValRaw::f32(b),
+                        Val::I32(x) => ValRaw::i32(x),
+                        _ => unreachable!("gasm:gl results are numbers"),
+                    });
+                }
+                Ok(())
+            })?;
+        }
     }
     Ok(())
 }
+
+/// The longest gasm:gl parameter list (tex_sub_image_3d)
+const MAX_PARAMS: usize = 12;
 
 /// Write `values` to guest memory as i32 / f32 / i64 (up to `count` of them); returns how many there are.
 fn put(mem: &mut [u8], dst: u32, count: u32, values: &[i64], kind: char) -> wasmtime::Result<i32> {
@@ -522,7 +626,11 @@ fn guest_str(mem: &[u8], ptr: u32, len: u32) -> wasmtime::Result<String> {
 /// One gasm:gl call: the model checks it (and answers what it can); if it recorded
 /// no GL error and didn't trap, the backend (if any) executes it, as WebGL does in
 /// the browser runner.
-fn call(c: &mut Caller<'_, Host>, name: &str, f32_result: bool, args: &[Val], results: &mut [Val]) -> wasmtime::Result<()> {
+fn call(c: &mut Caller<'_, Host>, name: &'static str, f32_result: bool, args: &[Val], results: &mut [Val]) -> wasmtime::Result<()> {
+    let frame = c.data().frame_index;
+    if let Some(s) = &mut c.data_mut().gl.stats {
+        s.count(name, frame);
+    }
     let before = c.data().gl.error_count;
     model_call(c, name, f32_result, args, results)?;
     if c.data().gl.backend.is_none() || c.data().gl.error_count != before {
@@ -681,14 +789,10 @@ fn model_call(
         "delete_buffer" => {
             let n = u(0);
             gl.buffers.retain(|_, b| *b != n);
-            for b in gl.vao_elements.values_mut() {
-                if *b == n {
-                    *b = 0;
-                }
-            }
-            for a in gl.attribs.values_mut() {
-                if a.1 == n {
-                    a.1 = 0;
+            // detached from every vertex array, as WebGL does
+            for (v, slot) in gl.buffer_users.remove(&n).unwrap_or_default() {
+                if let Some(v) = gl.vaos.get_mut(&v) {
+                    *(if slot as usize == ELEMENTS { &mut v.elements } else { &mut v.attribs[slot as usize].1 }) = 0;
                 }
             }
             gl.remove(Buffer, n);
@@ -698,7 +802,7 @@ fn model_call(
             let (t, n) = (u(0), u(1));
             if gl.target(BUFFER_TARGETS, t) && gl.valid(Buffer, n, true) {
                 if t == ELEMENT_ARRAY_BUFFER {
-                    gl.vao_elements.insert(gl.vertex_array, n);
+                    gl.set_vao_buffer(gl.vertex_array, ELEMENTS, n);
                 } else {
                     gl.buffers.insert(t, n);
                 }
@@ -745,7 +849,7 @@ fn model_call(
         // ---- vertex arrays ----
         "create_vertex_array" => {
             let n = gl.create(VertexArray);
-            gl.vao_elements.insert(n, 0);
+            gl.vaos.insert(n, Vao::default());
             ret(n as i64)
         }
         "delete_vertex_array" => {
@@ -753,8 +857,12 @@ fn model_call(
             if gl.vertex_array == n {
                 gl.vertex_array = 0;
             }
-            gl.vao_elements.remove(&n);
-            gl.attribs.retain(|&(v, _), _| v != n);
+            if n != 0 && gl.vaos.contains_key(&n) {
+                for slot in 0..=ELEMENTS {
+                    gl.set_vao_buffer(n, slot, 0);
+                }
+                gl.vaos.remove(&n);
+            }
             gl.remove(VertexArray, n);
         }
         "is_vertex_array" => ret(gl.is(VertexArray, u(0)) as i64),
@@ -770,18 +878,20 @@ fn model_call(
                 a(4)
             };
             let buffer = gl.bound_buffer(ARRAY_BUFFER);
-            if gl.attrib(u(0)).is_some() {
+            if let Some(i) = gl.attrib(u(0)) {
                 if buffer == 0 && off != 0 {
                     gl.error(INVALID_OPERATION);
-                } else if let Some(a) = gl.attrib(u(0)) {
-                    a.1 = buffer;
+                } else {
+                    gl.set_vao_buffer(gl.vertex_array, i, buffer);
                 }
             }
         }
         "enable_vertex_attrib_array" | "disable_vertex_attrib_array" => {
             let on = name == "enable_vertex_attrib_array";
-            if let Some(a) = gl.attrib(u(0)) {
-                a.0 = on;
+            if let Some(i) = gl.attrib(u(0)) {
+                if let Some(v) = gl.vaos.get_mut(&gl.vertex_array) {
+                    v.attribs[i].0 = on;
+                }
             }
         }
         "get_vertex_attribiv" | "get_vertex_attrib_offset" => ret(0),
@@ -1435,4 +1545,14 @@ fn uniform_kind(name: &str) -> (u32, u32, bool, bool) {
         _ => 20, // "ui"
     };
     (base + n, n, suffix.ends_with('v'), false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn max_attribs_is_the_null_limit() {
+        assert_eq!(null_limit(0x8869)[0], MAX_ATTRIBS as i64);
+    }
 }
