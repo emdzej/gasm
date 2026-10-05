@@ -10,7 +10,7 @@ rm -rf "$PLAY"
 mkdir -p "$PLAY/build"
 scripts/vendor-web.sh >/dev/null   # csfs for the OPFS import page
 cp runners/web/index.html runners/web/app.js runners/web/gasm-host.js runners/web/webgpu-gfx.js runners/web/gasm-present.js \
-   runners/web/gasm-worker.js runners/web/opfs.html runners/web/opfs.js runners/web/testdata.js "$PLAY/"
+   runners/web/gasm-worker.js runners/web/gasm-splash.js runners/web/opfs.html runners/web/opfs.js runners/web/testdata.js "$PLAY/"
 cp -R runners/web/lib runners/web/vendor "$PLAY/"
 for g in sumo triangle textured inputtest nes doom scummvm scummvm-run test-pattern gltest glowtest eguidemo assetcheck sdl3-snake sdl3-woodeneye sdl3-callbacks sdl3-classic sdl3-classic-run sdl3-threads sdl3-gl sdl3-snake-gl bricks; do
   [ -f "build/$g.wasm" ] || { echo "missing build/$g.wasm; run 'make guests' first" >&2; exit 1; }

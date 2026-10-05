@@ -286,7 +286,7 @@ from the repo root, then
 - **The splash screen** is drawn twice, in integer arithmetic only:
   `runners/native/src/splash.rs` and `runners/web/lib/splash.js` must give the same
   frames (`SPLASH_HASH` in splash.rs: its unit test checks Rust, `gen-abi.mjs
-  --check` the JS). Change both, then the constant. It's for windows and the player
+  --check` the JS). Change both, then the constant. It's for windows, the player and pages using `gasm-splash.js` (`playSplash`)
   only: never in headless runs or `--window-screenshot`; pages and scripts that
   screenshot the player pass `&nosplash`.
 - **gasm:gl null GL limits** are WebGL 2's minimums, in `null_limit` (gl.rs) and

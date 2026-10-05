@@ -37,6 +37,10 @@ ABI:
   Ctrl+V (Ctrl released within the same frame) is still Ctrl+V.
 
 Runners:
+- `@emdzej/gasm-host/splash`: `playSplash(canvas or draw)`, the gasm splash screen
+  for pages that run games with `GasmHost` (until now only the player showed it).
+  It holds on the logo until `ready()`; a key or click shortens it. The player
+  uses it too.
 - Player consent (the roadmap item): the window runner and the browser player
   ask before a game connects to a host nobody allowed up front (`gasm:net`,
   `gasm:fetch`; once per host) and, natively, before its first save for the

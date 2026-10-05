@@ -49,6 +49,16 @@ onPresent: (rgba, w, h) => presenter.draw(rgba, w, h, size, { filter: 'xbr', int
 With `integerScale`, set `BrowserInput.integerScale` too, so the pointer's frame
 position follows the smaller letterbox.
 
+The gasm splash screen (the same frames as `gasm-run` and the player) while the
+game loads, on a canvas of its own or through your own draw function:
+
+```js
+import { playSplash } from '@emdzej/gasm-host/splash';
+const splash = playSplash(splashCanvas);   // or playSplash((rgba, w, h) => presenter.draw(rgba, w, h, size))
+await host.load(bytes);                    // loading meanwhile; it holds on the logo if that takes longer
+await splash.ready();                      // the last frames, then it resolves (a key or click shortens it)
+```
+
 A complete player (canvas, AudioWorklet audio, keyboard and Gamepad API,
 catch-up handling) is `app.js` in the [repository](https://github.com/emdzej/gasm/tree/main/runners/web).
 

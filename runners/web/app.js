@@ -1,9 +1,10 @@
 // Browser runner: canvas (2D or WebGPU) + AudioWorklet + keyboard/Gamepad API
 // + WebSocket networking around GasmHost.
+import { playSplash } from './gasm-splash.js';
 import {
   GasmHost, STACK_SWITCHING, staticTitle, IdbStorage, MemoryStorage, ProcExit, Resampler, AssetTable, bytesSource,
   directoryHandleEntries, fileListEntries, preloadAssets, DEFAULT_KEYMAP, parseKeymap, keyboardPads,
-  BrowserInput, INPUT_KEYS_RAW, gamepadPads, normalizeCode, SPLASH_FRAMES, SPLASH_HOLD, SPLASH_W, SPLASH_H, splashFrame,
+  BrowserInput, INPUT_KEYS_RAW, gamepadPads, normalizeCode, SPLASH_W, SPLASH_H,
 } from './gasm-host.js';
 import { GasmWorker } from './gasm-worker.js';
 import { WebGpuGfx } from './webgpu-gfx.js';
@@ -448,12 +449,7 @@ async function namespaceFor(game) {
 // The gasm splash screen (lib/splash.js, the same frames as gasm-run's) while the game
 // loads: it holds on the logo until finish() is called, and a key or click shortens it.
 // ?nosplash (and hash runs) skip it.
-function playSplash(stale) {
-  let frame = 0, ready = false, skip = false, end;
-  const done = new Promise((r) => { end = r; });
-  const onInput = () => { skip = true; };
-  addEventListener('keydown', onInput, true);
-  addEventListener('pointerdown', onInput, true);
+function showSplash(stale) {
   freshCanvas();
   canvas.style.setProperty('--ar', SPLASH_W / SPLASH_H);
   const draw = (rgba) => {
@@ -465,25 +461,10 @@ function playSplash(stale) {
     if (canvas.width !== SPLASH_W) { canvas.width = SPLASH_W; canvas.height = SPLASH_H; }
     ctx.putImageData(new ImageData(rgba, SPLASH_W, SPLASH_H), 0, 0);
   };
-  let t0 = performance.now(), shown = -1;
-  const step = (now) => {
-    if (stale()) return finish();
-    if (skip) frame = ready ? SPLASH_FRAMES : Math.max(frame, SPLASH_HOLD);
-    if (frame >= SPLASH_FRAMES && ready) return finish();
-    if (frame !== shown) { draw(splashFrame(frame)); shown = frame; }
-    // 60 frames a second whatever the display's rate; hold on the logo until ready
-    const due = Math.floor((now - t0) * 60 / 1000);
-    if (frame < due && (frame !== SPLASH_HOLD || ready)) frame++;
-    if (frame === SPLASH_HOLD && !ready) t0 = now - SPLASH_HOLD * 1000 / 60;
-    requestAnimationFrame(step);
-  };
-  function finish() {
-    removeEventListener('keydown', onInput, true);
-    removeEventListener('pointerdown', onInput, true);
-    end();
-  }
-  requestAnimationFrame(step);
-  return { done, ready: () => { ready = true; return done; } };
+  // the package's player (gasm-splash.js), drawn with the view's filter; ends early if
+  // another game is picked meanwhile
+  const s = playSplash((rgba) => (stale() ? s.cancel() : draw(rgba)));
+  return s;
 }
 
 async function start({ romBytes } = {}) {
@@ -496,7 +477,7 @@ async function start({ romBytes } = {}) {
   const url = new URLSearchParams(location.search);
   const game = url.get('wasm') ?? $('game').value;   // ?wasm=<url> runs any module
   const hashFrames = Number(url.get('hashframes') || 0);
-  const splash = hashFrames > 0 || url.has('nosplash') ? null : playSplash(stale);
+  const splash = hashFrames > 0 || url.has('nosplash') ? null : showSplash(stale);
   const record = {};
   if (CONTENT[game] && !folder && !url.has('opfs')) {
     try {

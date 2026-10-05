@@ -58,6 +58,27 @@ try {
     await sleep(extra);
   };
 
+  // @emdzej/gasm-host/splash on a page's own canvas: frames drawn, held on the logo
+  // until ready(), then over
+  await send('Page.navigate', { url: `${BASE}?game=inputtest.wasm&nosplash` });
+  await sleep(1500);
+  const splash = await evaluate(`(async () => {
+    const { playSplash } = await import('./gasm-splash.js');
+    const c = document.createElement('canvas');
+    document.body.append(c);
+    const s = playSplash(c, { skipOnInput: false });
+    await new Promise((r) => setTimeout(r, 2500));   // past the logo frame: it holds
+    const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data, colours = new Set();
+    for (let i = 0; i < d.length; i += 4) colours.add(d[i] << 16 | d[i + 1] << 8 | d[i + 2]);
+    let over = false;
+    s.done.then(() => { over = true; });
+    await new Promise((r) => setTimeout(r, 100));
+    const held = !over;
+    await Promise.race([s.ready(), new Promise((r) => setTimeout(r, 3000))]);
+    return c.width + 'x' + c.height + ' ' + colours.size + ' colours, held ' + held + ', over ' + over;
+  })()`);
+  check(`gasm-splash.js: ${splash}`, /^320x180 \d+ colours, held true, over true$/.test(splash ?? '') && Number(/ (\d+) colours/.exec(splash)[1]) > 2, splash);
+
   // gasm:clipboard
   for (const mode of ['', '&worker']) {
     logs.length = 0;
