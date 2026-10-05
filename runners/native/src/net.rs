@@ -39,17 +39,50 @@ struct Conn {
 }
 
 /// The hosts guests may reach (gasm:net and gasm:fetch): none, all (`--allow-net`)
-/// or a list (`--allow-net=api.met.no,*.example.org`; `*.` matches subdomains).
+/// or a list (`--allow-net=api.met.no,*.example.org`; `*.` matches subdomains). With
+/// `consent` (the window runner) any other host is the player's choice.
 #[derive(Clone, Debug, Default)]
 pub struct NetPolicy {
     pub allowed: bool,
     /// empty: every host (when allowed)
     pub hosts: Vec<String>,
+    pub consent: Option<crate::consent::Consent>,
 }
 
 impl NetPolicy {
     pub fn new(allowed: bool, hosts: Vec<String>) -> NetPolicy {
-        NetPolicy { allowed, hosts: hosts.into_iter().map(|h| h.to_ascii_lowercase()).collect() }
+        NetPolicy { allowed, hosts: hosts.into_iter().map(|h| h.to_ascii_lowercase()).collect(), consent: None }
+    }
+
+    pub fn with_consent(mut self, consent: Option<crate::consent::Consent>) -> NetPolicy {
+        self.consent = consent;
+        self
+    }
+
+    /// Why a URL is refused, None if it may be reached now, or Err(()) while the
+    /// player hasn't answered (the question is queued).
+    pub fn verdict(&self, url: &str) -> Result<Option<String>, ()> {
+        let Some(why) = self.refusal(url) else { return Ok(None) };
+        let Some(c) = &self.consent else { return Ok(Some(why)) };
+        let host = url_host(url).unwrap_or_default();
+        match c.lock().unwrap().check(&crate::consent::net_subject(&host)) {
+            Some(true) => Ok(None),
+            Some(false) => Ok(Some(format!("the player said no to {host}"))),
+            None => Err(()),
+        }
+    }
+
+    /// Block (on a connection's own thread) until the URL may be reached: Err(why) if
+    /// refused, or once `cancelled` says the request is gone.
+    pub fn wait(&self, url: &str, cancelled: impl Fn() -> bool) -> Result<(), String> {
+        loop {
+            match self.verdict(url) {
+                Ok(None) => return Ok(()),
+                Ok(Some(why)) => return Err(why),
+                Err(()) if cancelled() => return Err("cancelled".into()),
+                Err(()) => std::thread::sleep(Duration::from_millis(50)),
+            }
+        }
     }
 
     pub fn permits(&self, host: &str) -> bool {
@@ -103,7 +136,8 @@ impl Net {
     }
 
     pub fn open(&mut self, url: &str) -> i32 {
-        if let Some(why) = self.policy.refusal(url) {
+        // refused now, or (Err) the player is asked and the thread waits for the answer
+        if let Ok(Some(why)) = self.policy.verdict(url) {
             eprintln!("[gasm] net: denied connection to {url} ({why})");
             return -1;
         }
@@ -119,8 +153,17 @@ impl Net {
         let state = Arc::new(AtomicU32::new(CONNECTING));
         let (out_tx, out_rx) = mpsc::sync_channel::<Vec<u8>>(QUEUE);
         let (in_tx, in_rx) = mpsc::sync_channel::<Vec<u8>>(QUEUE);
-        let (st, url_owned) = (state.clone(), url.to_owned());
-        let thread = std::thread::spawn(move || run(&url_owned, &st, out_rx, in_tx));
+        let (st, url_owned, policy) = (state.clone(), url.to_owned(), self.policy.clone());
+        let thread = std::thread::spawn(move || {
+            // the player's answer first (closing the connection meanwhile drops out_tx)
+            let gone = || matches!(out_rx.try_recv(), Err(TryRecvError::Disconnected));
+            if let Err(why) = policy.wait(&url_owned, gone) {
+                eprintln!("[gasm] net: denied connection to {url_owned} ({why})");
+                st.store(ERROR, Ordering::Release);
+                return;
+            }
+            run(&url_owned, &st, out_rx, in_tx)
+        });
         let h = self.next;
         self.next += 1;
         self.conns.insert(h, Conn { state, outgoing: out_tx, incoming: in_rx, queue: VecDeque::new(), thread: Some(thread) });

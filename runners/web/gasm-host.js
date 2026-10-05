@@ -17,7 +17,7 @@ export { BUF_COPY_DST, BUF_INDEX, BUF_STORAGE, BUF_UNIFORM, BUF_VERTEX, GfxModel
 export { MAX_CONNECTIONS, NET_CLOSED, NET_CONNECTING, NET_ERROR, NET_OPEN, NetConnections } from './lib/net.js';
 export { SPLASH_FRAMES, SPLASH_H, SPLASH_HOLD, SPLASH_W, splashFrame, splashHash } from './lib/splash.js';
 export { FILES_FAILED, FILES_PENDING, FILES_SAVED, FileSaves, MAX_SAVE, safeName, validMime } from './lib/files.js';
-export { FETCH_DONE, FETCH_FAILED, FETCH_HEADERS, FETCH_PENDING, FetchRequests, NetPolicy, recordKey } from './lib/fetch.js';
+export { Consent, FETCH_DONE, FETCH_FAILED, FETCH_HEADERS, FETCH_PENDING, FetchRequests, NetPolicy, recordKey } from './lib/fetch.js';
 export {
   IdbStorage, MemoryStorage, STORAGE_ERR_IO, STORAGE_ERR_KEY, STORAGE_ERR_QUOTA, STORAGE_ERR_SIZE, STORAGE_MAX_VALUE, STORAGE_QUOTA,
   StorageError, validKey,

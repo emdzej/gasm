@@ -7,7 +7,7 @@ import { AssetTable, isAssetProvider, memoryAssets } from './assets.js';
 import { GfxModel, NullGfx, clampRect } from './gfx.js';
 import { GlHost, glImports } from './gl.js';
 import { GAMEPAD_AXES, GAMEPAD_BUTTONS, GAMEPAD_BYTES, KEY_STATE_BYTES, POINTER_BYTES, framePosition } from './input.js';
-import { FetchRequests } from './fetch.js';
+import { Consent, FetchRequests } from './fetch.js';
 import { NetConnections } from './net.js';
 import { MemoryStorage, StorageError, STORAGE_ERR_IO } from './storage.js';
 import { ProcExit, Splitmix, WASI_IMPLEMENTED, wasiImports } from './wasi.js';
@@ -82,7 +82,7 @@ export class GasmHost {
   constructor({ assets = {}, params = {}, gfx = new NullGfx(), storage = new MemoryStorage(), allowNet = false,
                 onPresent = () => {}, onAudio = () => {}, onLog = console.log, onTitle = () => {}, onCopyText = () => {}, onSaveFile = () => true,
                 getPad = () => 0, virtualTime = false, stackSwitching = STACK_SWITCHING, gl = null,
-                fetchReplay = null, fetchRecord = null, memoryLimit = DEFAULT_MEMORY_LIMIT, userAgent = null } = {}) {
+                fetchReplay = null, fetchRecord = null, memoryLimit = DEFAULT_MEMORY_LIMIT, userAgent = null, ask = null } = {}) {
     // GasmAssetProvider ({ size(name), readAt(name, offset, dst), names() }), or a plain
     // { name: Uint8Array } record (wrapped as an in-memory provider).
     this.assets = isAssetProvider(assets) ? assets : memoryAssets(assets);
@@ -92,9 +92,11 @@ export class GasmHost {
     this.glContext = gl;
     this.gl = null;
     this.storage = storage;          // MemoryStorage (headless) or IdbStorage (browser)
-    // allowNet: false, true or a list of host names (gasm:net and gasm:fetch)
-    this.net = new NetConnections(allowNet, (m) => this.onLog(m));
-    this.fetch = new FetchRequests(allowNet, (m) => this.onLog(m), { replay: fetchReplay, record: fetchRecord, userAgent });
+    // allowNet: false, true or a list of host names (gasm:net and gasm:fetch); ask: the
+    // player decides about other hosts (subject "net:<host>" -> boolean or a promise)
+    const consent = ask ? new Consent(ask) : null;
+    this.net = new NetConnections(allowNet, (m) => this.onLog(m), consent);
+    this.fetch = new FetchRequests(allowNet, (m) => this.onLog(m), { replay: fetchReplay, record: fetchRecord, userAgent, consent });
     this.showFrame = true;           // false during catch-up frames: begin_frame returns 0
     this.catchUp = false;            // a catch-up frame (not the last of a batch): gasm:gl frame_shown 0
     this.onPresent = onPresent;      // (rgba: Uint8ClampedArray, w, h)

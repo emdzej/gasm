@@ -39,7 +39,7 @@ const inWorker = typeof WorkerGlobalScope !== 'undefined' && globalThis instance
 export class GasmWorker {
   static async start({
     wasm, assets = [], params = {}, storage = null, allowNet = false, keyboard = false, memoryLimit = undefined,
-    hashing = false, virtualTime = false, onLog = console.log, onAudio = () => {}, onTitle = () => {}, onCopyText = () => {}, onSaveFile = () => true,
+    hashing = false, virtualTime = false, onLog = console.log, onAudio = () => {}, onTitle = () => {}, onCopyText = () => {}, onSaveFile = () => true, ask = null,
     canvas = null, size = null, url = null,
   }) {
     // written out literally so bundlers (Vite, webpack) find and emit the worker
@@ -50,12 +50,13 @@ export class GasmWorker {
     w.onTitle = onTitle;
     w.onCopyText = onCopyText;
     w.onSaveFile = onSaveFile;
+    w.ask = ask;
     // a compiled Module is shared with the worker (no copy, no second compile); bytes are transferred
     const module = wasm instanceof WebAssembly.Module;
     const bytes = module || wasm instanceof ArrayBuffer ? wasm : wasm.buffer.slice(wasm.byteOffset, wasm.byteOffset + wasm.byteLength);
     const transfer = [...(module ? [] : [bytes]), ...(canvas ? [canvas] : [])];
     const ready = w.next('ready');
-    w.worker.postMessage({ type: 'init', wasm: bytes, assets, params, storage, allowNet, keyboard, hashing, virtualTime, canvas, size, memoryLimit }, transfer);
+    w.worker.postMessage({ type: 'init', wasm: bytes, assets, params, storage, allowNet, keyboard, hashing, virtualTime, canvas, size, memoryLimit, ask: !!ask }, transfer);
     try {
       const r = await ready;
       w.frameRate = r.frameRate;
@@ -87,6 +88,12 @@ export class GasmWorker {
     if (m.type === 'log') return this.onLog(m.msg);
     if (m.type === 'error') return this.fail(new Error(m.message));
     if (m.type === 'exit') return this.fail(new ProcExit(m.code));
+    // player consent: the worker's guest wants a host; the page asks
+    if (m.type === 'consent') {
+      Promise.resolve().then(() => this.ask?.(m.subject)).then((v) => !!v, () => false)
+        .then((allowed) => this.worker.postMessage({ type: 'consent', id: m.id, allowed }));
+      return;
+    }
     if ((m.type === 'done' || m.type === 'ready') && m.title !== undefined && m.title !== this.title) {
       this.title = m.title;
       this.onTitle(m.title);
@@ -173,7 +180,7 @@ async function buildAssets(specs, log) {
 }
 
 if (inWorker) {
-  let host = null, gfx = null, keyboard = false, audio = [], copied = null, saves = [];
+  let host = null, gfx = null, keyboard = false, audio = [], copied = null, saves = [], onConsent = () => {};
   const post = (m, transfer = []) => globalThis.postMessage(m, transfer);
   const log = (msg) => post({ type: 'log', msg });
   const stats = () => ({
@@ -183,6 +190,7 @@ if (inWorker) {
 
   globalThis.onmessage = async (e) => {
     const m = e.data;
+    if (m.type === 'consent') return onConsent(m);   // the page's answer (not queued behind frames)
     if (m.type === 'init') {
       try {
         const assets = await buildAssets(m.assets, log);
@@ -195,8 +203,12 @@ if (inWorker) {
         }
         // the worker reads storage on its own connection; closed by host.shutdown()
         keyboard = m.keyboard;
+        const asked = new Map();
+        let nextAsk = 1;
+        onConsent = (r) => { asked.get(r.id)?.(r.allowed); asked.delete(r.id); };
+        const ask = m.ask ? (subject) => new Promise((resolve) => { const id = nextAsk++; asked.set(id, resolve); post({ type: 'consent', id, subject }); }) : null;
         host = new GasmHost({
-          assets, params: m.params, storage, allowNet: m.allowNet, virtualTime: m.virtualTime, onLog: log,
+          assets, params: m.params, storage, allowNet: m.allowNet, virtualTime: m.virtualTime, onLog: log, ask,
           ...(m.memoryLimit !== undefined ? { memoryLimit: m.memoryLimit } : {}),
           onAudio: (samples, rate, channels) => audio.push({ samples, rate, channels }), ...(gfx ? { gfx } : {}),
           onCopyText: (t) => { copied = t; },

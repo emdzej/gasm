@@ -31,6 +31,8 @@ pub enum SaveTarget {
 
 pub struct Files {
     target: SaveTarget,
+    /// the window runner asks the player before the first save to the default folders
+    consent: Option<crate::consent::Consent>,
     /// state by handle - 1
     states: Vec<i32>,
     queue: Vec<(usize, String, String, Vec<u8>)>,
@@ -44,7 +46,12 @@ impl Default for Files {
 
 impl Files {
     pub fn new(target: SaveTarget) -> Files {
-        Files { target, states: Vec::new(), queue: Vec::new() }
+        Files { target, consent: None, states: Vec::new(), queue: Vec::new() }
+    }
+
+    pub fn with_consent(mut self, consent: Option<crate::consent::Consent>) -> Files {
+        self.consent = consent;
+        self
     }
 
     /// Queue a save: a handle > 0, or -1 (logged).
@@ -71,8 +78,22 @@ impl Files {
         usize::try_from(handle).ok().and_then(|h| h.checked_sub(1)).and_then(|i| self.states.get(i).copied())
     }
 
-    /// Write what the game saved during the frame (between frames).
+    /// Write what the game saved during the frame (between frames). Saves to the
+    /// default folders wait (pending) until the player has answered.
     pub fn flush(&mut self) {
+        if let (SaveTarget::Defaults { .. }, Some(c), false) = (&self.target, &self.consent, self.queue.is_empty()) {
+            match c.lock().unwrap().check(crate::consent::SAVE) {
+                None => return,
+                Some(true) => {}
+                Some(false) => {
+                    for (i, name, ..) in std::mem::take(&mut self.queue) {
+                        eprintln!("[gasm] files: save {name:?} refused: the player said no");
+                        self.states[i] = FAILED;
+                    }
+                    return;
+                }
+            }
+        }
         for (i, name, mime, data) in std::mem::take(&mut self.queue) {
             let dir = match &self.target {
                 SaveTarget::Off => None,

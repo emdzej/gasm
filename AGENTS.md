@@ -246,7 +246,11 @@ from the repo root, then
   (unless `--storage-dir`; both headless runners). Golden hashes in
   `tests/golden/determinism.txt` are the same on every platform.
 - **Security:** guests get no filesystem, env or args. Network is opt-in natively
-  (`--allow-net`). Storage namespaces are chosen by the runner, never the guest.
+  (`--allow-net`); the window runner and the player ask the player about other
+  hosts and (natively) about saves (`consent.rs`, `Consent` in `lib/fetch.js`):
+  a waiting request stays connecting/pending, never blocks a guest call, and
+  headless runs never ask. The question screen (`prompt.rs`) is drawn over the
+  game with its GL state restored (`Angle::show_image_over_game`). Storage namespaces are chosen by the runner, never the guest.
   Every guest pointer, handle and string argument is validated; violations trap,
   never panic (a guest call that never returns traps after `--call-timeout`).
   Resource limits: 16 net connections with bounded queues; the relay caps clients

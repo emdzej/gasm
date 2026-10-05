@@ -226,7 +226,8 @@ impl Fetch {
                 }
             }
             mode => {
-                if let Some(why) = self.policy.refusal(&d.url) {
+                // refused now, or (Err) the player is asked and the thread waits for the answer
+                if let Ok(Some(why)) = self.policy.verdict(&d.url) {
                     let host = url_host(&d.url).unwrap_or_default();
                     if self.denied.insert(host) {
                         eprintln!("[gasm] fetch: denied {} ({why})", d.url);
@@ -409,6 +410,8 @@ pub fn valid_app_id(id: &str) -> bool {
 fn run(d: Desc, body: Vec<u8>, policy: NetPolicy, user_agent: String, tx: SyncSender<Event>, cancel: Arc<AtomicBool>, record: Option<PathBuf>) {
     let result = (|| -> Result<(), String> {
         let (mut method, mut url, mut body) = (d.method.clone(), d.url.clone(), body);
+        // the player's answer first (pending meanwhile)
+        policy.wait(&url, || cancel.load(Ordering::Relaxed)).map_err(|why| format!("{url}: denied ({why})"))?;
         let mut hops = 0;
         let resp = loop {
             let mut b = ureq::http::Request::builder().method(method.as_str()).uri(url.as_str()).header("user-agent", user_agent.as_str());
@@ -426,7 +429,7 @@ fn run(d: Desc, body: Vec<u8>, policy: NetPolicy, user_agent: String, tx: SyncSe
                         return Err(format!("{url}: too many redirects"));
                     }
                     let next = resolve(&url, &loc);
-                    if let Some(why) = policy.refusal(&next) {
+                    if let Err(why) = policy.wait(&next, || cancel.load(Ordering::Relaxed)) {
                         return Err(format!("{url}: redirect to {next} denied ({why})"));
                     }
                     // as browsers: 303, and 301/302 after a POST, continue as a GET without a body

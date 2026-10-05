@@ -318,6 +318,60 @@ impl Angle {
         self.swap();
     }
 
+    /// [`Angle::show_image`] while a game runs (the consent question): the GL state
+    /// it changes is put back, so the game's next frame sees what it left.
+    pub fn show_image_over_game(&self, rgba: &[u8], w: u32, h: u32) {
+        const ACTIVE_TEXTURE: u32 = 0x84E0;
+        const TEXTURE0: u32 = 0x84C0;
+        const TEXTURE_BINDING_2D: u32 = 0x8069;
+        const READ_FRAMEBUFFER_BINDING: u32 = 0x8CAA;
+        const DRAW_FRAMEBUFFER_BINDING: u32 = 0x8CA6;
+        const READ_FRAMEBUFFER: u32 = 0x8CA8;
+        const DRAW_FRAMEBUFFER: u32 = 0x8CA9;
+        const PIXEL_UNPACK_BUFFER: u32 = 0x88EC;
+        const PIXEL_UNPACK_BUFFER_BINDING: u32 = 0x88EF;
+        const UNPACK: [u32; 5] = [0x0CF5, 0x0CF2, 0x0CF3, 0x0CF4, 0x806E]; // ALIGNMENT, ROW_LENGTH, SKIP_ROWS, SKIP_PIXELS, IMAGE_HEIGHT
+        const SCISSOR_TEST: u32 = 0x0C11;
+        const COLOR_CLEAR_VALUE: u32 = 0x0C22;
+        const COLOR_WRITEMASK: u32 = 0x0C23;
+        let g = &self.gl;
+        let int = |p: u32| {
+            let mut v = 0i32;
+            unsafe { (g.glGetIntegerv)(p, &mut v as *mut i32 as *mut c_void) };
+            v
+        };
+        let (active, read_fb, draw_fb, unpack_buf) = (int(ACTIVE_TEXTURE), int(READ_FRAMEBUFFER_BINDING), int(DRAW_FRAMEBUFFER_BINDING), int(PIXEL_UNPACK_BUFFER_BINDING));
+        let unpack = UNPACK.map(int);
+        let mut clear = [0f32; 4];
+        let mut mask = [0i32; 4];
+        unsafe {
+            (g.glActiveTexture)(TEXTURE0);
+            let tex0 = int(TEXTURE_BINDING_2D);
+            let scissor = (g.glIsEnabled)(SCISSOR_TEST) != 0;
+            (g.glGetFloatv)(COLOR_CLEAR_VALUE, clear.as_mut_ptr() as *mut c_void);
+            (g.glGetIntegerv)(COLOR_WRITEMASK, mask.as_mut_ptr() as *mut c_void);
+            (g.glBindBuffer)(PIXEL_UNPACK_BUFFER, 0);
+            for p in &UNPACK[1..] {
+                (g.glPixelStorei)(*p, 0);
+            }
+            (g.glColorMask)(1, 1, 1, 1);
+            self.show_image(rgba, w, h); // leaves TEXTURE_2D, framebuffers 0, scissor off
+            (g.glColorMask)(mask[0] as u8, mask[1] as u8, mask[2] as u8, mask[3] as u8);
+            for (p, v) in UNPACK.iter().zip(unpack) {
+                (g.glPixelStorei)(*p, v);
+            }
+            (g.glBindBuffer)(PIXEL_UNPACK_BUFFER, unpack_buf as u32);
+            (g.glClearColor)(clear[0], clear[1], clear[2], clear[3]);
+            if scissor {
+                (g.glEnable)(SCISSOR_TEST);
+            }
+            (g.glBindTexture)(0x0DE1, tex0 as u32);
+            (g.glActiveTexture)(active as u32);
+            (g.glBindFramebuffer)(READ_FRAMEBUFFER, read_fb as u32);
+            (g.glBindFramebuffer)(DRAW_FRAMEBUFFER, draw_fb as u32);
+        }
+    }
+
     pub fn swap(&self) {
         unsafe {
             (self.egl.SwapBuffers)(self.display, self.surface);

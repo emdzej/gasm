@@ -9,8 +9,8 @@ const ENC = new TextEncoder();
 import { NetPolicy } from './fetch.js';
 
 export class NetConnections {
-  /** allowed: false, true or a list of host names (NetPolicy). */
-  constructor(allowed, log) { this.policy = new NetPolicy(allowed); this.log = log; this.conns = new Map(); this.next = 1; }
+  /** allowed: false, true or a list of host names (NetPolicy); consent: the player's answers for other hosts. */
+  constructor(allowed, log, consent = null) { this.policy = new NetPolicy(allowed, consent); this.log = log; this.conns = new Map(); this.next = 1; }
 
   /** Is h a handle `open` returned? Throws (traps) if not; false once closed. */
   check(h) {
@@ -19,18 +19,23 @@ export class NetConnections {
   }
 
   open(url) {
-    const why = this.policy.refusal(url);
-    if (why) { this.log(`[gasm] net: denied connection to ${url} (${why})`); return -1; }
+    const why = this.policy.verdict(url);
+    if (typeof why === 'string') { this.log(`[gasm] net: denied connection to ${url} (${why})`); return -1; }
     if (!/^wss?:\/\//.test(url) || typeof WebSocket === 'undefined') { this.log(`[gasm] net: only ws:// and wss:// URLs are supported: ${url}`); return -1; }
     if (this.conns.size >= MAX_CONNECTIONS) { this.log(`[gasm] net: too many connections (max ${MAX_CONNECTIONS}): ${url}`); return -1; }
-    let ws;
-    try { ws = new WebSocket(url); } catch (e) { this.log(`[gasm] net: ${url}: ${e.message}`); return -1; }
-    ws.binaryType = 'arraybuffer';
-    const c = { ws, queue: [], state: NET_CONNECTING };
-    ws.onopen = () => { c.state = NET_OPEN; };
-    ws.onmessage = (e) => c.queue.push(e.data instanceof ArrayBuffer ? new Uint8Array(e.data) : ENC.encode(String(e.data)));
-    ws.onerror = () => { if (c.state < NET_CLOSED) c.state = NET_ERROR; };
-    ws.onclose = () => { if (c.state !== NET_ERROR) c.state = NET_CLOSED; };
+    const c = { ws: null, queue: [], state: NET_CONNECTING, closed: false };
+    const connect = () => {
+      try { c.ws = new WebSocket(url); } catch (e) { this.log(`[gasm] net: ${url}: ${e.message}`); c.state = NET_ERROR; return; }
+      const ws = c.ws;
+      ws.binaryType = 'arraybuffer';
+      ws.onopen = () => { c.state = NET_OPEN; };
+      ws.onmessage = (e) => c.queue.push(e.data instanceof ArrayBuffer ? new Uint8Array(e.data) : ENC.encode(String(e.data)));
+      ws.onerror = () => { if (c.state < NET_CLOSED) c.state = NET_ERROR; };
+      ws.onclose = () => { if (c.state !== NET_ERROR) c.state = NET_CLOSED; };
+    };
+    // asking the player: connecting until the answer
+    if (why) why.then((no) => { if (c.closed) return; if (no) { this.log(`[gasm] net: denied connection to ${url} (${no})`); c.state = NET_ERROR; } else connect(); });
+    else connect();
     const h = this.next++;
     this.conns.set(h, c);
     return h;
@@ -58,7 +63,9 @@ export class NetConnections {
 
   close(h) {
     if (!this.check(h)) return;
-    this.conns.get(h).ws.close();
+    const c = this.conns.get(h);
+    c.closed = true;
+    c.ws?.close();
     this.conns.delete(h);
   }
 
@@ -66,7 +73,8 @@ export class NetConnections {
    *  queued messages are delivered before the game goes away. */
   closeAll(timeoutMs = 1000) {
     const waits = [...this.conns.values()].map((c) => new Promise((resolve) => {
-      if (c.ws.readyState >= 2) return resolve();
+      c.closed = true;
+      if (!c.ws || c.ws.readyState >= 2) return resolve();
       c.ws.addEventListener('close', resolve, { once: true });
       c.ws.close();
     }));

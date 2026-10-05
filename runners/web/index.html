@@ -59,7 +59,7 @@
 <main id="stage"><canvas id="screen" width="256" height="240"></canvas></main>
 <footer>
   <span id="log">drop a .nes or .wad file on the screen, or pick one above</span>
-  <span title="Player 2 keys apply while fewer than two gamepads are connected">P1: arrows, X=A Z=B, Enter=Start · P2: IJKL, .=A ,=B, RCtrl=Start · gamepads · F2 = copy frame · <a href="#" onclick="document.getElementById('keys').click();return false">change keys</a> · <span id="fps"></span></span>
+  <span title="Player 2 keys apply while fewer than two gamepads are connected">P1: arrows, X=A Z=B, Enter=Start · P2: IJKL, .=A ,=B, RCtrl=Start · gamepads · F2 = copy frame · <a href="#" onclick="document.getElementById('keys').click();return false">change keys</a> · <a href="#" id="forget" title="Forget the network answers remembered for every game">forget answers</a> · <span id="fps"></span></span>
 </footer>
 <dialog id="keysdlg">
   <form method="dialog">
@@ -70,6 +70,12 @@
     <textarea id="keymaptext" rows="22" cols="64" spellcheck="false"></textarea>
     <pre id="keymaperr"></pre>
     <menu><button id="keymapreset">defaults</button> <button value="cancel" formnovalidate>cancel</button> <button id="keymapsave" class="primary" value="save">save</button></menu>
+  </form>
+</dialog>
+<dialog id="consentdlg">
+  <form method="dialog">
+    <p id="consentq" style="font-size:14px;color:var(--fg)"></p>
+    <menu><button value="once" class="primary">allow this time</button> <button value="always">always allow</button> <button value="no">not now</button> <button value="never">never</button></menu>
   </form>
 </dialog>
 <script type="module" src="app.js"></script>

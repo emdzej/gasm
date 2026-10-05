@@ -239,6 +239,11 @@ impl Gl {
             b.presented = false;
         }
     }
+    /// Show an image instead of the game's frame, leaving the game's GL state as it
+    /// was (the consent question). False without ANGLE.
+    pub fn show_over_game(&self, rgba: &[u8], w: u32, h: u32) -> bool {
+        self.backend.as_ref().map(|b| b.angle.show_image_over_game(rgba, w, h)).is_some()
+    }
     /// The default framebuffer as RGBA8, top to bottom (headless screenshots).
     pub fn read_frame(&self) -> Option<(u32, u32, Vec<u8>)> {
         self.backend.as_ref().map(|b| b.angle.read_frame())

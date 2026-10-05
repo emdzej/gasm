@@ -37,6 +37,17 @@ ABI:
   Ctrl+V (Ctrl released within the same frame) is still Ctrl+V.
 
 Runners:
+- Player consent (the roadmap item): the window runner and the browser player
+  ask before a game connects to a host nobody allowed up front (`gasm:net`,
+  `gasm:fetch`; once per host) and, natively, before its first save for the
+  player. Four answers: allow this time, always allow, not now, never; "always"
+  and "never" are remembered per game (natively `<data dir>/gasm/consent/`,
+  `--forget-consent <game|all>`; in the player `localStorage`, "forget answers").
+  The request waits for the answer (natively the game pauses while the question
+  is on screen); no ABI change. `--allow-net`/`--save-dir` answer in advance,
+  `--no-ask` refuses instead of asking, headless runs never ask. The player no
+  longer allows every host: `?allownet[=hosts]`, or the relay field's host.
+  `GasmHost` and `GasmWorker` take `ask(subject)`.
 - A screenshot on the clipboard (NiP #6): F2 copies the game's frame, in
   `gasm-run`'s window (2D and `gasm:gl` games; `--copy-key <code|none>`) and in
   the web player (every kind of game; `?copykey=`). The key also reaches the game.

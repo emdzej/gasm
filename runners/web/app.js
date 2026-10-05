@@ -120,6 +120,45 @@ function saveFile(name, mime, bytes) {
   log(`saved ${name}`);
   return true;
 }
+// Player consent: a game reaching a host the page didn't allow (?allownet[=a.org,b.org]
+// and the relay field allow up front) waits while the player answers. "always" and
+// "never" are remembered per game in localStorage; "forget answers" clears them.
+const CONSENT = 'gasm.consent.';
+const remembered = (g) => { try { return JSON.parse(localStorage.getItem(CONSENT + g) ?? '{}'); } catch { return {}; } };
+let consentQueue = Promise.resolve();
+function askPlayer(subject) {
+  const g = gameName, r = remembered(g);
+  if (subject in r) return r[subject];
+  const host = subject.replace(/^net:/, '');
+  const asked = consentQueue.then(() => new Promise((resolve) => {
+    const dlg = $('consentdlg');
+    $('consentq').textContent = `${g} wants to connect to ${host}`;
+    dlg.onclose = () => {
+      const a = dlg.returnValue;
+      if (a === 'always' || a === 'never') localStorage.setItem(CONSENT + g, JSON.stringify({ ...remembered(g), [subject]: a === 'always' }));
+      log(`${g}: ${host}: ${{ once: 'allowed this time', always: 'always allowed', never: 'never allowed' }[a] ?? 'not now'}`);
+      resolve(a === 'once' || a === 'always');
+    };
+    dlg.returnValue = '';
+    dlg.showModal();
+  }));
+  consentQueue = asked.then(() => {}, () => {});
+  return asked;
+}
+$('forget').onclick = (e) => {
+  e.preventDefault();
+  const keys = Object.keys(localStorage).filter((k) => k.startsWith(CONSENT));
+  keys.forEach((k) => localStorage.removeItem(k));
+  log(`forgot the remembered answers of ${keys.length} game${keys.length === 1 ? '' : 's'}`);
+};
+/** Hosts allowed up front: ?allownet (all) or ?allownet=a.org,b.org, plus the relay's host. */
+function allowedHosts() {
+  const p = new URLSearchParams(location.search);
+  if (p.has('allownet') && !p.get('allownet')) return true;
+  const hosts = (p.get('allownet') ?? '').split(',').map((h) => h.trim()).filter(Boolean);
+  try { if ($('relay').value.trim()) hosts.push(new URL($('relay').value.trim()).hostname); } catch {}
+  return hosts.length ? hosts : false;
+}
 const copyText = (t) => navigator.clipboard.writeText(t).catch((e) => log(`clipboard: ${e.message}`));
 // F2 (?copykey=<KeyboardEvent.code> or none): copy the game's frame to the clipboard, as
 // gasm-run does. The key also reaches the game. A WebGL or WebGPU canvas can only be read
@@ -509,7 +548,7 @@ async function start({ romBytes } = {}) {
       if (url.has('opfs')) specs.push({ kind: 'opfs', dir: url.get('opfs'), prefix });
       if (folder) specs.push({ kind: 'files', entries: folder.entries, prefix });
       const start = (canvasOpt) => GasmWorker.start({
-        wasm: module, assets: specs, params, storage: namespace, allowNet: true, keyboard: true,
+        wasm: module, assets: specs, params, storage: namespace, allowNet: allowedHosts(), ask: askPlayer, keyboard: true,
         hashing: hashFrames > 0, virtualTime: hashFrames > 0, onLog: log, onAudio, onTitle: showTitle, onCopyText: copyText, onSaveFile: saveFile, ...canvasOpt,
       });
       if (usesGfx) {
@@ -547,7 +586,7 @@ async function start({ romBytes } = {}) {
         log(`storage unavailable (${e.message}); saves won't persist`);
         return new MemoryStorage();
       });
-      const h = new GasmHost({ assets, params, gfx, gl, storage, allowNet: true, onPresent: present, onAudio, onLog: log, onTitle: showTitle, onCopyText: copyText, onSaveFile: saveFile,
+      const h = new GasmHost({ assets, params, gfx, gl, storage, allowNet: allowedHosts(), ask: askPlayer, onPresent: present, onAudio, onLog: log, onTitle: showTitle, onCopyText: copyText, onSaveFile: saveFile,
                                virtualTime: hashFrames > 0 });
       h.text = '';     // the page has a keyboard
       if (stale()) { h.shutdown(); gfx?.device.destroy(); return; }

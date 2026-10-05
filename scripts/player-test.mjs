@@ -52,12 +52,17 @@ try {
   await send('Emulation.setFocusEmulationEnabled', { enabled: true });   // the clipboard needs a focused page
   const evaluate = async (expression) => (await send('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true })).result.result?.value;
   await send('Runtime.enable');
+  // after a navigation: until the player says the game runs (a cold Chrome takes a while), then a moment more
+  const running = async (extra = 500) => {
+    for (let i = 0; i < 100 && !/running/.test((await evaluate(`document.getElementById('log').textContent`)) ?? ''); i++) await sleep(100);
+    await sleep(extra);
+  };
 
   // gasm:clipboard
   for (const mode of ['', '&worker']) {
     logs.length = 0;
     await send('Page.navigate', { url: `${BASE}?game=inputtest.wasm&autostart&nosplash${mode}` });
-    await sleep(3000);
+    await running();
     await evaluate(`navigator.clipboard.writeText('pasted from the page')`);
     const mod = process.platform === 'darwin' ? 4 : 2;   // Meta on macOS, else Control
     await send('Input.dispatchKeyEvent', { type: 'keyDown', code: 'KeyV', key: 'v', windowsVirtualKeyCode: 86, modifiers: mod, commands: ['paste'] });
@@ -79,7 +84,7 @@ try {
     logs.length = 0;
     rmSync(downloads, { recursive: true, force: true });
     await send('Page.navigate', { url: `${BASE}?game=inputtest.wasm&autostart&nosplash${mode}` });
-    await sleep(3000);
+    await running();
     await send('Input.dispatchKeyEvent', { type: 'keyDown', code: 'KeyS', key: 's', windowsVirtualKeyCode: 83, text: 's' });
     await send('Input.dispatchKeyEvent', { type: 'keyUp', code: 'KeyS', key: 's', windowsVirtualKeyCode: 83 });
     await sleep(1500);
@@ -87,11 +92,36 @@ try {
     check(`inputtest${mode}: a save is a download`, got === 'inputtest save 1\n' && logs.some((l) => l.includes('save: saved')), `${JSON.stringify(got)} / ${logs.filter((l) => /save/.test(l)).join(' / ')}`);
   }
 
+  // player consent: fetchtest asks for this server's host; "never" is remembered, "forget
+  // answers" clears it, "allow this time" lets the requests through
+  const fetchUrl = `${BASE}?game=fetchtest.wasm&autostart&nosplash&base=${encodeURIComponent(`http://localhost:${httpPort}/api`)}`;
+  const dialogOpen = () => evaluate(`document.getElementById('consentdlg').open`);
+  const answer = (v) => evaluate(`(() => { const d = document.getElementById('consentdlg'); d.close(${JSON.stringify(v)}); return true; })()`);
+  logs.length = 0;
+  await send('Page.navigate', { url: fetchUrl });
+  await sleep(3000);
+  const asked = await dialogOpen();
+  await answer('never');
+  await sleep(800);
+  check('consent: an unasked host opens the question', asked === true, `dialog open: ${asked}`);
+  check('consent: "never" refuses the request', logs.some((l) => /get: not sent|denied/.test(l)) || logs.some((l) => /get: 0|failed/.test(l)), logs.filter((l) => /fetchtest|denied/.test(l)).slice(0, 4).join(' / '));
+  await send('Page.navigate', { url: fetchUrl });
+  await sleep(3000);
+  check('consent: "never" is remembered', (await dialogOpen()) === false, 'asked again');
+  await evaluate(`document.getElementById('forget').click()`);
+  logs.length = 0;
+  await send('Page.navigate', { url: fetchUrl });
+  await sleep(3000);
+  const again = await dialogOpen();
+  await answer('once');
+  await sleep(1500);
+  check('consent: "forget answers" asks again, "this time" allows', again === true && logs.some((l) => /fetchtest\] get: 404/.test(l)), `asked: ${again} / ${logs.filter((l) => /fetchtest\] get/.test(l)).join(' / ')}`);
+
   // Godot: paste into the ui example's name field (Godot's shortcuts are Ctrl+ on gasm)
   if (existsSync(join(ROOT, 'build/godot/ui.pck'))) {
     logs.length = 0;
     await send('Page.navigate', { url: `${BASE}?game=godot-ui&autostart&nosplash` });
-    await sleep(6000);
+    await running(2000);
     await evaluate(`navigator.clipboard.writeText('pasted name')`);
     await send('Input.dispatchMouseEvent', { type: 'mousePressed', x: 250, y: 205, button: 'left', buttons: 1, clickCount: 1 });
     await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: 250, y: 205, button: 'left', clickCount: 1 });
@@ -105,7 +135,7 @@ try {
   } else console.log('SKIP  godot-ui (make godot)');
   for (const game of ['test-pattern.wasm', 'gltest.wasm', 'triangle.wasm']) {
     await send('Page.navigate', { url: `${BASE}?game=${game}&autostart&nosplash` });
-    await sleep(4000);
+    await running(1000);
     if (game === 'triangle.wasm' && !(await evaluate(`!!navigator.gpu && navigator.gpu.requestAdapter().then((a) => !!a)`))) {
       console.log(`SKIP  ${game}: no WebGPU here`);
       continue;

@@ -16,6 +16,7 @@
 pub mod angle;
 pub mod assets;
 pub mod audio;
+pub mod consent;
 pub mod fetch;
 pub mod files;
 pub mod gfx;
@@ -37,3 +38,5 @@ pub mod wasi;
 pub mod keymap;
 #[cfg(feature = "window")]
 pub mod window;
+#[cfg(feature = "window")]
+pub mod prompt;

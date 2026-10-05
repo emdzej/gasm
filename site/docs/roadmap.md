@@ -17,22 +17,25 @@ The suggested order, from the most benefit for the least risk:
 
 Done recently: stack switching (`gasm_run`,
 [design/stack-switching.md](https://github.com/emdzej/gasm/blob/main/design/stack-switching.md)),
-cooperative threads in C, POSIX and SDL 3
-([design/threads.md](https://github.com/emdzej/gasm/blob/main/design/threads.md))
-`gasm:gl` on every runner: WebGL 2 in browsers, ANGLE natively, and from
-Rust through glow
+cooperative threads in C, POSIX, SDL 3 and Rust
+([design/threads.md](https://github.com/emdzej/gasm/blob/main/design/threads.md)),
+`gasm:gl` on every runner
 ([design/gasm-gl.md](https://github.com/emdzej/gasm/blob/main/design/gasm-gl.md)),
-threads in Rust, Godot 4.7
-([guests/godot](https://github.com/emdzej/gasm/blob/main/guests/godot/README.md)),
-and in 0.9.0 HTTP requests (`gasm:fetch`,
+Godot 4.7 ([guests/godot](https://github.com/emdzej/gasm/blob/main/guests/godot/README.md)),
+HTTP requests (`gasm:fetch`,
 [design/fetch.md](https://github.com/emdzej/gasm/blob/main/design/fetch.md)),
-assets that change while a game runs and the player's time zone, the gasm
-splash screen, OpenGL ES through SDL 3, and a guest memory limit.
+the splash screen, OpenGL ES through SDL 3, a guest memory limit, and since
+0.10.0: the clipboard (`gasm:clipboard`, F2 copies the frame), saving files for
+the player (`gasm:files`), player consent for hosts and saves, Godot multiplayer
+(`WebSocketPeer` on `gasm:net`) and a smaller engine for 2D games.
 
-1. **Player consent** ([Runtime and ABI](#runtime-and-abi)): decide the open
-   questions first, then ask before network, files and other resources.
-2. **Godot, the rest** ([Godot](#godot)): threads or a smaller engine first (what
-   bigger games hit: speed, download size), then Jolt, TLS, multiplayer.
+1. **Capabilities manifest** ([Runtime and ABI](#runtime-and-abi)): a game
+   declares the hosts and modules it needs, so runners can ask once, up front,
+   and check a game before running it; the base for `.gasm` packages.
+2. **Opening files** ([Runtime and ABI](#runtime-and-abi)): the other half of
+   `gasm:files`, a picker run by the runner.
+3. **Godot, the rest** ([Godot](#godot)): Jolt, TLS and `Crypto`, threads when a
+   game needs them ([design/threads.md](https://github.com/emdzej/gasm/blob/main/design/threads.md)).
 
 ## Runtime and ABI
 
@@ -40,7 +43,6 @@ splash screen, OpenGL ES through SDL 3, and a guest memory limit.
 |---|---|---|
 | Stack switching beyond JSPI | Browsers without JSPI (and Node 22) still need the Asyncify builds; wasm's stack-switching proposal would cover them too. | waiting on engines |
 | Real wasm threads | Shared memory and atomics, opt-in, for guests that need parallel CPU (physics, job systems, Godot's worker pool). Not deterministic. | proposal; for Godot, a design pass found the gain small (rendering stays on the main thread; physics and loading would gain), so no prototype yet: [design/threads.md](https://github.com/emdzej/gasm/blob/main/design/threads.md) (part B, "Godot: design pass") |
-| Player consent | The runner asks the player before a game reaches anything outside itself: network connections (`gasm:net`, `gasm:fetch`; per host), files beyond its own assets, other external resources. Natively a prompt in the window (`--allow-net` and friends answer it in advance), in the browser one in the page. Four answers: **this time** (allowed until the game ends), **always** (remembered for this game), **no** (denied this time, asked again next run) or **no, and don't ask again** (denied and remembered). Denied requests get the same refusal games see today. Remembered answers can be changed: per game, and a way to clear them all (natively a command-line option, in the browser a control in the player). Open: which resources count (assets outside the asset dir? storage?), how fine-grained a question is (per host?), what headless runs do, and how it fits the capabilities manifest below. | to be discussed |
 | Capabilities manifest | Custom section `gasm.manifest` declaring required and optional imports, network hosts and platform extensions (`gasm:ext/*`), so runners can check a game before running it. | not started |
 | `.gasm` packages | One file bundling `game.wasm`, its assets and a manifest. | not started |
 | Opening files (`gasm:files`) | A file picker run by the runner (importing a map, a replay): the game only sees what the player picks. Saving for the player already works (`gasm:files.save`). | not started |

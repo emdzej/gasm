@@ -33,7 +33,7 @@ wat = "1"
 default = ["window"]
 # the windowed runner: winit window, cpal audio, gilrs gamepads, keyboard layouts.
 # Without it the library (and gasm-run) are headless only.
-window = ["dep:winit", "dep:cpal", "dep:gilrs", "dep:arboard"]
+window = ["dep:winit", "dep:cpal", "dep:gilrs", "dep:arboard", "dep:font8x8"]
 
 [dependencies]
 wasmtime = "49"
@@ -53,6 +53,8 @@ cpal = { version = "0.18", optional = true }
 gilrs = { version = "0.11", optional = true }
 # the screenshot hotkey (F2): images on the system clipboard
 arboard = { version = "3", optional = true, default-features = false, features = ["image-data"] }
+# the consent question's text (public-domain 8x8 glyphs)
+font8x8 = { version = "0.3", optional = true, default-features = false }
 png = "0.18"
 # ANGLE (gasm:gl natively) is loaded at run time
 libloading = "0.8"

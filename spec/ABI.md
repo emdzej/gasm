@@ -399,9 +399,12 @@ frame.
 
 A handle `open` never returned traps (as gfx handles do).
 
-**Permission.** Networking is off by default natively (`gasm-run --allow-net`,
-or `--allow-net=host,host` for only those hosts) and on in the browser runner,
-where the browser's own rules apply.
+**Permission.** Hosts allowed up front (`gasm-run --allow-net`, or
+`--allow-net=host,host` for only those) are reached at once. For any other host
+the window runner and the browser player ask the player
+([Player consent](#player-consent)); the connection stays connecting until the
+answer and ends in error if it's no. Headless runs never ask (refused unless
+allowed). In browsers the browser's own rules apply on top.
 
 **Determinism.** Messages arrive at unpredictable times. Deterministic games
 must only let *message contents* affect the simulation, never arrival
@@ -437,11 +440,13 @@ send their own. Native and Node runners send `gasm-run/<version>` or
 `mygame/1.0 (+https://mygame.example) gasm-run/0.10.0`. Some APIs ask for that
 (MET Norway's terms want an app name and contact).
 
-**Permission.** Natively off unless `gasm-run --allow-net` (any host) or
-`--allow-net=api.example.org,*.example.org` (only those; `*.` for subdomains;
-the list applies to `gasm:net` too). Every redirect hop must be allowed. In the
-browser the page decides (`GasmHost`'s `allowNet`: `true` or a host list), and
-CORS and mixed-content rules apply on top.
+**Permission.** As for `gasm:net`: hosts allowed up front by `gasm-run
+--allow-net` (any host) or `--allow-net=api.example.org,*.example.org` (only
+those; `*.` for subdomains; the list covers `gasm:net` too), any other host the
+player's choice ([Player consent](#player-consent)): the request stays pending
+until the answer and fails if it's no. Every redirect hop to a new host is
+asked about the same way. In the browser the page decides (`GasmHost`'s
+`allowNet` and `ask`), and CORS and mixed-content rules apply on top.
 
 **Determinism.** Responses arrive whenever the network delivers them. Headless
 runners can record them (`--fetch-record DIR`, with `--allow-net`) and replay
@@ -512,8 +517,10 @@ The name is a suggestion: runners keep its last path component only, replace
 characters file systems refuse, drop leading dots, and never overwrite a file
 (`photo.png`, then `photo (2).png`). Natively images (`image/*`) go to
 `Pictures/<game>/` and everything else to `Downloads/<game>/` (the XDG user
-directories on Linux); `gasm-run --save-dir <dir>` picks the folder and
-`--no-save` refuses every save. Browsers offer the file as a download.
+directories on Linux), after the player agreed to the game saving files
+([Player consent](#player-consent); the save stays pending until then);
+`gasm-run --save-dir <dir>` picks the folder (no question) and `--no-save`
+refuses every save. Browsers offer the file as a download.
 **Headless runs write nothing** unless given `--save-dir`; either way a save is
 `SAVED` by the next frame, so runs stay reproducible. Saves aren't hashed.
 
@@ -740,6 +747,26 @@ browser's UI:
 A tap of Escape goes to the game (`key_state`, `key_events`). Holding it for a
 second quits natively and stops the game in the browser, after `gasm_exit`.
 Closing the window or the page also quits.
+
+### Player consent
+
+A game that wants to reach outside itself asks the player through the runner,
+not through an import: the window runner and the browser player ask before a
+game connects to a host nobody allowed up front (`gasm:net`, `gasm:fetch`; once
+per host) and, natively, before its first save for the player (`gasm:files`;
+once per game). Four answers: **allow this time** (until the game ends),
+**always allow**, **not now** (asked again next run) and **never** (don't ask
+again). The game keeps running until it needs the answer: natively it pauses
+while the question is on screen (keys 1 to 4, Esc for not now), in the browser
+a dialog asks while the request waits.
+
+Remembered answers belong to the game (its id: the file name or
+`--storage-id`). Natively they're in `<data dir>/gasm/consent/<game>.txt`;
+`gasm-run --forget-consent <game>` (or `all`) clears them, and `--no-ask` refuses
+instead of asking. The player keeps them in the page's `localStorage`; "forget
+answers" clears them, and `?allownet` / `?allownet=a.org,b.org` (and a relay
+typed into the page) allow hosts up front. Headless runs never ask, so they stay
+reproducible: what the command line didn't allow is refused.
 
 ### Scripted input (headless)
 

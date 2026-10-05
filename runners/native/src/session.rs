@@ -28,6 +28,8 @@ pub struct Session {
     pub app_id: Option<String>,
     /// gasm:files: where the game's saves for the player go
     pub save: crate::files::SaveTarget,
+    /// the window runner: ask the player about hosts and saves the command line didn't allow
+    pub consent: Option<crate::consent::Consent>,
     pub storage: Storage,
     pub load: LoadOptions,
     /// where ANGLE is (gasm:gl games): None searches the usual places (`angle::find`)
@@ -84,11 +86,11 @@ impl Session {
     }
 
     fn start_with(self, module: Option<wasmtime::Module>, audio: Option<Box<dyn AudioOut>>, gfx: Gfx, gl: Option<Angle>, reproducible: bool, hashing: bool) -> Result<Game, Stop> {
-        let policy = crate::net::NetPolicy::new(self.allow_net, self.allow_hosts);
+        let policy = crate::net::NetPolicy::new(self.allow_net, self.allow_hosts).with_consent(self.consent.clone());
         let mut host = Host::new(self.assets, self.params, audio, gfx, Net::with_policy(policy.clone()), self.storage);
         host.fetch = crate::fetch::Fetch::new(policy, self.fetch);
         host.fetch.set_app_id(self.app_id.as_deref());
-        host.files = crate::files::Files::new(self.save);
+        host.files = crate::files::Files::new(self.save).with_consent(self.consent.clone());
         if self.gl_stats {
             host.gl.stats = Some(Default::default());
         }

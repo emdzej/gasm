@@ -38,13 +38,45 @@ export function urlHost(url) {
 }
 
 /**
+ * The player's answers for one run (the page asks: `ask(subject)` -> boolean or a
+ * promise of it; subjects are `net:<host>`). Each subject is asked once per run;
+ * pages remember "always" and "never" themselves.
+ */
+export class Consent {
+  constructor(ask) { this.ask = ask; this.answers = new Map(); this.pending = new Map(); }
+  /** true / false if answered, else a promise of the answer. */
+  check(subject) {
+    if (this.answers.has(subject)) return this.answers.get(subject);
+    if (!this.pending.has(subject)) {
+      this.pending.set(subject, Promise.resolve().then(() => this.ask(subject)).then((v) => !!v, () => false).then((v) => {
+        this.answers.set(subject, v);
+        this.pending.delete(subject);
+        return v;
+      }));
+    }
+    return this.pending.get(subject);
+  }
+}
+
+/**
  * Which hosts guests may reach (gasm:net and gasm:fetch): `allowNet` false (none),
- * true (all) or a list of host names (`*.example.org`: its subdomains).
+ * true (all) or a list of host names (`*.example.org`: its subdomains). With a
+ * Consent, other hosts are the player's choice.
  */
 export class NetPolicy {
-  constructor(allowNet) {
+  constructor(allowNet, consent = null) {
     this.allowed = !!allowNet;
     this.hosts = Array.isArray(allowNet) ? allowNet.map((h) => String(h).toLowerCase()) : [];
+    this.consent = consent;
+  }
+  /** null: allowed; a string: refused (why); a promise: asking the player (resolves to null or why). */
+  verdict(url) {
+    const why = this.refusal(url);
+    if (!why || !this.consent) return why;
+    const host = urlHost(url) ?? '';
+    const said = (ok) => (ok ? null : `the player said no to ${host}`);
+    const a = this.consent.check(`net:${host}`);
+    return typeof a === 'boolean' ? said(a) : a.then(said);
   }
   permits(host) {
     if (!this.allowed) return false;
@@ -110,9 +142,9 @@ export class FetchRequests {
    * completed responses (live requests). userAgent: sent as User-Agent (Node; pages leave
    * it to the browser, where setting it would also need a CORS preflight).
    */
-  constructor(allowNet, log, { replay = null, record = null, userAgent = null } = {}) {
+  constructor(allowNet, log, { replay = null, record = null, userAgent = null, consent = null } = {}) {
     this.userAgent = userAgent;
-    this.policy = new NetPolicy(allowNet);
+    this.policy = new NetPolicy(allowNet, consent);
     this.log = log;
     this.replay = replay;
     this.record = record;
@@ -138,14 +170,19 @@ export class FetchRequests {
       if (rec) Object.assign(r, { state: FETCH_DONE, status: rec.status, headers: rec.headers, chunks: rec.body.length ? [rec.body] : [], queued: rec.body.length });
       else { this.log(`[gasm] fetch: ${d.method} ${d.url} is not recorded`); r.state = FETCH_FAILED; }
     } else {
-      const why = this.policy.refusal(d.url);
-      if (why) {
+      const why = this.policy.verdict(d.url);
+      if (typeof why === 'string') {
         const host = urlHost(d.url);
         if (!this.denied.has(host)) { this.denied.add(host); this.log(`[gasm] fetch: denied ${d.url} (${why})`); }
         return -1;
       }
       if (typeof fetch !== 'function') { this.log('[gasm] fetch: no fetch() here'); return -1; }
-      this.start(r, d, body);
+      if (why) {   // the player is asked: pending until the answer
+        why.then((no) => {
+          if (r.closed) return;
+          if (no) { this.log(`[gasm] fetch: denied ${d.url} (${no})`); Object.assign(r, { state: FETCH_FAILED }); } else this.start(r, d, body);
+        });
+      } else this.start(r, d, body);
     }
     const h = this.next++;
     this.reqs.set(h, r);

@@ -51,6 +51,8 @@ export declare class GasmWorker {
     onCopyText?: (text: string) => void;
     /** gasm:files: a file the guest saved for the player (the worker reports it saved). */
     onSaveFile?: (name: string, mime: string, bytes: Uint8Array) => boolean | Promise<boolean>;
+    /** Player consent for hosts outside allowNet ("net:<host>"), as GasmHost's `ask`. */
+    ask?: ((subject: string) => boolean | Promise<boolean>) | null;
     url?: URL | string;
   }): Promise<GasmWorker>;
   readonly worker: Worker;

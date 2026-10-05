@@ -20,7 +20,8 @@ const host = new GasmHost({
   gfx: await WebGpuGfx.create(canvas),           // 3D games (gasm:gfx)
   storage: await IdbStorage.open('sumo'),        // saves (gasm:storage)
   params: { room: 'friday' },                    // gasm.param
-  allowNet: true,                                // gasm:net (WebSocket)
+  allowNet: ['relay.example.org'],               // gasm:net and gasm:fetch: these hosts (true: all)
+  ask: (subject) => confirm(`Allow ${subject}?`), // other hosts: the player decides ("net:<host>")
   getPad: (player) => (player === 0 ? keyboardMask : 0),
   onPresent: (rgba, w, h) => ctx.putImageData(new ImageData(rgba, w, h), 0, 0), // 2D games
 });

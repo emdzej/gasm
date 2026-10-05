@@ -94,7 +94,7 @@ try {
       };
       const send = (method, params = {}) => new Promise((r) => { const i = ++id; pending.set(i, r); ws.send(JSON.stringify({ id: i, method, params })); });
       await send('Runtime.enable'); await send('Page.enable');
-      await send('Page.navigate', { url: `http://127.0.0.1:${port}/runners/web/?game=fetchtest.wasm&autostart&base=${encodeURIComponent(base)}` });
+      await send('Page.navigate', { url: `http://127.0.0.1:${port}/runners/web/?game=fetchtest.wasm&autostart&allownet&base=${encodeURIComponent(base)}` });
       let got = null;
       for (let i = 0; i < 150 && !got; i++) {
         await sleep(100);

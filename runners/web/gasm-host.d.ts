@@ -227,6 +227,10 @@ export interface GasmHostOptions {
   fetchReplay?: ((key: string) => FetchRecord | null) | null;
   /** Called with every completed live gasm:fetch response (to record them). */
   fetchRecord?: ((key: string, response: FetchRecord & { method: string; url: string }) => void) | null;
+  /** Player consent: hosts outside `allowNet` are the player's choice. Called once per host and run
+   *  with "net:<host>"; return true to allow (or a promise: the connection or request waits).
+   *  Without it, other hosts are refused. */
+  ask?: ((subject: string) => boolean | Promise<boolean>) | null;
   /** gasm:files: a file the guest saves for the player, after the frame (name already made safe).
    *  Return true when saved (a download, a file), false or a rejected promise if not. null: refuse every save.
    *  Default: accept and drop. */

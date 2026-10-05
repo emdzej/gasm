@@ -87,6 +87,9 @@ pub fn run(session: Session, opts: Options) -> Result<i32, String> {
         default_title,
         fps: 0,
         opts,
+        consent: session.consent.clone(),
+        asking: None,
+        swallowed: HashSet::new(),
         session: Some(session),
         window: None,
         game: None,
@@ -243,6 +246,12 @@ struct App {
     clipboard: Option<arboard::Clipboard>,
     /// the player pressed the paste key: the clipboard's text, for the next frame (gasm:clipboard)
     paste: Option<String>,
+    /// the player's answers about hosts and saves (None: --no-ask)
+    consent: Option<crate::consent::Consent>,
+    /// the question on screen (the game waits meanwhile)
+    asking: Option<crate::consent::Subject>,
+    /// keys pressed to answer: their releases aren't the game's
+    swallowed: HashSet<KeyCode>,
 }
 
 /// The system clipboard, opened on first use.
@@ -382,6 +391,27 @@ impl App {
         let Some(game) = &mut self.game else { return };
         let period = Duration::from_secs_f64(1.0 / game.with_host(|h| h.frame_rate));
         let now = Instant::now();
+        // a question for the player (a host, saving files): the game waits for the answer
+        if let Some(q) = self.consent.as_ref().and_then(|c| c.lock().unwrap().question().cloned()) {
+            if self.esc_down.is_some_and(|t| t.elapsed() >= ESC_HOLD) {
+                return self.quit(el);
+            }
+            if self.asking.as_ref() != Some(&q) {
+                let (wants, what) = crate::consent::describe(&q);
+                eprintln!("[gasm] consent: {} {wants} {what}? (1: this time, 2: always, 3: not now, 4: never)", self.default_title);
+            }
+            let img = crate::prompt::image(&self.default_title, &q);
+            let (w, h) = (crate::prompt::W as u32, crate::prompt::H as u32);
+            game.with_host(|host| {
+                if !host.gl.show_over_game(&img, w, h) {
+                    host.gfx.present_video(&img, w, h, None);
+                }
+            });
+            self.asking = Some(q);
+            self.next = now + period; // no catch-up for the time spent asking
+            return el.set_control_flow(ControlFlow::WaitUntil(now + Duration::from_millis(50)));
+        }
+        self.asking = None;
         if now >= self.next {
             // Fixed timestep: catch up at most 4 frames, only the last one is shown.
             let behind = ((now - self.next).as_secs_f64() / period.as_secs_f64()) as u32 + 1;
@@ -640,6 +670,35 @@ impl ApplicationHandler for App {
             WindowEvent::KeyboardInput { event, .. } => {
                 if let Some(sp) = &mut self.splash {
                     sp.skip |= event.state == ElementState::Pressed;
+                }
+                // the consent question takes the keys: 1-4, Esc (holding Esc still quits)
+                if let PhysicalKey::Code(code) = event.physical_key {
+                    if event.state == ElementState::Released && self.swallowed.remove(&code) {
+                        if code == KeyCode::Escape {
+                            self.esc_down = None;
+                        }
+                        return;
+                    }
+                    if let (Some(q), ElementState::Pressed) = (self.asking.clone(), event.state) {
+                        use crate::consent::Answer;
+                        let answer = match code {
+                            KeyCode::Digit1 | KeyCode::Numpad1 => Some(Answer::ThisTime),
+                            KeyCode::Digit2 | KeyCode::Numpad2 => Some(Answer::Always),
+                            KeyCode::Digit3 | KeyCode::Numpad3 | KeyCode::Escape => Some(Answer::No),
+                            KeyCode::Digit4 | KeyCode::Numpad4 => Some(Answer::Never),
+                            _ => None,
+                        };
+                        if code == KeyCode::Escape && !event.repeat {
+                            self.esc_down = Some(Instant::now());
+                        }
+                        self.swallowed.insert(code);
+                        if let (Some(a), Some(c)) = (answer, &self.consent) {
+                            if !event.repeat {
+                                c.lock().unwrap().answer(&q, a);
+                            }
+                        }
+                        return;
+                    }
                 }
                 if let PhysicalKey::Code(code) = event.physical_key {
                     if code == KeyCode::Escape && !event.repeat {

@@ -34,6 +34,11 @@ options:
                            Pictures/<game>/ for images, Downloads/<game>/ otherwise; headless:
                            nowhere unless given)
   --no-save                refuse every file the game wants to save for the player
+  --no-ask                 (window) don't ask the player: refuse network hosts and saves the
+                           options above didn't allow (headless runs never ask)
+  --forget-consent <game|all>
+                           forget the answers remembered for <game> (its id: the file name or
+                           --storage-id), or for every game, and exit
   --app-id <text>          who the game is in its HTTP requests: gasm:fetch sends
                            User-Agent: <text> gasm-run/<version>, e.g. --app-id 'mygame/1.0 (+https://mygame.example)'
   --fetch-record <dir>     store every gasm:fetch response in <dir> (with --allow-net)
@@ -103,6 +108,8 @@ struct Args {
     app_id: Option<String>,
     save_dir: Option<String>,
     no_save: bool,
+    no_ask: bool,
+    forget_consent: Option<String>,
     window: (u32, u32),
     present: Present,
     keymap: Option<String>,
@@ -144,6 +151,8 @@ fn parse_args() -> Result<Args, String> {
         app_id: None,
         save_dir: None,
         no_save: false,
+        no_ask: false,
+        forget_consent: None,
         window: (960, 720),
         present: Present::default(),
         keymap: None,
@@ -211,6 +220,8 @@ fn parse_args() -> Result<Args, String> {
             "--storage-id" => args.storage_id = Some(val("--storage-id")?),
             "--save-dir" => args.save_dir = Some(val("--save-dir")?),
             "--no-save" => args.no_save = true,
+            "--no-ask" => args.no_ask = true,
+            "--forget-consent" => args.forget_consent = Some(val("--forget-consent")?),
             "--app-id" => {
                 let id = val("--app-id")?;
                 if !gasm_host::fetch::valid_app_id(&id) {
@@ -265,7 +276,7 @@ fn parse_args() -> Result<Args, String> {
             s => args.wasm = s.into(),
         }
     }
-    if args.wasm.is_empty() && !args.print_keymap {
+    if args.wasm.is_empty() && !args.print_keymap && args.forget_consent.is_none() {
         return Err("missing <game.wasm>".into());
     }
     Ok(args)
@@ -358,6 +369,10 @@ fn open_storage(args: &Args) -> Result<Storage, String> {
 }
 
 fn run(args: Args) -> Result<i32, String> {
+    if let Some(game) = &args.forget_consent {
+        eprintln!("[gasm] consent: {}", gasm_host::consent::forget(game)?);
+        return Ok(0);
+    }
     if args.print_keymap {
         #[cfg(feature = "window")]
         {
@@ -386,6 +401,7 @@ fn run(args: Args) -> Result<i32, String> {
         allow_hosts: args.allow_hosts.clone(),
         fetch: args.fetch.clone(),
         app_id: args.app_id.clone(),
+        consent: (args.headless.is_none() && !args.no_ask).then(|| gasm_host::consent::Store::open(&game_id(&args)).shared()),
         save: match (&args.save_dir, args.no_save, args.headless) {
             (_, true, _) => gasm_host::files::SaveTarget::Off,
             (Some(d), _, _) => gasm_host::files::SaveTarget::Dir(d.into()),

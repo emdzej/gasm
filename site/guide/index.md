@@ -133,8 +133,14 @@ make web
 
 URL parameters are passed to the game: `?game=sumo.wasm&relay=ws://host:9000&room=abc&autostart`.
 `game`, `autostart`, `wasm`, `worker`, `opfs`, `prefix`, `rom`, `filter`,
-`integer`, `asyncify`, `nosplash`, `copykey` and `hashframes` are used by the page itself; everything else becomes
+`integer`, `asyncify`, `nosplash`, `copykey`, `allownet` and `hashframes` are used by the page itself; everything else becomes
 a game parameter.
+
+**When a game wants the network:** the player asks before a game connects to a
+host for the first time (allow this time, always, not now, never); "always" and
+"never" are remembered for that game, and "forget answers" in the status line
+clears them. `?allownet` allows every host up front, `?allownet=api.example.org`
+only those; a relay you type into the page counts as allowed.
 
 **Copying a screenshot:** F2 copies the game's frame to the clipboard (a 2D
 game's frame at its own size, a GPU game's as shown), ready to paste into a
@@ -269,6 +275,9 @@ gasm-run <game.wasm|game.cwasm> [options]
 --save-dir <dir>         where files the game saves for you go (default Pictures/<game>/ for
                          images, Downloads/<game>/ otherwise)
 --no-save                refuse every file the game wants to save for you
+--no-ask                 don't ask about hosts and saves: refuse what the options didn't allow
+--forget-consent <game|all>
+                         forget the answers you gave a game ("always", "never"), and exit
 --app-id <text>          who the game is in its HTTP requests (User-Agent: <text> gasm-run/<version>)
 --compile <out.cwasm>    ahead-of-time compile to native code and exit
 --allow-precompiled      accept a .cwasm (native code: only files you compiled yourself)
@@ -320,6 +329,22 @@ win/loss record; the NES emulator keeps battery-backed cartridge saves
 `<game>` is the file name without extension (`sumo`, `nes`). Delete the
 folder to reset. Games save on change and when you quit normally (close the
 window or hold Esc).
+
+### When a game wants the network or your files
+
+The first time a game wants to connect to a host, or to save a file for you
+(a photo, an export), `gasm-run` pauses it and asks:
+
+- **1** allow this time (until the game ends)
+- **2** always allow
+- **3** not now (Esc; asked again next time)
+- **4** never (don't ask again)
+
+`--allow-net` (or `--allow-net=api.example.org`) and `--save-dir` answer in
+advance, `--no-ask` refuses whatever they don't cover, and
+`gasm-run --forget-consent <game>` (or `all`) forgets the remembered answers
+(kept in the data directory, `gasm/consent/<game>.txt`). Headless runs never
+ask.
 
 ### Precompiling (AOT)
 
