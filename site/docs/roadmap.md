@@ -125,7 +125,6 @@ Left over:
 | TLS, `Crypto` | mbedtls needs a time source (`mbedtls_ms_time`, `timing.c`) for WASI. | not started |
 | Godot as a WebSocket server | `WebSocketPeer` and `WebSocketMultiplayerPeer` work as clients on `gasm:net` (a relay room, or a Godot server outside gasm); a game can't host (`create_server`), and ENet and UDP need sockets browsers don't have. | not planned |
 | Complex text | The advanced text server (ICU, HarfBuzz: right-to-left, ligatures) instead of the fallback one; larger. | not started |
-| A smaller engine | 32 MB (8 MB gzipped): a build profile without unused modules (e.g. 3D for 2D games) per game. | idea |
 | Touch | Godot's touch events from gasm's pointer on touch screens. | not started |
 
 ## Testing and tooling
