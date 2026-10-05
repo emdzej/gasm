@@ -29,7 +29,7 @@ scummvm.wasm: ScummVM, GNU General Public License version 3, with zlib (zlib
 
 sdl3-*.wasm: SDL 3 (zlib license), https://libsdl.org
 
-godot.wasm: Godot Engine 4.7.2 (MIT), https://godotengine.org, with the
+godot.wasm, godot-2d.wasm: Godot Engine 4.7.2 (MIT), https://godotengine.org, with the
   third-party components listed in its COPYRIGHT.txt (below). The example packs
   (godot/*.pck) are MIT, like gasm.
 
