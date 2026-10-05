@@ -90,3 +90,26 @@
   margin: 16px 0;
   text-align: center;
 }
+
+/* The home page's background: guests/pong, a gasm game (components/PongBackground.vue).
+   Scaled up pixel-crisp behind the hero, faint, fading out at the edges; clicks pass
+   through to the hero. */
+.VPHome { position: relative; }
+.VPHero { position: relative; z-index: 1; }
+.gasm-pong-bg {
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: min(100vh, 720px);
+  z-index: 0;
+  pointer-events: none;
+  opacity: 0.22;
+  -webkit-mask-image: radial-gradient(ellipse 70% 75% at 50% 45%, #000 40%, transparent 100%);
+  mask-image: radial-gradient(ellipse 70% 75% at 50% 45%, #000 40%, transparent 100%);
+}
+.dark .gasm-pong-bg { opacity: 0.32; }
+.gasm-pong-bg canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+  image-rendering: pixelated;
+}
