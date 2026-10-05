@@ -16,6 +16,10 @@ class DisplayServerGasm : public DisplayServerHeadless {
 	bool gl = false;
 	Callable window_event_callback;
 	Callable input_text_callback;
+	// the drawable's size follows the player's window or canvas: Godot resizes its
+	// root viewport when told (checked each frame in process_events)
+	Callable rect_changed_callback;
+	Size2i last_size;
 	Point2i mouse_pos;
 	BitField<MouseButtonMask> buttons;
 	DisplayServerEnums::MouseMode mouse_mode = DisplayServerEnums::MOUSE_MODE_VISIBLE;
@@ -48,6 +52,7 @@ public:
 	void window_set_title(const String &p_title, DisplayServerEnums::WindowID p_window = DisplayServerEnums::MAIN_WINDOW_ID) override;
 	void window_set_window_event_callback(const Callable &p_callable, DisplayServerEnums::WindowID p_window = DisplayServerEnums::MAIN_WINDOW_ID) override { window_event_callback = p_callable; }
 	void window_set_input_text_callback(const Callable &p_callable, DisplayServerEnums::WindowID p_window = DisplayServerEnums::MAIN_WINDOW_ID) override { input_text_callback = p_callable; }
+	void window_set_rect_changed_callback(const Callable &p_callable, DisplayServerEnums::WindowID p_window = DisplayServerEnums::MAIN_WINDOW_ID) override { rect_changed_callback = p_callable; }
 	bool window_is_focused(DisplayServerEnums::WindowID p_window = DisplayServerEnums::MAIN_WINDOW_ID) const override { return true; }
 	bool window_can_draw(DisplayServerEnums::WindowID p_window = DisplayServerEnums::MAIN_WINDOW_ID) const override { return true; }
 	bool can_any_window_draw() const override { return true; }

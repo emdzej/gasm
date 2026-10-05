@@ -294,6 +294,13 @@ void DisplayServerGasm::process_joypads() {
 }
 
 void DisplayServerGasm::process_events() {
+	Size2i size = window_get_size();
+	if (size != last_size && size.x > 0 && size.y > 0) {
+		last_size = size;
+		if (rect_changed_callback.is_valid()) {
+			rect_changed_callback.call(Rect2i(Point2i(), size));
+		}
+	}
 	process_keys();
 	process_pointer();
 	process_joypads();
@@ -316,6 +323,7 @@ void DisplayServerGasm::swap_buffers() {
 
 DisplayServerGasm::DisplayServerGasm(bool p_gl) :
 		gl(p_gl) {
+	last_size = window_get_size(); // Godot starts at this size: report changes only
 	apply_mouse_mode();
 }
 
