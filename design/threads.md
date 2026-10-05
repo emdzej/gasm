@@ -259,6 +259,54 @@ After cooperative threads, and only when a guest needs parallel CPU (a physics
 or job system, a Godot build with its worker pool). The cooperative API (C,
 pthreads shim, SDL backend) stays the same, so the same source can target either.
 
+### Godot: design pass (2026-10-05)
+
+The question was whether Godot games need real threads, and so whether to build
+a native prototype now. Godot runs single-threaded on gasm (`threads=no`:
+`Thread` and `WorkerThreadPool` run their work inline).
+
+**Where a Godot frame's time goes.** A CPU profile of the 3D example
+(`guests/godot/examples/scene3d`, Node, null GL, 300 frames: 834 frames/s) puts
+75% of the frame loop in rendering (`RenderingServerDefault::draw`, mostly
+`render_camera`), 13% in 3D physics and 8% in scene processing; startup
+(`Main::setup`) is the largest share of the run. With a real GPU the GL calls
+dominate: the polyline case of NiP #10 spent its time in `gasm:gl` and ANGLE,
+not in Godot ([CHANGELOG 0.10.0](../CHANGELOG.md)). The Compatibility renderer
+draws on the main thread on every platform, so threads would speed up physics
+(a worker pool for many bodies), navigation and threaded resource loading
+(startup and level streaming), not drawing.
+
+**What it would take** (in order):
+
+1. A Godot build with `threads=yes` for `wasm32-wasip1-threads` (wasi-sdk ships
+   that sysroot): shared memory with a declared maximum, `pthread_create` via
+   wasi-threads' `thread-spawn`. A second module next to `godot.wasm`, since a
+   module either shares memory or doesn't.
+2. Natively: `thread-spawn` in our WASI subset. Each guest thread is a new
+   instance in its own store on an OS thread, sharing the memory; its `Host`
+   offers WASI and compute only (the `gasm` imports stay main-thread only, as
+   part B says). A trap on any thread ends the game. Our `wasi.rs` and the epoch
+   deadline (`--call-timeout`) need per-thread handling.
+3. In browsers: Worker mode with a `SharedArrayBuffer` memory and one Web Worker
+   per guest thread. Pages must be cross-origin isolated (COOP/COEP), which the
+   website and most embedding pages aren't; the player would need an isolated
+   variant. That breaks today's Worker-mode rule (transferables only), so it
+   would be an opt-in build of the player.
+4. Determinism: such runs aren't reproducible. Headless runs would pin Godot's
+   pool to zero workers (`threads=yes` with a pool size of 0 behaves like
+   today), so the determinism suite keeps working for the threaded module too;
+   only windowed and browser runs get workers.
+
+**Decision: no prototype now.** The gain is bounded by the physics, navigation
+and loading share of real games (small in every example and in NiP's game,
+which is GL-bound), while the costs are a second engine build, threads in the
+WASI subset, an isolated browser variant and non-reproducible runs. Revisit when
+a game is CPU-bound in physics or loading (a profile like the one above shows
+it), or when Godot's Compatibility renderer gains threaded command submission.
+Until then the cheaper wins are the ones already taken (cheaper `gasm:gl`
+calls, the smaller 2D engine). The roadmap keeps "Real wasm threads" as a
+proposal.
+
 ## Later: cheaper switching
 
 Runner-side stack switching exists now for the main loop
