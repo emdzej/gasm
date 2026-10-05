@@ -26,17 +26,14 @@ threads in Rust, Godot 4.7
 ([guests/godot](https://github.com/emdzej/gasm/blob/main/guests/godot/README.md)),
 and in 0.9.0 HTTP requests (`gasm:fetch`,
 [design/fetch.md](https://github.com/emdzej/gasm/blob/main/design/fetch.md)),
-assets that change while a game runs and the player's time zone, and the gasm
-splash screen.
+assets that change while a game runs and the player's time zone, the gasm
+splash screen, and OpenGL ES through SDL 3.
 
-1. **SDL 3 on `gasm:gl`** ([SDL 3](#sdl-3)): `SDL_GL_*` contexts on OpenGL ES, so
-   SDL games that draw with GL (most of them) run, not only those using SDL's
-   2D renderer.
-2. **Player consent** ([Runtime and ABI](#runtime-and-abi)): decide the open
+1. **Player consent** ([Runtime and ABI](#runtime-and-abi)): decide the open
    questions first, then ask before network, files and other resources.
-3. **Guest memory limit** ([Runtime and ABI](#runtime-and-abi)): small, and with
+2. **Guest memory limit** ([Runtime and ABI](#runtime-and-abi)): small, and with
    consent what running untrusted games needs.
-4. **Godot, the rest** ([Godot](#godot)): threads or a smaller engine first (what
+3. **Godot, the rest** ([Godot](#godot)): threads or a smaller engine first (what
    bigger games hit: speed, download size), then Jolt, TLS, multiplayer.
 
 ## Runtime and ABI
@@ -93,7 +90,8 @@ What SDL 3 for gasm doesn't do yet, and what would bring it:
 
 | Missing | What it takes |
 |---|---|
-| OpenGL, Vulkan, `SDL_GPU` | `gasm:gl` (above) for OpenGL ES |
+| Desktop OpenGL | not planned: OpenGL ES on `gasm:gl` works (SDL3::GL) |
+| `SDL_GPU`, Vulkan | `SDL_GPU` on `gasm:gfx` (WebGPU) would be a new GPU driver for SDL; not started |
 | Audio recording, camera, haptics and rumble, sensors, dialogs, tray, processes, shared objects | not planned; each fails the way SDL fails on a platform without it |
 
 ### ScummVM

@@ -280,6 +280,9 @@ export class GlHost {
     this.objs = Object.fromEntries(KINDS.map((k) => [k, new Map()]));   // name -> WebGL object
     this.names = new WeakMap();   // WebGL object -> name
     this.vaoElements = new Map([[0, 0]]);   // vertex array -> its ELEMENT_ARRAY_BUFFER
+    // `${vertex array}:${index}` -> { enabled, buffer }: a draw with an enabled attribute
+    // that has no buffer is INVALID_OPERATION (WebGL: no client-side arrays)
+    this.attribs = new Map();
     this.uniforms = new Map();    // program -> [WebGLUniformLocation | true] by location
     this.programOfLocation = new Map();
     this.ended = new Map();       // query / sync name -> frame it ended / was made
@@ -415,6 +418,7 @@ export class GlHost {
   delete_buffer(n) {
     for (const [t, b] of this.model.buffers) if (b === n) this.model.buffers.delete(t);
     for (const [v, b] of this.vaoElements) if (b === n) this.vaoElements.set(v, 0);
+    for (const a of this.attribs.values()) if (a.buffer === n) a.buffer = 0;
     this.remove('buffer', n, (o) => this.ctx.deleteBuffer(o));
   }
   is_buffer(n) { return this.model.is('buffer', n); }
@@ -474,6 +478,7 @@ export class GlHost {
   delete_vertex_array(n) {
     if (this.model.vertexArray === n) this.model.vertexArray = 0;
     this.vaoElements.delete(n);
+    for (const k of [...this.attribs.keys()]) if (k.startsWith(`${n}:`)) this.attribs.delete(k);
     this.remove('vertexArray', n, (o) => this.ctx.deleteVertexArray(o));
   }
   is_vertex_array(n) { return this.model.is('vertexArray', n); }
@@ -482,15 +487,33 @@ export class GlHost {
     this.model.vertexArray = n;
     this.ctx?.bindVertexArray(this.obj('vertexArray', n));
   }
-  enable_vertex_attrib_array(i) { this.ctx?.enableVertexAttribArray(i); }
-  disable_vertex_attrib_array(i) { this.ctx?.disableVertexAttribArray(i); }
+  /** The attribute's record in the bound vertex array (null: index out of range, INVALID_VALUE). */
+  attrib(i) {
+    if (i >>> 0 >= NULL_LIMITS[0x8869][0]) { this.model.error(GL.INVALID_VALUE); return null; }
+    const k = `${this.model.vertexArray}:${i}`;
+    return this.attribs.get(k) ?? this.attribs.set(k, { enabled: false, buffer: 0 }).get(k);
+  }
+  enable_vertex_attrib_array(i) { const a = this.attrib(i); if (a) { a.enabled = true; this.ctx?.enableVertexAttribArray(i); } }
+  disable_vertex_attrib_array(i) { const a = this.attrib(i); if (a) { a.enabled = false; this.ctx?.disableVertexAttribArray(i); } }
   vertex_attrib_pointer(i, size, type, norm, stride, off) {
+    const a = this.attrib(i);
+    if (!a) return;
     if (this.model.boundBuffer(GL.ARRAY_BUFFER) === 0 && off !== 0) return this.model.error(GL.INVALID_OPERATION);
+    a.buffer = this.model.boundBuffer(GL.ARRAY_BUFFER);
     this.ctx?.vertexAttribPointer(i, size, type, !!norm, stride, off);
   }
   vertex_attrib_ipointer(i, size, type, stride, off) {
+    const a = this.attrib(i);
+    if (!a) return;
     if (this.model.boundBuffer(GL.ARRAY_BUFFER) === 0 && off !== 0) return this.model.error(GL.INVALID_OPERATION);
+    a.buffer = this.model.boundBuffer(GL.ARRAY_BUFFER);
     this.ctx?.vertexAttribIPointer(i, size, type, stride, off);
+  }
+  /** A draw may go ahead: every enabled attribute of the bound vertex array has a buffer. */
+  attribsReady() {
+    const v = `${this.model.vertexArray}:`;
+    for (const [k, a] of this.attribs) if (a.enabled && !a.buffer && k.startsWith(v)) return this.model.error(GL.INVALID_OPERATION);
+    return true;
   }
   vertex_attrib_divisor(i, d) { this.ctx?.vertexAttribDivisor(i, d); }
   vertex_attrib4f(i, x, y, z, w) { this.ctx?.vertexAttrib4f(i, x, y, z, w); }
@@ -501,12 +524,12 @@ export class GlHost {
   get_vertex_attrib_offset(i, pname) { return this.ctx ? this.ctx.getVertexAttribOffset(i, pname) : 0; }
 
   // ---- drawing -----------------------------------------------------------------------------
-  draw_arrays(mode, first, count) { if (this.model.nonNegative(first, count)) this.ctx?.drawArrays(mode, first, count); }
-  draw_elements(mode, count, type, off) { if (this.model.nonNegative(count)) this.ctx?.drawElements(mode, count, type, off); }
-  draw_arrays_instanced(mode, first, count, n) { if (this.model.nonNegative(first, count, n)) this.ctx?.drawArraysInstanced(mode, first, count, n); }
-  draw_elements_instanced(mode, count, type, off, n) { if (this.model.nonNegative(count, n)) this.ctx?.drawElementsInstanced(mode, count, type, off, n); }
+  draw_arrays(mode, first, count) { if (this.model.nonNegative(first, count) && this.attribsReady()) this.ctx?.drawArrays(mode, first, count); }
+  draw_elements(mode, count, type, off) { if (this.model.nonNegative(count) && this.attribsReady()) this.ctx?.drawElements(mode, count, type, off); }
+  draw_arrays_instanced(mode, first, count, n) { if (this.model.nonNegative(first, count, n) && this.attribsReady()) this.ctx?.drawArraysInstanced(mode, first, count, n); }
+  draw_elements_instanced(mode, count, type, off, n) { if (this.model.nonNegative(count, n) && this.attribsReady()) this.ctx?.drawElementsInstanced(mode, count, type, off, n); }
   draw_range_elements(mode, start, end, count, type, off) {
-    if (this.model.nonNegative(count) && (end >= start || this.model.error(GL.INVALID_VALUE))) this.ctx?.drawRangeElements(mode, start, end, count, type, off);
+    if (this.model.nonNegative(count) && (end >= start || this.model.error(GL.INVALID_VALUE)) && this.attribsReady()) this.ctx?.drawRangeElements(mode, start, end, count, type, off);
   }
   draw_buffers(ptr, count) { const v = new Uint32Array(this.host.bytes(ptr, count * 4).slice().buffer); this.ctx?.drawBuffers(Array.from(v)); }
   clear_bufferiv(buf, db, ptr, count) { const v = new Int32Array(this.host.bytes(ptr, count * 4).slice().buffer); this.ctx?.clearBufferiv(buf, db, v); }

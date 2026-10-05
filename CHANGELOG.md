@@ -8,7 +8,22 @@ the package versions (`gasm-sdk`, `gasm-host`, `@emdzej/gasm-host`).
 
 ## Unreleased
 
+SDKs:
+- SDL 3: OpenGL ES on `gasm:gl` for programs linked with `lib/gasm_gl.o`
+  (CMake `SDL3::GL`): `SDL_GL_CreateContext` (ES up to 3.0), `SDL_GL_GetProcAddress`,
+  `SDL_GL_SwapWindow`, GL windows at the drawable's size and following it, and
+  `SDL_Renderer` on SDL's GLES 2 renderer (on the GPU). SDL itself doesn't import
+  `gasm:gl` (it finds GL through a weak `gasm_gl_get_proc_address`), so programs
+  without it are unchanged, hashes included. Examples: `sdk/sdl3/examples/gl`,
+  SDL's snake on GLES 2 (`sdl3-snake-gl`); both are determinism cases.
+- C SDK, GLES: `gasm_gl_get_proc_address(name)` (`src/gasm_gl_proc.c`, generated)
+  for loaders; client-side vertex and index arrays (GLES 2 code, SDL's GLES 2
+  renderer) are copied into buffers at the draw.
+
 Runners:
+- gasm:gl model (both runners): a draw with an enabled attribute that has no
+  buffer is `INVALID_OPERATION`, and attribute indices from 16 are
+  `INVALID_VALUE`, as in WebGL (Chrome reported them, the null GL didn't).
 - The gasm splash screen: a moment of Pong in the style of gasm's icon that
   turns into the logo and the name, about 1.6 s, while the game loads (natively
   the module compiles meanwhile, so a slow-to-compile game like Godot starts no

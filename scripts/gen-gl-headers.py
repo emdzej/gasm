@@ -9,6 +9,8 @@ registry, version 3.1.0) and spec/abi.json, and writes:
   sdk/c/include/GLES3/gl3.h        typedefs, the GLES 2.0 + 3.0 enums and prototypes
   sdk/c/include/GLES3/gl3platform.h, GLES2/gl2.h, GLES2/gl2ext.h, KHR/khrplatform.h
   sdk/c/src/gasm_gl.c              every GLES 3.0 function, on the gasm:gl imports
+  sdk/c/src/gasm_gl_proc.c         gasm_gl_get_proc_address: every one of them by name (for
+                                   loaders: SDL_GL_GetProcAddress, glad, ...)
 
 Most functions map one to one onto an import; the rest are written out below
 (OVERRIDES): gen/delete loops, string arrays, glGetString caching, glMapBufferRange
@@ -98,11 +100,26 @@ O['glCompressedTexSubImage2D'] = 'gasm_gl_compressed_tex_sub_image_2d(target, le
 O['glCompressedTexSubImage3D'] = 'gasm_gl_compressed_tex_sub_image_3d(target, level, xoffset, yoffset, zoffset, width, height, depth, format, data, (uint32_t)imageSize);'
 O['glReadPixels'] = ('if (pack_buffer) { gasm_gl_read_pixels(x, y, width, height, format, type, pixels, 0); return; }\n'
                      '    gasm_gl_read_pixels(x, y, width, height, format, type, pixels, image_bytes(&pack, width, height, 1, format, type));')
-O['glDrawElements'] = 'gasm_gl_draw_elements(mode, count, type, (uint32_t)(uintptr_t)indices);'
-O['glDrawRangeElements'] = 'gasm_gl_draw_range_elements(mode, start, end, count, type, (uint32_t)(uintptr_t)indices);'
-O['glDrawElementsInstanced'] = 'gasm_gl_draw_elements_instanced(mode, count, type, (uint32_t)(uintptr_t)indices, instancecount);'
-O['glVertexAttribPointer'] = 'gasm_gl_vertex_attrib_pointer(index, size, type, normalized, stride, (uint32_t)(uintptr_t)pointer);'
-O['glVertexAttribIPointer'] = 'gasm_gl_vertex_attrib_ipointer(index, size, type, stride, (uint32_t)(uintptr_t)pointer);'
+O['glDrawElements'] = 'draw_elements(mode, count, type, indices, 1, 0);'
+O['glDrawRangeElements'] = ('if (client_arrays() || (!vertex_array && !element_buffer0 && indices)) { draw_elements(mode, count, type, indices, 1, 0); return; }\n'
+                            '    gasm_gl_draw_range_elements(mode, start, end, count, type, (uint32_t)(uintptr_t)indices);')
+O['glDrawElementsInstanced'] = 'draw_elements(mode, count, type, indices, instancecount, 1);'
+# overridden only for C's client-side arrays: Rust guests (glow uses buffers) forward them as is
+C_ONLY = {'glDrawArrays', 'glDrawArraysInstanced', 'glEnableVertexAttribArray', 'glDisableVertexAttribArray',
+          'glVertexAttribDivisor', 'glBindVertexArray'}
+O['glDrawArrays'] = 'if (client_arrays()) upload_client(first + count, 1);\n    gasm_gl_draw_arrays(mode, first, count);'
+O['glDrawArraysInstanced'] = 'if (client_arrays()) upload_client(first + count, instancecount);\n    gasm_gl_draw_arrays_instanced(mode, first, count, instancecount);'
+O['glVertexAttribPointer'] = 'attrib_pointer(index, size, type, normalized, stride, pointer, 0);'
+O['glVertexAttribIPointer'] = 'attrib_pointer(index, size, type, GL_FALSE, stride, pointer, 1);'
+O['glEnableVertexAttribArray'] = 'attrib_enable(index, 1);'
+O['glDisableVertexAttribArray'] = 'attrib_enable(index, 0);'
+O['glVertexAttribDivisor'] = 'if (!vertex_array && index < CLIENT_ATTRIBS) attribs[index].divisor = divisor;\n    gasm_gl_vertex_attrib_divisor(index, divisor);'
+O['glBindVertexArray'] = 'vertex_array = array;\n    gasm_gl_bind_vertex_array(array);'
+O['glDeleteVertexArrays'] = 'for (GLsizei i = 0; i < n; i++) { if (arrays[i] == vertex_array) vertex_array = 0; gasm_gl_delete_vertex_array(arrays[i]); }'
+O['glDeleteBuffers'] = ('for (GLsizei i = 0; i < n; i++) {\n'
+                        '        if (buffers[i] && buffers[i] == array_buffer) array_buffer = 0;\n'
+                        '        if (buffers[i] && buffers[i] == element_buffer0 && !vertex_array) element_buffer0 = 0;\n'
+                        '        gasm_gl_delete_buffer(buffers[i]);\n    }')
 O['glGetIntegerv'] = ('if (pname == GL_NUM_EXTENSIONS) { *data = (GLint)extension_count(); return; }\n'
                       '    gasm_gl_get_integerv(pname, data, 64);')
 O['glGetBooleanv'] = ('GLint v[64];\n    int n = gasm_gl_get_integerv(pname, v, 64);\n'
@@ -270,6 +287,11 @@ typedef struct __GLsync *GLsync;   /* a gasm:gl sync name */
 #define GL_ES_VERSION_3_0 1
 ''' + '\n'.join(enum_lines) + '\n\n' + '\n'.join(f'GL_APICALL {proto(n, r, p)};' for n, r, p, _ in impl) + '''
 
+/* Every function above by name (and gasm_gl_present, gasm_gl_width, gasm_gl_height),
+ * or NULL: link sdk/c/src/gasm_gl_proc.c (it pulls in all of gasm_gl.c). */
+typedef void (*GASMglproc)(void);
+GL_APICALL GASMglproc GL_APIENTRY gasm_gl_get_proc_address(const char *name);
+
 #ifdef __cplusplus
 }
 #endif
@@ -331,9 +353,107 @@ typedef struct { int alignment, row_length, image_height, skip_pixels, skip_rows
 static store unpack = { 4, 0, 0, 0, 0, 0 }, pack = { 4, 0, 0, 0, 0, 0 };
 static GLuint unpack_buffer, pack_buffer;
 
+static GLuint array_buffer, element_buffer0, vertex_array;   /* element buffer: the default VAO's */
+
 static void track_buffer(GLenum target, GLuint buffer) {
     if (target == GL_PIXEL_UNPACK_BUFFER) unpack_buffer = buffer;
     if (target == GL_PIXEL_PACK_BUFFER) pack_buffer = buffer;
+    if (target == GL_ARRAY_BUFFER) array_buffer = buffer;
+    if (target == GL_ELEMENT_ARRAY_BUFFER && !vertex_array) element_buffer0 = buffer;
+}
+
+/* ---- client-side vertex arrays ----------------------------------------------------------
+ * GLES lets the default vertex array's attributes (and indices) point into the program's
+ * memory, with no buffer bound; gasm:gl follows WebGL, which doesn't. GLES 2 code relies on
+ * it (SDL's GLES 2 renderer does), so it is emulated here: a draw first copies the vertices
+ * it uses into a scratch buffer per attribute (and client indices into one for indices). */
+#define CLIENT_ATTRIBS 16
+typedef struct { const uint8_t *ptr; GLint size; GLenum type; GLboolean normalized; GLsizei stride; GLuint divisor; int integer, client, enabled; } attrib;
+static attrib attribs[CLIENT_ATTRIBS];
+static GLuint scratch[CLIENT_ATTRIBS], scratch_indices;
+
+static uint32_t attrib_bytes(const attrib *a) {
+    switch (a->type) {
+    case GL_BYTE: case GL_UNSIGNED_BYTE: return (uint32_t)a->size;
+    case GL_SHORT: case GL_UNSIGNED_SHORT: case GL_HALF_FLOAT: return 2u * (uint32_t)a->size;
+    case GL_INT_2_10_10_10_REV: case GL_UNSIGNED_INT_2_10_10_10_REV: return 4;
+    default: return 4u * (uint32_t)a->size;
+    }
+}
+
+static int client_arrays(void) {
+    if (vertex_array) return 0;
+    for (int i = 0; i < CLIENT_ATTRIBS; i++)
+        if (attribs[i].enabled && attribs[i].client) return 1;
+    return 0;
+}
+
+/* Copy what vertices 0 .. vertices-1 (per-instance attributes: instances) use of each client
+ * attribute into its scratch buffer and point the attribute there. */
+static void upload_client(GLsizei vertices, GLsizei instances) {
+    for (GLuint i = 0; i < CLIENT_ATTRIBS; i++) {
+        attrib *a = &attribs[i];
+        if (!a->enabled || !a->client) continue;
+        GLsizei n = a->divisor ? (instances + (GLsizei)a->divisor - 1) / (GLsizei)a->divisor : vertices;
+        if (n <= 0) continue;
+        uint32_t elem = attrib_bytes(a), stride = a->stride ? (uint32_t)a->stride : elem;
+        if (!scratch[i]) scratch[i] = gasm_gl_create_buffer();
+        gasm_gl_bind_buffer(GL_ARRAY_BUFFER, scratch[i]);
+        gasm_gl_buffer_data(GL_ARRAY_BUFFER, a->ptr, (uint32_t)(n - 1) * stride + elem, GL_STREAM_DRAW);
+        if (a->integer) gasm_gl_vertex_attrib_ipointer(i, a->size, a->type, a->stride, 0);
+        else gasm_gl_vertex_attrib_pointer(i, a->size, a->type, a->normalized, a->stride, 0);
+    }
+    gasm_gl_bind_buffer(GL_ARRAY_BUFFER, array_buffer);
+}
+
+static void attrib_pointer(GLuint index, GLint size, GLenum type, GLboolean normalized, GLsizei stride, const void *pointer, int integer) {
+    if (!vertex_array && !array_buffer && pointer && index < CLIENT_ATTRIBS) {
+        attrib *a = &attribs[index];   /* in the program's memory: recorded, sent at the draw */
+        a->ptr = (const uint8_t *)pointer; a->size = size; a->type = type; a->normalized = normalized;
+        a->stride = stride; a->integer = integer; a->client = 1;
+        return;
+    }
+    if (!vertex_array && index < CLIENT_ATTRIBS) attribs[index].client = 0;
+    if (integer) gasm_gl_vertex_attrib_ipointer(index, size, type, stride, (uint32_t)(uintptr_t)pointer);
+    else gasm_gl_vertex_attrib_pointer(index, size, type, normalized, stride, (uint32_t)(uintptr_t)pointer);
+}
+
+static void attrib_enable(GLuint index, int on) {
+    if (!vertex_array && index < CLIENT_ATTRIBS) attribs[index].enabled = on;
+    if (on) gasm_gl_enable_vertex_attrib_array(index);
+    else gasm_gl_disable_vertex_attrib_array(index);
+}
+
+static uint32_t index_bytes(GLenum type) { return type == GL_UNSIGNED_INT ? 4 : type == GL_UNSIGNED_SHORT ? 2 : 1; }
+
+static GLsizei max_index(GLsizei count, GLenum type, const void *indices) {
+    uint32_t m = 0;
+    for (GLsizei i = 0; i < count; i++) {
+        uint32_t v = type == GL_UNSIGNED_INT ? ((const uint32_t *)indices)[i]
+                   : type == GL_UNSIGNED_SHORT ? ((const uint16_t *)indices)[i] : ((const uint8_t *)indices)[i];
+        if (v > m) m = v;
+    }
+    return (GLsizei)m;
+}
+
+/* An indexed draw: client indices go to a scratch buffer; client attributes get the vertices
+ * up to the largest index (which can't be read from an index buffer: an error then). */
+static void draw_elements(GLenum mode, GLsizei count, GLenum type, const void *indices, GLsizei instances, int instanced) {
+    int client_indices = !vertex_array && !element_buffer0 && indices;
+    if (client_arrays()) {
+        if (!client_indices) { c_error = GL_INVALID_OPERATION; return; }
+        upload_client(count > 0 ? max_index(count, type, indices) + 1 : 0, instances);
+    }
+    uint32_t offset = (uint32_t)(uintptr_t)indices;
+    if (client_indices) {
+        if (!scratch_indices) scratch_indices = gasm_gl_create_buffer();
+        gasm_gl_bind_buffer(GL_ELEMENT_ARRAY_BUFFER, scratch_indices);
+        gasm_gl_buffer_data(GL_ELEMENT_ARRAY_BUFFER, indices, (uint32_t)(count > 0 ? count : 0) * index_bytes(type), GL_STREAM_DRAW);
+        offset = 0;
+    }
+    if (instanced) gasm_gl_draw_elements_instanced(mode, count, type, offset, instances);
+    else gasm_gl_draw_elements(mode, count, type, offset);
+    if (client_indices) gasm_gl_bind_buffer(GL_ELEMENT_ARRAY_BUFFER, 0);
 }
 
 static void track_store(GLenum pname, GLint v) {
@@ -547,6 +667,36 @@ static GLboolean unmap(GLenum target) {
 
 ''' + '\n'.join(f'{proto(n, r, p)} {{\n    {body_of(p, b).rstrip()}\n}}\n' for n, r, p, b in impl)
 open(os.path.join(ROOT, 'sdk/c/src/gasm_gl.c'), 'w').write(c)
+# ---- gasm_gl_get_proc_address (sdk/c/src/gasm_gl_proc.c) ---------------------------------
+procs = sorted(set(n for n, _, _, _ in impl) | {'gasm_gl_present', 'gasm_gl_width', 'gasm_gl_height'}, key=lambda n: n.encode())
+open(os.path.join(ROOT, 'sdk/c/src/gasm_gl_proc.c'), 'w').write('''/*
+ * gasm_gl_get_proc_address: the GLES 3.0 functions of gasm_gl.c by name, for code that
+ * loads GL through a loader (SDL_GL_GetProcAddress, glad, epoxy). A separate file: it
+ * references every function, so only games that look them up should link it.
+ * GENERATED by scripts/gen-gl-headers.py: do not edit.
+ *
+ * SPDX-License-Identifier: MIT
+ */
+#include <GLES3/gl3.h>
+#include <string.h>
+
+#include "gasm.h"
+
+static const struct { const char *name; GASMglproc fn; } procs[] = {
+''' + '\n'.join(f'    {{"{n}", (GASMglproc){n}}},' for n in procs) + '''
+};
+
+GASMglproc gasm_gl_get_proc_address(const char *name) {
+    size_t lo = 0, hi = sizeof procs / sizeof procs[0];
+    while (name && lo < hi) {   /* sorted by bytes: strcmp order */
+        size_t mid = (lo + hi) / 2;
+        int c = strcmp(name, procs[mid].name);
+        if (c == 0) return procs[mid].fn;
+        if (c < 0) hi = mid; else lo = mid + 1;
+    }
+    return 0;
+}
+''')
 # ---- the Rust SDK's GLES 3.0 C API (guests/gasm/src/gles_gen.rs) --------------------------
 # The same functions as gasm_gl.c, for Rust guests (no libc to link the C file) and
 # GL loaders such as glow: functions that forward one to one are generated here; the
@@ -566,7 +716,7 @@ g = ['// The GLES 3.0 functions that forward one to one to gasm:gl, the type of 
 names = list(dict.fromkeys(want_cmds))
 for n in names:
     r, ps = cmds[n]
-    if n in O:
+    if n in O and n not in C_ONLY:
         continue
     args = ', '.join(f'p{i}: {rtype(t)}' for i, (t, _) in enumerate(ps))
     call = f'crate::sys::gl_{snake(n)}({", ".join(f"p{i} as _" for i in range(len(ps)))})'

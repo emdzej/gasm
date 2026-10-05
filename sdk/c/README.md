@@ -14,6 +14,7 @@ include/gasm_vfile.h        optional: stdio FILE* over assets and gasm:storage
 src/gasm_vfile.c
 include/GLES3/gl3.h         optional: OpenGL ES 3.0 on gasm:gl (also GLES2/gl2.h, gl2ext.h)
 src/gasm_gl.c               (generated from the Khronos registry)
+src/gasm_gl_proc.c          (generated: gasm_gl_get_proc_address)
 cmake/gasm-toolchain.cmake  wasm32 toolchain (wraps wasi-sdk's)
 cmake/Gasm.cmake            gasm_add_game(<target> [LOOP [THREADS]] <sources...>)
 example/                    a minimal game
@@ -63,7 +64,11 @@ Compile `src/gasm_vfile.c` with the game (it needs `_GNU_SOURCE` for
 OpenGL ES 3.0 code builds unchanged with `#include <GLES3/gl3.h>` and
 `src/gasm_gl.c` (CMake: `target_sources(mygame PRIVATE ${GASM_GL_SOURCE})`).
 WebGL 2's rules apply (GLSL ES 3.00, no program binaries); `glMapBufferRange`
-works on a copy in guest memory. A game uses `gasm:gl` or `gasm:gfx`, not both.
+works on a copy in guest memory, and client-side vertex and index arrays (GLES 2
+style, no buffer bound, the default vertex array only) are copied into buffers
+at each draw. Code that loads GL by name (a loader, `SDL_GL_GetProcAddress`)
+also links `src/gasm_gl_proc.c`: `gasm_gl_get_proc_address(name)` (CMake:
+`${GASM_GL_PROC_SOURCE}`). A game uses `gasm:gl` or `gasm:gfx`, not both.
 `gasm:gl` runs on WebGL 2 in browsers and on ANGLE in `gasm-run` (shipped with
 the release bundles; `scripts/fetch-angle.sh` in the repository).
 

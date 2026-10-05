@@ -909,6 +909,11 @@ GL_APICALL void GL_APIENTRY glTexStorage2D(GLenum target, GLsizei levels, GLenum
 GL_APICALL void GL_APIENTRY glTexStorage3D(GLenum target, GLsizei levels, GLenum internalformat, GLsizei width, GLsizei height, GLsizei depth);
 GL_APICALL void GL_APIENTRY glGetInternalformativ(GLenum target, GLenum internalformat, GLenum pname, GLsizei bufSize, GLint * params);
 
+/* Every function above by name (and gasm_gl_present, gasm_gl_width, gasm_gl_height),
+ * or NULL: link sdk/c/src/gasm_gl_proc.c (it pulls in all of gasm_gl.c). */
+typedef void (*GASMglproc)(void);
+GL_APICALL GASMglproc GL_APIENTRY gasm_gl_get_proc_address(const char *name);
+
 #ifdef __cplusplus
 }
 #endif

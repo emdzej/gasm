@@ -153,6 +153,7 @@ static void GASM_PumpEvents(SDL_VideoDevice *_this)
         return;   /* input is per frame */
     }
     input_frame = SDL_GASM_Frame();
+    GASM_GL_CheckSize(shown);
     const Uint64 ts = SDL_GetTicksNS();
     PumpKeys(ts);
     PumpText();
@@ -211,6 +212,11 @@ static bool GASM_CreateWindow(SDL_VideoDevice *_this, SDL_Window *window, SDL_Pr
         if (window->title) {
             gasm_set_title_str(window->title);
         }
+    }
+    int w, h;
+    if ((window->flags & SDL_WINDOW_OPENGL) && GASM_GL_DrawableSize(&w, &h)) {
+        window->w = window->windowed.w = w;   /* a GL window is the runner's drawable */
+        window->h = window->windowed.h = h;
     }
     SDL_SetKeyboardFocus(window);
     SDL_SetMouseFocus(window);
@@ -345,6 +351,16 @@ static SDL_VideoDevice *GASM_CreateDevice(void)
     device->CreateWindowFramebuffer = GASM_CreateWindowFramebuffer;
     device->UpdateWindowFramebuffer = GASM_UpdateWindowFramebuffer;
     device->DestroyWindowFramebuffer = GASM_DestroyWindowFramebuffer;
+    device->GL_LoadLibrary = GASM_GL_LoadLibrary;
+    device->GL_GetProcAddress = GASM_GL_GetProcAddress;
+    device->GL_UnloadLibrary = GASM_GL_UnloadLibrary;
+    device->GL_DefaultProfileConfig = GASM_GL_DefaultProfileConfig;
+    device->GL_CreateContext = GASM_GL_CreateContext;
+    device->GL_MakeCurrent = GASM_GL_MakeCurrent;
+    device->GL_SetSwapInterval = GASM_GL_SetSwapInterval;
+    device->GL_GetSwapInterval = GASM_GL_GetSwapInterval;
+    device->GL_SwapWindow = GASM_GL_SwapWindow;
+    device->GL_DestroyContext = GASM_GL_DestroyContext;
     device->free = GASM_DeleteDevice;
     return device;
 }

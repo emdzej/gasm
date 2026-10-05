@@ -123,6 +123,12 @@
 #define SDL_JOYSTICK_VIRTUAL 1
 #define SDL_PRIVATE_GAMEPAD_DEFINITIONS   /* none: standard-mapped pads describe themselves */
 #define SDL_VIDEO_RENDER_SW 1          /* SDL_Renderer draws in software */
+/* OpenGL ES on gasm:gl, for games linked with gasm_gl.o (src/SDL_gasmopengles.c);
+   SDL_Renderer then also draws with GLES 2 (on the GPU), otherwise in software */
+#define SDL_VIDEO_OPENGL_ES2 1
+#define SDL_VIDEO_RENDER_OGL_ES2 1
+/* SDL is built against its own GL headers (games use the C SDK's GLES3/gl3.h) */
+#define SDL_USE_BUILTIN_OPENGL_DEFINITIONS 1
 
 /* Threads: cooperative, on the guest's one wasm thread (src/SDL_gasmthread.c on the
    C SDK's gasm_thread.h); SDL_CreateThread needs the threaded loop helper. The flag

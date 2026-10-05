@@ -751,7 +751,9 @@ SDL programs build for gasm with their source unchanged:
 [SDL 3 for gasm](https://github.com/emdzej/gasm/blob/main/sdk/sdl3/README.md)
 is SDL itself with gasm as an SDL "private platform" (release asset
 `gasm-sdl3-<version>.zip`, or `make sdl3`). The window framebuffer and the
-software `SDL_Renderer` go to `video_present`; keyboard, text input, mouse
+software `SDL_Renderer` go to `video_present`; with `SDL3::GL` linked,
+OpenGL ES (`SDL_GL_*`) runs on `gasm:gl` and `SDL_Renderer` draws on the GPU
+(GLES 2); keyboard, text input, mouse
 (including relative mode), joysticks and `SDL_Gamepad`, audio playback, files
 (assets and `gasm:storage`) and storage all map onto the ABI, on virtual time.
 

@@ -5,7 +5,7 @@
 // GL errors the guests record, so an upload WebGL rejects (a float texture given as
 // bytes, say) changes them.
 //
-//   node scripts/gl-web-test.mjs     (needs build/gltest.wasm, build/glowtest.wasm)
+//   node scripts/gl-web-test.mjs     (needs build/gltest.wasm, build/glowtest.wasm, build/sdl3-gl.wasm)
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:http';
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
@@ -15,7 +15,7 @@ import { extname, join, normalize } from 'node:path';
 const ROOT = new URL('..', import.meta.url).pathname;
 const CHROME = process.env.CHROME ?? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 // cases of the determinism suite that run without scripted input: [name, game, frames]
-const CASES = [['gltest', 'gltest.wasm', 120], ['glowtest', 'glowtest.wasm', 120]];
+const CASES = [['gltest', 'gltest.wasm', 120], ['glowtest', 'glowtest.wasm', 120], ['sdl3-gl', 'sdl3-gl.wasm', 120]];
 const golden = Object.fromEntries(readFileSync(join(ROOT, 'tests/golden/determinism.txt'), 'utf8')
   .split('\n').filter(Boolean).map((l) => [l.split(' ')[0], l.slice(l.indexOf(' ') + 1).trim()]));
 

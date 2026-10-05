@@ -228,6 +228,9 @@ pub struct Gl {
     program: u32,
     vertex_array: u32,
     vao_elements: HashMap<u32, u32>,
+    /// (vertex array, index) -> (enabled, buffer): a draw with an enabled attribute that has
+    /// no buffer is INVALID_OPERATION (WebGL: no client-side arrays)
+    attribs: HashMap<(u32, u32), (bool, u32)>,
     unpack: Store,
     pack: Store,
     shaders: HashMap<u32, (u32, String)>,
@@ -256,6 +259,7 @@ impl Default for Gl {
             program: 0,
             vertex_array: 0,
             vao_elements: HashMap::from([(0, 0)]),
+            attribs: HashMap::new(),
             unpack: STORE,
             pack: STORE,
             shaders: HashMap::new(),
@@ -338,6 +342,19 @@ impl Gl {
     }
     fn need_texture(&mut self, t: u32) -> bool {
         self.bound_texture(t) != 0 || self.error(INVALID_OPERATION)
+    }
+    /// The attribute's record in the bound vertex array (None: out of range, INVALID_VALUE).
+    fn attrib(&mut self, i: u32) -> Option<&mut (bool, u32)> {
+        if i as i64 >= null_limit(0x8869)[0] {
+            self.error(INVALID_VALUE);
+            return None;
+        }
+        Some(self.attribs.entry((self.vertex_array, i)).or_insert((false, 0)))
+    }
+    /// A draw may go ahead: every enabled attribute of the bound vertex array has a buffer.
+    fn attribs_ready(&mut self) -> bool {
+        let v = self.vertex_array;
+        !self.attribs.iter().any(|(&(a, _), &(on, b))| a == v && on && b == 0) || self.error(INVALID_OPERATION)
     }
     fn non_negative(&mut self, v: &[i32]) -> bool {
         v.iter().all(|&x| x >= 0) || self.error(INVALID_VALUE)
@@ -646,8 +663,6 @@ fn model_call(
         | "stencil_op_separate"
         | "finish"
         | "flush"
-        | "enable_vertex_attrib_array"
-        | "disable_vertex_attrib_array"
         | "vertex_attrib_divisor"
         | "vertex_attrib4f"
         | "vertex_attribi4i"
@@ -668,6 +683,11 @@ fn model_call(
             for b in gl.vao_elements.values_mut() {
                 if *b == n {
                     *b = 0;
+                }
+            }
+            for a in gl.attribs.values_mut() {
+                if a.1 == n {
+                    a.1 = 0;
                 }
             }
             gl.remove(Buffer, n);
@@ -733,6 +753,7 @@ fn model_call(
                 gl.vertex_array = 0;
             }
             gl.vao_elements.remove(&n);
+            gl.attribs.retain(|&(v, _), _| v != n);
             gl.remove(VertexArray, n);
         }
         "is_vertex_array" => ret(gl.is(VertexArray, u(0)) as i64),
@@ -747,8 +768,19 @@ fn model_call(
             } else {
                 a(4)
             };
-            if gl.bound_buffer(ARRAY_BUFFER) == 0 && off != 0 {
-                gl.error(INVALID_OPERATION);
+            let buffer = gl.bound_buffer(ARRAY_BUFFER);
+            if gl.attrib(u(0)).is_some() {
+                if buffer == 0 && off != 0 {
+                    gl.error(INVALID_OPERATION);
+                } else if let Some(a) = gl.attrib(u(0)) {
+                    a.1 = buffer;
+                }
+            }
+        }
+        "enable_vertex_attrib_array" | "disable_vertex_attrib_array" => {
+            let on = name == "enable_vertex_attrib_array";
+            if let Some(a) = gl.attrib(u(0)) {
+                a.0 = on;
             }
         }
         "get_vertex_attribiv" | "get_vertex_attrib_offset" => ret(0),
@@ -756,19 +788,19 @@ fn model_call(
 
         // ---- drawing ----
         "draw_arrays" => {
-            gl.non_negative(&[a(1), a(2)]);
+            let _ = gl.non_negative(&[a(1), a(2)]) && gl.attribs_ready();
         }
         "draw_elements" => {
-            gl.non_negative(&[a(1)]);
+            let _ = gl.non_negative(&[a(1)]) && gl.attribs_ready();
         }
         "draw_arrays_instanced" => {
-            gl.non_negative(&[a(1), a(2), a(3)]);
+            let _ = gl.non_negative(&[a(1), a(2), a(3)]) && gl.attribs_ready();
         }
         "draw_elements_instanced" => {
-            gl.non_negative(&[a(1), a(4)]);
+            let _ = gl.non_negative(&[a(1), a(4)]) && gl.attribs_ready();
         }
         "draw_range_elements" => {
-            let _ = gl.non_negative(&[a(3)]) && (a(2) >= a(1) || gl.error(INVALID_VALUE));
+            let _ = gl.non_negative(&[a(3)]) && (a(2) >= a(1) || gl.error(INVALID_VALUE)) && gl.attribs_ready();
         }
         "draw_buffers" => {
             guest_slice(mem, u(0), u(1) as u64 * 4)?;

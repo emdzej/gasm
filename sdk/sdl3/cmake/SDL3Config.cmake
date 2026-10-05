@@ -6,6 +6,8 @@
 #   find_package(SDL3 REQUIRED)
 #   add_executable(mygame main.c)
 #   target_link_libraries(mygame PRIVATE SDL3::SDL3)
+#   target_link_libraries(mygame PRIVATE SDL3::GL)   # OpenGL ES (SDL_GL_*, <GLES3/gl3.h>, and
+#                                  # SDL_Renderer on GLES 2 instead of in software)
 #   gasm_sdl3_app(mygame)          # SDL_MAIN_USE_CALLBACKS apps
 #   gasm_sdl3_app(mygame LOOP)     # apps with their own main loop (needs wasm-opt)
 #   gasm_sdl3_app(mygame LOOP THREADS)   # ... that also create threads (SDL_CreateThread)
@@ -30,6 +32,13 @@ endif()
 if(NOT TARGET SDL3::SDL3)
   add_library(SDL3::SDL3 INTERFACE IMPORTED)
   set_target_properties(SDL3::SDL3 PROPERTIES INTERFACE_LINK_LIBRARIES SDL3::SDL3-static)
+endif()
+# OpenGL ES on gasm:gl: the C SDK's GLES 3.0 (gasm_gl.o, linked whole: SDL finds it
+# through gasm_gl_get_proc_address). A game with it imports gasm:gl and is drawn by the
+# runner's GL (WebGL 2, ANGLE); without it, SDL draws in software.
+if(NOT TARGET SDL3::GL)
+  add_library(SDL3::GL INTERFACE IMPORTED)
+  set_target_properties(SDL3::GL PROPERTIES INTERFACE_LINK_LIBRARIES "${_gasm_sdl3_root}/lib/gasm_gl.o")
 endif()
 # SDL3_test and SDL3_image etc. are not part of this build
 set(SDL3_FOUND TRUE)

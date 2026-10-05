@@ -31,6 +31,10 @@ target_link_libraries(mygame PRIVATE SDL3::SDL3)
 gasm_sdl3_app(mygame)          # callbacks; use gasm_sdl3_app(mygame LOOP) for a main() loop
 ```
 
+OpenGL ES (`SDL_GL_*`, `SDL_GL_GetProcAddress`, `<GLES3/gl3.h>`): also link
+`SDL3::GL` (`target_link_libraries(mygame PRIVATE SDL3::SDL3 SDL3::GL)`; by hand
+`<gasm-sdl3>/lib/gasm_gl.o`). See [OpenGL ES](#opengl-es).
+
 ```sh
 cmake -B build -DCMAKE_TOOLCHAIN_FILE=<gasm-c-sdk>/cmake/gasm-toolchain.cmake \
       -DSDL3_DIR=<gasm-sdl3>/lib/cmake/SDL3 -DCMAKE_BUILD_TYPE=Release
@@ -50,6 +54,34 @@ wasm-opt game.wasm --asyncify --pass-arg=asyncify-removelist@gasm_loop_frame -O2
 demos unchanged (`build/sdl3-snake.wasm`, `build/sdl3-woodeneye.wasm`); of SDL's 34
 examples, all but the camera one run.
 
+## OpenGL ES
+
+SDL's OpenGL ES works on `gasm:gl` (GLES 3.0 with WebGL 2's rules: WebGL 2 in
+browsers, ANGLE in `gasm-run`, the null GL headless) for programs linked with
+`gasm_gl.o`, the C SDK's GLES 3.0 (`SDL3::GL`):
+
+- `SDL_GL_CreateContext`: one context, OpenGL ES up to 3.0
+  (`SDL_GL_CONTEXT_PROFILE_ES`; the default is ES 3.0). Desktop OpenGL isn't
+  available.
+- `SDL_GL_GetProcAddress` gives every GLES 3.0 function; calling them directly
+  (`<GLES3/gl3.h>`) works too. Client-side vertex arrays (GLES 2 style, no buffer
+  bound) are copied into buffers at each draw by the C SDK.
+- `SDL_GL_SwapWindow` presents and, in a classic `main()` loop, ends the frame.
+  The swap interval is accepted; frames come at the runner's rate.
+- A GL window has the size of the runner's drawable (its window or canvas,
+  whatever size was asked) and follows it: `SDL_EVENT_WINDOW_RESIZED`. Use
+  `SDL_GetWindowSizeInPixels` for the viewport.
+- `SDL_Renderer` then draws with OpenGL ES 2 on the GPU instead of in software
+  (SDL picks `opengles2` first); a program without `gasm_gl.o` keeps the
+  software renderer and stays a 2D game.
+
+SDL itself never imports `gasm:gl`: it finds GL through
+`gasm_gl_get_proc_address`, a weak symbol that `gasm_gl.o` defines (an object,
+not an archive: a weak reference wouldn't pull an archive member in). A module
+that imports `gasm:gl` is drawn by the runner's GL, so programs without it
+present 2D frames as before. Examples: `examples/gl`, and the repository builds
+SDL's snake demo with it (`build/sdl3-snake-gl.wasm`).
+
 Command line: the `args` param (`--param "args=-x 1"`) becomes `argv[1...]`.
 
 ## What maps to what
@@ -57,6 +89,7 @@ Command line: the `args` param (`--param "args=-x 1"`) becomes `argv[1...]`.
 | SDL | gasm |
 |---|---|
 | Window framebuffer, `SDL_Renderer` (software) | `video_present`, at the window's size; the runner scales it. One window is shown (the first) |
+| OpenGL ES, `SDL_Renderer` on GLES 2 (with `gasm_gl.o`) | `gasm:gl`, at the drawable's size: see [OpenGL ES](#opengl-es) |
 | Keyboard: scancodes, key events, `SDL_GetKeyboardState` | raw keys (`key_events`): physical keys, modifiers are keys |
 | Text input (`SDL_StartTextInput`) | `text_input` (Backspace and Enter come as keys) |
 | Mouse: motion, buttons, wheel, `SDL_HideCursor`, relative mode | `pointer` in frame pixels; relative mode = `GASM_INPUT_POINTER_LOCKED` |
@@ -78,7 +111,7 @@ with the threaded loop helper (`gasm_sdl3_app(<target> LOOP THREADS)`, by hand:
 fails, and the locks work as on one thread. `SDL_GetError` is shared by all
 threads. Example: `examples/threads`.
 
-Not available: OpenGL, Vulkan and `SDL_GPU` (gasm has no GL yet; see `gasm:gl` on the
+Not available: desktop OpenGL, Vulkan and `SDL_GPU` (see the
 [roadmap](https://github.com/emdzej/gasm/blob/main/site/docs/roadmap.md#sdl-3)),
 audio recording, camera, haptics and rumble, sensors, dialogs, tray, processes,
 loading shared objects. Each fails the way SDL fails on a platform without it.
@@ -100,6 +133,7 @@ loading shared objects. Each fails the way SDL fails on a platform without it.
 - `include/SDL_main_private.h`, `SDL_main_impl_private.h`: the entry points (installed next to SDL's headers)
 - `src/SDL_gasm.c`: frames, virtual time, main callbacks
 - `src/SDL_gasmvideo.c`, `SDL_gasmkeys.h`: video, keyboard, text, pointer
+- `src/SDL_gasmopengles.c`: OpenGL ES on `gasm:gl` (through `gasm_gl_get_proc_address`)
 - `src/SDL_gasmaudio.c`, `src/SDL_gasmjoystick.c`, `src/SDL_gasmfs.c`, `src/SDL_gasmasyncio.c`
 - `cmake/SDL3Config.cmake`: `find_package(SDL3)` and `gasm_sdl3_app()`
 

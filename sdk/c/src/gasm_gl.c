@@ -21,9 +21,107 @@ typedef struct { int alignment, row_length, image_height, skip_pixels, skip_rows
 static store unpack = { 4, 0, 0, 0, 0, 0 }, pack = { 4, 0, 0, 0, 0, 0 };
 static GLuint unpack_buffer, pack_buffer;
 
+static GLuint array_buffer, element_buffer0, vertex_array;   /* element buffer: the default VAO's */
+
 static void track_buffer(GLenum target, GLuint buffer) {
     if (target == GL_PIXEL_UNPACK_BUFFER) unpack_buffer = buffer;
     if (target == GL_PIXEL_PACK_BUFFER) pack_buffer = buffer;
+    if (target == GL_ARRAY_BUFFER) array_buffer = buffer;
+    if (target == GL_ELEMENT_ARRAY_BUFFER && !vertex_array) element_buffer0 = buffer;
+}
+
+/* ---- client-side vertex arrays ----------------------------------------------------------
+ * GLES lets the default vertex array's attributes (and indices) point into the program's
+ * memory, with no buffer bound; gasm:gl follows WebGL, which doesn't. GLES 2 code relies on
+ * it (SDL's GLES 2 renderer does), so it is emulated here: a draw first copies the vertices
+ * it uses into a scratch buffer per attribute (and client indices into one for indices). */
+#define CLIENT_ATTRIBS 16
+typedef struct { const uint8_t *ptr; GLint size; GLenum type; GLboolean normalized; GLsizei stride; GLuint divisor; int integer, client, enabled; } attrib;
+static attrib attribs[CLIENT_ATTRIBS];
+static GLuint scratch[CLIENT_ATTRIBS], scratch_indices;
+
+static uint32_t attrib_bytes(const attrib *a) {
+    switch (a->type) {
+    case GL_BYTE: case GL_UNSIGNED_BYTE: return (uint32_t)a->size;
+    case GL_SHORT: case GL_UNSIGNED_SHORT: case GL_HALF_FLOAT: return 2u * (uint32_t)a->size;
+    case GL_INT_2_10_10_10_REV: case GL_UNSIGNED_INT_2_10_10_10_REV: return 4;
+    default: return 4u * (uint32_t)a->size;
+    }
+}
+
+static int client_arrays(void) {
+    if (vertex_array) return 0;
+    for (int i = 0; i < CLIENT_ATTRIBS; i++)
+        if (attribs[i].enabled && attribs[i].client) return 1;
+    return 0;
+}
+
+/* Copy what vertices 0 .. vertices-1 (per-instance attributes: instances) use of each client
+ * attribute into its scratch buffer and point the attribute there. */
+static void upload_client(GLsizei vertices, GLsizei instances) {
+    for (GLuint i = 0; i < CLIENT_ATTRIBS; i++) {
+        attrib *a = &attribs[i];
+        if (!a->enabled || !a->client) continue;
+        GLsizei n = a->divisor ? (instances + (GLsizei)a->divisor - 1) / (GLsizei)a->divisor : vertices;
+        if (n <= 0) continue;
+        uint32_t elem = attrib_bytes(a), stride = a->stride ? (uint32_t)a->stride : elem;
+        if (!scratch[i]) scratch[i] = gasm_gl_create_buffer();
+        gasm_gl_bind_buffer(GL_ARRAY_BUFFER, scratch[i]);
+        gasm_gl_buffer_data(GL_ARRAY_BUFFER, a->ptr, (uint32_t)(n - 1) * stride + elem, GL_STREAM_DRAW);
+        if (a->integer) gasm_gl_vertex_attrib_ipointer(i, a->size, a->type, a->stride, 0);
+        else gasm_gl_vertex_attrib_pointer(i, a->size, a->type, a->normalized, a->stride, 0);
+    }
+    gasm_gl_bind_buffer(GL_ARRAY_BUFFER, array_buffer);
+}
+
+static void attrib_pointer(GLuint index, GLint size, GLenum type, GLboolean normalized, GLsizei stride, const void *pointer, int integer) {
+    if (!vertex_array && !array_buffer && pointer && index < CLIENT_ATTRIBS) {
+        attrib *a = &attribs[index];   /* in the program's memory: recorded, sent at the draw */
+        a->ptr = (const uint8_t *)pointer; a->size = size; a->type = type; a->normalized = normalized;
+        a->stride = stride; a->integer = integer; a->client = 1;
+        return;
+    }
+    if (!vertex_array && index < CLIENT_ATTRIBS) attribs[index].client = 0;
+    if (integer) gasm_gl_vertex_attrib_ipointer(index, size, type, stride, (uint32_t)(uintptr_t)pointer);
+    else gasm_gl_vertex_attrib_pointer(index, size, type, normalized, stride, (uint32_t)(uintptr_t)pointer);
+}
+
+static void attrib_enable(GLuint index, int on) {
+    if (!vertex_array && index < CLIENT_ATTRIBS) attribs[index].enabled = on;
+    if (on) gasm_gl_enable_vertex_attrib_array(index);
+    else gasm_gl_disable_vertex_attrib_array(index);
+}
+
+static uint32_t index_bytes(GLenum type) { return type == GL_UNSIGNED_INT ? 4 : type == GL_UNSIGNED_SHORT ? 2 : 1; }
+
+static GLsizei max_index(GLsizei count, GLenum type, const void *indices) {
+    uint32_t m = 0;
+    for (GLsizei i = 0; i < count; i++) {
+        uint32_t v = type == GL_UNSIGNED_INT ? ((const uint32_t *)indices)[i]
+                   : type == GL_UNSIGNED_SHORT ? ((const uint16_t *)indices)[i] : ((const uint8_t *)indices)[i];
+        if (v > m) m = v;
+    }
+    return (GLsizei)m;
+}
+
+/* An indexed draw: client indices go to a scratch buffer; client attributes get the vertices
+ * up to the largest index (which can't be read from an index buffer: an error then). */
+static void draw_elements(GLenum mode, GLsizei count, GLenum type, const void *indices, GLsizei instances, int instanced) {
+    int client_indices = !vertex_array && !element_buffer0 && indices;
+    if (client_arrays()) {
+        if (!client_indices) { c_error = GL_INVALID_OPERATION; return; }
+        upload_client(count > 0 ? max_index(count, type, indices) + 1 : 0, instances);
+    }
+    uint32_t offset = (uint32_t)(uintptr_t)indices;
+    if (client_indices) {
+        if (!scratch_indices) scratch_indices = gasm_gl_create_buffer();
+        gasm_gl_bind_buffer(GL_ELEMENT_ARRAY_BUFFER, scratch_indices);
+        gasm_gl_buffer_data(GL_ELEMENT_ARRAY_BUFFER, indices, (uint32_t)(count > 0 ? count : 0) * index_bytes(type), GL_STREAM_DRAW);
+        offset = 0;
+    }
+    if (instanced) gasm_gl_draw_elements_instanced(mode, count, type, offset, instances);
+    else gasm_gl_draw_elements(mode, count, type, offset);
+    if (client_indices) gasm_gl_bind_buffer(GL_ELEMENT_ARRAY_BUFFER, 0);
 }
 
 static void track_store(GLenum pname, GLint v) {
@@ -349,7 +447,11 @@ void GL_APIENTRY glCullFace(GLenum mode) {
 }
 
 void GL_APIENTRY glDeleteBuffers(GLsizei n, const GLuint * buffers) {
-    for (GLsizei i = 0; i < n; i++) gasm_gl_delete_buffer(buffers[i]);
+    for (GLsizei i = 0; i < n; i++) {
+        if (buffers[i] && buffers[i] == array_buffer) array_buffer = 0;
+        if (buffers[i] && buffers[i] == element_buffer0 && !vertex_array) element_buffer0 = 0;
+        gasm_gl_delete_buffer(buffers[i]);
+    }
 }
 
 void GL_APIENTRY glDeleteFramebuffers(GLsizei n, const GLuint * framebuffers) {
@@ -393,15 +495,16 @@ void GL_APIENTRY glDisable(GLenum cap) {
 }
 
 void GL_APIENTRY glDisableVertexAttribArray(GLuint index) {
-    gasm_gl_disable_vertex_attrib_array(index);
+    attrib_enable(index, 0);
 }
 
 void GL_APIENTRY glDrawArrays(GLenum mode, GLint first, GLsizei count) {
+    if (client_arrays()) upload_client(first + count, 1);
     gasm_gl_draw_arrays(mode, first, count);
 }
 
 void GL_APIENTRY glDrawElements(GLenum mode, GLsizei count, GLenum type, const void * indices) {
-    gasm_gl_draw_elements(mode, count, type, (uint32_t)(uintptr_t)indices);
+    draw_elements(mode, count, type, indices, 1, 0);
 }
 
 void GL_APIENTRY glEnable(GLenum cap) {
@@ -409,7 +512,7 @@ void GL_APIENTRY glEnable(GLenum cap) {
 }
 
 void GL_APIENTRY glEnableVertexAttribArray(GLuint index) {
-    gasm_gl_enable_vertex_attrib_array(index);
+    attrib_enable(index, 1);
 }
 
 void GL_APIENTRY glFinish(void) {
@@ -813,7 +916,7 @@ void GL_APIENTRY glVertexAttrib4fv(GLuint index, const GLfloat * v) {
 }
 
 void GL_APIENTRY glVertexAttribPointer(GLuint index, GLint size, GLenum type, GLboolean normalized, GLsizei stride, const void * pointer) {
-    gasm_gl_vertex_attrib_pointer(index, size, type, normalized, stride, (uint32_t)(uintptr_t)pointer);
+    attrib_pointer(index, size, type, normalized, stride, pointer, 0);
 }
 
 void GL_APIENTRY glViewport(GLint x, GLint y, GLsizei width, GLsizei height) {
@@ -825,6 +928,7 @@ void GL_APIENTRY glReadBuffer(GLenum src) {
 }
 
 void GL_APIENTRY glDrawRangeElements(GLenum mode, GLuint start, GLuint end, GLsizei count, GLenum type, const void * indices) {
+    if (client_arrays() || (!vertex_array && !element_buffer0 && indices)) { draw_elements(mode, count, type, indices, 1, 0); return; }
     gasm_gl_draw_range_elements(mode, start, end, count, type, (uint32_t)(uintptr_t)indices);
 }
 
@@ -934,11 +1038,12 @@ void GL_APIENTRY glFlushMappedBufferRange(GLenum target, GLintptr offset, GLsize
 }
 
 void GL_APIENTRY glBindVertexArray(GLuint array) {
+    vertex_array = array;
     gasm_gl_bind_vertex_array(array);
 }
 
 void GL_APIENTRY glDeleteVertexArrays(GLsizei n, const GLuint * arrays) {
-    for (GLsizei i = 0; i < n; i++) gasm_gl_delete_vertex_array(arrays[i]);
+    for (GLsizei i = 0; i < n; i++) { if (arrays[i] == vertex_array) vertex_array = 0; gasm_gl_delete_vertex_array(arrays[i]); }
 }
 
 void GL_APIENTRY glGenVertexArrays(GLsizei n, GLuint * arrays) {
@@ -978,7 +1083,7 @@ void GL_APIENTRY glGetTransformFeedbackVarying(GLuint program, GLuint index, GLs
 }
 
 void GL_APIENTRY glVertexAttribIPointer(GLuint index, GLint size, GLenum type, GLsizei stride, const void * pointer) {
-    gasm_gl_vertex_attrib_ipointer(index, size, type, stride, (uint32_t)(uintptr_t)pointer);
+    attrib_pointer(index, size, type, GL_FALSE, stride, pointer, 1);
 }
 
 void GL_APIENTRY glGetVertexAttribIiv(GLuint index, GLenum pname, GLint * params) {
@@ -1094,11 +1199,12 @@ void GL_APIENTRY glUniformBlockBinding(GLuint program, GLuint uniformBlockIndex,
 }
 
 void GL_APIENTRY glDrawArraysInstanced(GLenum mode, GLint first, GLsizei count, GLsizei instancecount) {
+    if (client_arrays()) upload_client(first + count, instancecount);
     gasm_gl_draw_arrays_instanced(mode, first, count, instancecount);
 }
 
 void GL_APIENTRY glDrawElementsInstanced(GLenum mode, GLsizei count, GLenum type, const void * indices, GLsizei instancecount) {
-    gasm_gl_draw_elements_instanced(mode, count, type, (uint32_t)(uintptr_t)indices, instancecount);
+    draw_elements(mode, count, type, indices, instancecount, 1);
 }
 
 GLsync GL_APIENTRY glFenceSync(GLenum condition, GLbitfield flags) {
@@ -1181,6 +1287,7 @@ void GL_APIENTRY glGetSamplerParameterfv(GLuint sampler, GLenum pname, GLfloat *
 }
 
 void GL_APIENTRY glVertexAttribDivisor(GLuint index, GLuint divisor) {
+    if (!vertex_array && index < CLIENT_ATTRIBS) attribs[index].divisor = divisor;
     gasm_gl_vertex_attrib_divisor(index, divisor);
 }
 

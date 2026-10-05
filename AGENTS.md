@@ -26,7 +26,7 @@ property: most tests assert bit-identical hashes.
 | `guests/rthreadtest/` | Rust guest: `gasm::thread` / `gasm::sync` on the same scheduler (`threaded_main_loop!`); `mode=many`, `mode=deadlock` |
 | `guests/pthreadtest/` | C guest: plain POSIX threads code on the same scheduler (`sdk/c/src/gasm_pthread.c`) |
 | `sdk/c/src/gasm_loop.c`, `sdk/c/include/gasm_loop.h` | loop helper for games with their own main loop (`gasm_main` + `gasm_wait_frame`): exports `gasm_frame` (Asyncify inside the guest) and `gasm_run` (the runner switches stacks); Rust: `gasm::main_loop!`. Used by ScummVM and SDL3 classic `main()`; each builds as `game.wasm` (Asyncify) and `game-run.wasm` (without) |
-| `sdk/sdl3/` | SDL 3 for gasm: SDL as a "private platform" (`SDL_PLATFORM_PRIVATE`), config + drivers (zlib). `scripts/fetch-sdl3.sh` puts SDL in `tools/SDL3-src`; `make sdl3` builds `build/sdl3/` (lib, headers, `find_package` config); `scripts/package-sdl3.sh` bundles it |
+| `sdk/sdl3/` | SDL 3 for gasm: SDL as a "private platform" (`SDL_PLATFORM_PRIVATE`), config + drivers (zlib; OpenGL ES on `gasm:gl` in `SDL_gasmopengles.c` for games linked with `lib/gasm_gl.o`). `scripts/fetch-sdl3.sh` puts SDL in `tools/SDL3-src`; `make sdl3` builds `build/sdl3/` (lib, headers, `find_package` config); `scripts/package-sdl3.sh` bundles it |
 | `guests/godot/` | Godot 4.7 for gasm: `platform/gasm` (MIT: OS, display server with input, audio driver, FileAccess on assets/storage, entry points) + `godot.patch` (WebGL paths in `drivers/gles3` also for gasm; `HTTPClientTCP` left out for `http_client_gasm.cpp`, `HTTPClient` on gasm:fetch). Examples: hello2d, platformer, scene3d, ui, audio, http. `scripts/fetch-godot.sh` puts the engine (MIT) in `tools/godot-src`, SCons in `tools/scons`, the editor in `tools/godot-editor`; `make godot` builds `build/godot.wasm` and exports `examples/*` to `build/godot/*.pck` |
 | `guests/scummvm/` | ScummVM: gasm backend (MIT, `backend/` -> `backends/platform/gasm`) + `configure.patch` (`wasm32-gasm` host). `scripts/fetch-scummvm.sh` puts ScummVM (GPL-3.0) in `tools/scummvm-src`; `scripts/build-scummvm-libs.sh` builds zlib, libmad, libogg/libvorbis, libFLAC (pinned release tarballs) into `tools/scummvm-libs`; `make scummvm` builds with wasi-sdk and runs `wasm-opt --asyncify` (`scripts/fetch-binaryen.sh`); `scripts/package-scummvm-src.sh` packs exactly the files the build used plus the library sources (verify: a clean `make scummvm` from the tarball is byte-identical) |
 | `guests/doom/` | DOOM: gasm platform layer (MIT) for doomgeneric. `scripts/fetch-doom.sh` puts the GPL-2.0 engine (+ chocolate-doom OPL music) in `tools/doom-src` and applies `engine.patch`; `scripts/package-doom-src.sh` packs the complete source shipped with releases and the site |
@@ -156,6 +156,14 @@ from the repo root, then
   `SDL_SKIP`); `SDL_THREADS_DISABLED` stays defined because it selects the
   generic thread handle type. Threaded apps link `lib/gasm_loop_threads.o`;
   SDL's frame clock catches up with the scheduler lazily (`SyncFrames`).
+- **SDL's OpenGL ES must not import `gasm:gl` into every SDL game:** a module that
+  imports it is a GL game (the runner opens ANGLE / WebGL and ignores 2D frames).
+  `SDL_gasmopengles.c` reaches GL only through `gasm_gl_get_proc_address`, a weak
+  symbol, which `lib/gasm_gl.o` (an object: a weak reference doesn't pull an
+  archive member) defines for GL games. SDL is built against its own GL headers
+  (`SDL_USE_BUILTIN_OPENGL_DEFINITIONS`). SDL's GLES 2 renderer uses client-side
+  arrays (VBOs only on Emscripten): `gasm_gl.c` emulates them; functions overridden
+  only for that are in `C_ONLY` in `gen-gl-headers.py`, so Rust still forwards them.
 - **Runners never call a guest after it exited or trapped** (the windowed
   runner drops the game in `stop()`; the event loop can tick once more;
   `GasmHost.dead` makes `frame()` throw without calling the guest).

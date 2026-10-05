@@ -57,7 +57,7 @@ endef
 
 GUESTS   := $(BUILD)/test-pattern.wasm $(BUILD)/gltest.wasm $(BUILD)/glowtest.wasm $(BUILD)/eguidemo.wasm $(BUILD)/nes.wasm $(BUILD)/sumo.wasm $(BUILD)/triangle.wasm $(BUILD)/textured.wasm $(BUILD)/inputtest.wasm $(BUILD)/loopdemo.wasm $(BUILD)/loopdemo-c.wasm $(BUILD)/threadtest.wasm $(BUILD)/pthreadtest.wasm $(BUILD)/rthreadtest.wasm $(BUILD)/assetcheck.wasm $(BUILD)/fetchtest.wasm $(BUILD)/doom.wasm $(BUILD)/scummvm.wasm \
   $(BUILD)/sdl3-snake.wasm $(BUILD)/sdl3-woodeneye.wasm $(BUILD)/sdl3-callbacks.wasm $(BUILD)/sdl3-classic.wasm \
-  $(BUILD)/sdl3-threads.wasm
+  $(BUILD)/sdl3-threads.wasm $(BUILD)/sdl3-gl.wasm $(BUILD)/sdl3-snake-gl.wasm
 # made by the same recipes as the Asyncify builds
 RUN_BUILDS := $(BUILD)/loopdemo-run.wasm $(BUILD)/loopdemo-c-run.wasm $(BUILD)/sdl3-classic-run.wasm $(BUILD)/scummvm-run.wasm
 
@@ -232,7 +232,7 @@ SDL_DIRS  := src src/atomic src/audio src/camera src/camera/dummy src/core src/c
   src/dialog src/dialog/dummy src/dynapi src/events src/filesystem src/gpu src/haptic \
   src/haptic/dummy src/hidapi src/io src/io/generic src/joystick src/joystick/virtual src/libm \
   src/loadso/dummy src/locale src/locale/dummy src/main src/misc src/misc/dummy src/power \
-  src/process src/process/dummy src/render src/render/software src/sensor src/sensor/dummy \
+  src/process src/process/dummy src/render src/render/opengles2 src/render/software src/sensor src/sensor/dummy \
   src/stdlib src/storage src/storage/generic src/thread src/thread/generic src/time src/timer \
   src/tray src/tray/dummy src/video src/video/yuv2rgb
 SDL_SKIP  := src/audio/SDL_audiodev.c src/io/generic/SDL_asyncio_generic.c \
@@ -250,8 +250,12 @@ SDL_CFLAGS := $(TARGET) $(OPT) -DSDL_PLATFORM_PRIVATE -D_GNU_SOURCE -Isdk/sdl3/i
   -Wno-deprecated-declarations
 SDL_HDRS  := $(wildcard sdk/sdl3/include/*.h sdk/sdl3/src/*.h) spec/gasm.h
 SDL_LIB   := $(SDL_OUT)/lib/libSDL3.a
+# OpenGL ES: games that use GL (SDL_GL_*, SDL's GLES 2 renderer) also link this object:
+# the C SDK's gasm_gl.c + gasm_gl_proc.c (SDL reaches GL through gasm_gl_get_proc_address,
+# a weak symbol, which wouldn't pull a member out of an archive)
+SDL_GL_LIB := $(SDL_OUT)/lib/gasm_gl.o
 
-sdl3: $(SDL_LIB)
+sdl3: $(SDL_LIB) $(SDL_GL_LIB)
 
 $(SDL_SRC)/.version: scripts/fetch-sdl3.sh scripts/lib.sh
 	scripts/fetch-sdl3.sh
@@ -296,11 +300,24 @@ $(SDL_OBJ)/gasm/gasm_vfile.o: sdk/c/src/gasm_vfile.c sdk/c/include/gasm_vfile.h 
 	@mkdir -p $(@D)
 	$(CC) $(TARGET) $(OPT) -D_GNU_SOURCE -Ispec -Isdk/c/include -c $< -o $@
 
+$(SDL_OBJ)/gasm/gasm_gl.o: sdk/c/src/gasm_gl.c sdk/c/include/GLES3/gl3.h spec/gasm.h $(CLANG)
+	@mkdir -p $(@D)
+	$(CC) $(TARGET) $(OPT) -Ispec -Isdk/c/include -c $< -o $@
+
+$(SDL_OBJ)/gasm/gasm_gl_proc.o: sdk/c/src/gasm_gl_proc.c sdk/c/include/GLES3/gl3.h spec/gasm.h $(CLANG)
+	@mkdir -p $(@D)
+	$(CC) $(TARGET) $(OPT) -Ispec -Isdk/c/include -c $< -o $@
+
+$(SDL_GL_LIB): $(SDL_OBJ)/gasm/gasm_gl.o $(SDL_OBJ)/gasm/gasm_gl_proc.o
+	@mkdir -p $(@D)
+	$(WASI_SDK)/bin/wasm-ld -r $^ -o $@
+
 $(SDL_LIB): $(SDL_OBJS) $(SDL_LOOP_THREADS) $(wildcard sdk/sdl3/cmake/*.cmake)
 	@mkdir -p $(@D) $(SDL_OUT)/include/SDL3
 	@rm -f $@ && $(WASI_SDK)/bin/llvm-ar rcs $@ $(SDL_OBJS) && echo "AR $@"
 	cp $(SDL_SRC)/include/SDL3/*.h sdk/sdl3/include/SDL_main_private.h sdk/sdl3/include/SDL_main_impl_private.h \
 	  sdk/c/include/gasm_loop.h sdk/c/include/gasm_thread.h spec/gasm.h $(SDL_OUT)/include/SDL3/
+	cp -R sdk/c/include/GLES2 sdk/c/include/GLES3 sdk/c/include/KHR $(SDL_OUT)/include/
 	@mkdir -p $(SDL_OUT)/lib/cmake/SDL3 && cp sdk/sdl3/cmake/*.cmake $(SDL_OUT)/lib/cmake/SDL3/
 
 # SDL3 games: SDL's own demos (public domain) and sdk/sdl3/examples, unchanged
@@ -322,6 +339,16 @@ $(BUILD)/sdl3-callbacks.wasm: sdk/sdl3/examples/callbacks/main.c $(SDL_LIB) $(WA
 $(BUILD)/sdl3-classic.wasm: sdk/sdl3/examples/classic/main.c $(SDL_LIB) $(WASM_OPT)
 	$(call SDL_LINK,$<)
 	$(call wasm_opt_loop)
+
+# OpenGL ES through SDL (SDL_GL_*): linked with gasm_gl.o, so it imports gasm:gl
+$(BUILD)/sdl3-gl.wasm: sdk/sdl3/examples/gl/main.c $(SDL_LIB) $(SDL_GL_LIB) $(WASM_OPT)
+	$(call SDL_LINK,$< $(SDL_GL_LIB))
+	$(call wasm_opt)
+
+# SDL's snake demo, unchanged, with OpenGL ES linked: SDL_Renderer draws with GLES 2
+$(BUILD)/sdl3-snake-gl.wasm: $(SDL_SRC)/examples/demo/01-snake/snake.c $(SDL_LIB) $(SDL_GL_LIB) $(WASM_OPT)
+	$(call SDL_LINK,$< $(SDL_GL_LIB))
+	$(call wasm_opt)
 
 # SDL threads: the threaded loop helper before the library; Asyncify only
 $(BUILD)/sdl3-threads.wasm: sdk/sdl3/examples/threads/main.c $(SDL_LIB) $(SDL_LOOP_THREADS) $(WASM_OPT)

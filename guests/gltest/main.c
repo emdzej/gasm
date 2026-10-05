@@ -124,6 +124,27 @@ static void typed_uploads(void) {
     glBindTexture(GL_TEXTURE_2D, tex);
 }
 
+/* Client-side arrays (GLES; WebGL has none): gasm_gl.c copies them into buffers at the
+ * draw, so GLES 2 code that uses them works. An enabled attribute without a buffer (and no
+ * client pointer) is INVALID_OPERATION on every runner, as in WebGL. */
+static void client_arrays(void) {
+    static const float tri[] = { -0.5f, -0.5f, 0.5f, -0.5f, 0.0f, 0.5f };
+    static const uint16_t idx[] = { 0, 1, 2 };
+    glBindVertexArray(0);
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 0, tri);
+    glDrawArrays(GL_TRIANGLES, 0, 3);                            note();
+    glDrawElements(GL_TRIANGLES, 3, GL_UNSIGNED_SHORT, idx);     note();
+    glDisableVertexAttribArray(0);
+    glEnableVertexAttribArray(7);
+    glVertexAttribPointer(7, 2, GL_FLOAT, GL_FALSE, 0, NULL);
+    glDrawArrays(GL_TRIANGLES, 0, 3);                            note();   /* INVALID_OPERATION: no buffer */
+    glDisableVertexAttribArray(7);
+    glEnableVertexAttribArray(99);                               note();   /* INVALID_VALUE */
+    glBindBuffer(GL_ARRAY_BUFFER, vbo);
+}
+
 GASM_EXPORT("gasm_init") int32_t init(void) {
     char msg[160];
     snprintf(msg, sizeof msg, "gltest: %s / %s", (const char *)glGetString(GL_VERSION), (const char *)glGetString(GL_SHADING_LANGUAGE_VERSION));
@@ -204,6 +225,7 @@ GASM_EXPORT("gasm_init") int32_t init(void) {
     glGenQueries(1, &query);
     mistakes();
     typed_uploads();
+    client_arrays();
     GLenum e = glGetError();
     snprintf(msg, sizeof msg, "gltest: %u error records, pending %u", nerr, e);
     gasm_log_str(msg);
