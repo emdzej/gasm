@@ -23,6 +23,16 @@ ABI:
   `--save-dir` (both runners). Rust SDK `gasm::files`; Godot:
   `Engine.get_singleton("Gasm").save_file(bytes, name, mime)`. `GasmHost` takes
   `onSaveFile`.
+- Godot: a smaller engine for 2D games, `godot-2d.wasm` (no 3D: 26.4 MB, 6.7 MB
+  gzipped, against 32.1 / 8.1 MB), built by `make godot` next to the full one and
+  shipped in the release bundles and the player (which runs the 2D examples on
+  it); `make godot-custom GODOT_PROFILE=game.gdbuild` builds a game's own engine
+  from a Godot build profile.
+- Godot: `WebSocketPeer` on `gasm:net` (NiP #7), so multiplayer works: clients
+  in a `gasm-relay` room, or `WebSocketMultiplayerPeer` against a Godot server
+  outside gasm. Binary messages, no servers. New example `net` (players as
+  squares in a relay room; `scripts/net-test.sh` runs a native and a Node peer).
+  The `Gasm` singleton also has `get_param(name)` for launch parameters.
 - Godot: modifier keys follow the frame's key events in order, so a quick
   Ctrl+V (Ctrl released within the same frame) is still Ctrl+V.
 

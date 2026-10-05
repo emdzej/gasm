@@ -25,7 +25,7 @@ for n in node ${NODE24:-} "$HOME"/.nvm/versions/node/v2[4-9]*/bin/node; do
 done
 [ -n "$NODE_JSPI" ] || echo "note: no Node with JSPI (24+): run builds are checked natively only"
 [ -d roms ] && [ -n "$(ls roms/*.nes 2>/dev/null)" ] && [ -f roms/freedoom2.wad ] && [ -f roms/doom1.wad ] && [ -f roms/bass/sky.dnr ] && [ -d roms/scumm/dott-dos-ni-demo-en ] && [ -f roms/drascula/flac/audio/track28.flac ] || scripts/fetch-roms.sh
-for g in bricks nes godot test-pattern gltest glowtest eguidemo fetchtest sumo triangle textured inputtest threadtest pthreadtest rthreadtest sdl3-threads loopdemo loopdemo-run loopdemo-c loopdemo-c-run doom scummvm scummvm-run sdl3-snake sdl3-snake-gl sdl3-gl sdl3-woodeneye sdl3-callbacks sdl3-classic sdl3-classic-run; do "$NATIVE" build/$g.wasm --compile build/$g.cwasm 2>/dev/null; done
+for g in bricks nes godot godot-2d test-pattern gltest glowtest eguidemo fetchtest sumo triangle textured inputtest threadtest pthreadtest rthreadtest sdl3-threads loopdemo loopdemo-run loopdemo-c loopdemo-c-run doom scummvm scummvm-run sdl3-snake sdl3-snake-gl sdl3-gl sdl3-woodeneye sdl3-callbacks sdl3-classic sdl3-classic-run; do "$NATIVE" build/$g.wasm --compile build/$g.cwasm 2>/dev/null; done
 
 pass=0; fail=0
 run() { "$@" 2>/dev/null | grep -E '^(frames|video)' | tr '\n' ' '; }
@@ -105,14 +105,23 @@ check godot-ui            godot 90 $GP/ui.pck --input '20:PTR(200,126),21-22:PTR
 check godot-audio         godot 150 $GP/audio.pck --input '60-64:KEY(Digit1),90-94:KEY(Digit5),120-124:KEY(Digit8)'
 # HTTPRequest on gasm:fetch, from the recorded responses (as fetchtest)
 check godot-http          godot 60 $GP/http.pck --fetch-replay tests/fixtures/fetch
+# WebSocketPeer on gasm:net, offline: the connection is refused alike everywhere
+check godot-net           godot 60 $GP/net.pck --input '10-50:KEY(ArrowRight)'
+# The engine without 3D (build/godot-2d.wasm) runs the 2D examples (its own hashes:
+# a different build lays memory out differently)
+check godot2d-platformer  godot-2d 420 $GP/platformer.pck --input '30-400:KEY(ArrowRight),60-64:KEY(Space),130-134:KEY(Space),200-204:KEY(Space),270-274:KEY(Space)'
+check godot2d-ui          godot-2d 90 $GP/ui.pck --input '20:PTR(200,126),21-22:PTR(200,126,L),23:PTR(200,126),30:"Ada",50:PTR(500,303),51-53:PTR(500,303,L),54:PTR(500,303),70:PTR(190,492),71-72:PTR(190,492,L),73:PTR(190,492)'
 # Godot logs an error and carries on (a shader it rejects draws nothing, alike on every
-# runner, so the hashes still agree): the examples must log no errors on either null GL
-for e in hello2d platformer scene3d ui audio http; do
-  errs=$( { "$NATIVE" build/godot.wasm $GP/$e.pck --fetch-replay tests/fixtures/fetch --headless 60 2>&1 >/dev/null; $NODE build/godot.wasm $GP/$e.pck --fetch-replay tests/fixtures/fetch --headless 60 2>&1 >/dev/null; } | grep -E '^(SHADER )?ERROR' | sort -u | head -5)
+# runner, so the hashes still agree): the examples must log no errors on either null GL,
+# on the full engine, and the 2D ones on the 2D engine too
+for e in hello2d platformer scene3d ui audio http net 2d:hello2d 2d:platformer 2d:ui 2d:audio 2d:http 2d:net; do
+  engine=godot; case $e in 2d:*) engine=godot-2d; e=${e#2d:};; esac
+  errs=$( { "$NATIVE" build/$engine.wasm $GP/$e.pck --fetch-replay tests/fixtures/fetch --headless 60 2>&1 >/dev/null; $NODE build/$engine.wasm $GP/$e.pck --fetch-replay tests/fixtures/fetch --headless 60 2>&1 >/dev/null; } | grep -E '^(SHADER )?ERROR' | sort -u | head -5)
+  name=$engine-$e-log
   if [ -z "$errs" ]; then
-    pass=$((pass + 1)); printf 'PASS  %-22s %s\n' "godot-$e-log" "no errors (gasm-run, headless.mjs)"
+    pass=$((pass + 1)); printf 'PASS  %-22s %s\n' "$name" "no errors (gasm-run, headless.mjs)"
   else
-    fail=$((fail + 1)); printf 'FAIL  %s\n%s\n' "godot-$e-log" "$(echo "$errs" | sed 's/^/  /')"
+    fail=$((fail + 1)); printf 'FAIL  %s\n%s\n' "$name" "$(echo "$errs" | sed 's/^/  /')"
   fi
 done
 # SDL3 (sdk/sdl3): SDL's own demos unchanged (snake; woodeneye: WASD, relative mouse, shooting),

@@ -207,3 +207,81 @@ diff --color -ruN a/drivers/gles3/storage/texture_storage.cpp b/drivers/gles3/st
  	switch (p_texture->format) {
  		case Image::FORMAT_L8: {
  			if (RasterizerUtilGLES3::is_gles_over_gl()) {
+diff --color -ruN a/modules/websocket/SCsub b/modules/websocket/SCsub
+--- a/modules/websocket/SCsub	2026-10-05 16:01:23
++++ b/modules/websocket/SCsub	2026-10-05 16:01:23
+@@ -12,7 +12,7 @@
+     # Our JavaScript/C++ interface.
+     env.AddJSLibraries(["library_godot_websocket.js"])
+ 
+-elif env["builtin_wslay"]:
++elif env["builtin_wslay"] and env["platform"] != "gasm":  # gasm: GasmWSPeer on gasm:net
+     # Thirdparty source files
+     thirdparty_dir = "#thirdparty/wslay/"
+     thirdparty_sources = [
+diff --color -ruN a/modules/websocket/register_types.cpp b/modules/websocket/register_types.cpp
+--- a/modules/websocket/register_types.cpp	2026-10-05 16:01:23
++++ b/modules/websocket/register_types.cpp	2026-10-05 16:01:23
+@@ -36,6 +36,8 @@
+ 
+ #ifdef WEB_ENABLED
+ #include "emws_peer.h"
++#elif defined(GASM_ENABLED)
++#include "platform/gasm/websocket_peer_gasm.h"
+ #else
+ #include "wsl_peer.h"
+ #endif
+@@ -63,6 +65,8 @@
+ 	if (p_level == MODULE_INITIALIZATION_LEVEL_CORE) {
+ #ifdef WEB_ENABLED
+ 		EMWSPeer::initialize();
++#elif defined(GASM_ENABLED)
++		GasmWSPeer::initialize();
+ #else
+ 		WSLPeer::initialize();
+ #endif
+@@ -85,7 +89,7 @@
+ 	if (p_level != MODULE_INITIALIZATION_LEVEL_CORE) {
+ 		return;
+ 	}
+-#ifndef WEB_ENABLED
++#if !defined(WEB_ENABLED) && !defined(GASM_ENABLED)
+ 	WSLPeer::deinitialize();
+ #endif
+ }
+diff --color -ruN a/modules/websocket/remote_debugger_peer_websocket.cpp b/modules/websocket/remote_debugger_peer_websocket.cpp
+--- a/modules/websocket/remote_debugger_peer_websocket.cpp	2026-10-05 16:01:23
++++ b/modules/websocket/remote_debugger_peer_websocket.cpp	2026-10-05 16:01:23
+@@ -112,7 +112,7 @@
+ }
+ 
+ bool RemoteDebuggerPeerWebSocket::can_block() const {
+-#ifdef WEB_ENABLED
++#if defined(WEB_ENABLED) || defined(GASM_ENABLED)
+ 	return false;
+ #else
+ 	return true;
+diff --color -ruN a/modules/websocket/wsl_peer.cpp b/modules/websocket/wsl_peer.cpp
+--- a/modules/websocket/wsl_peer.cpp	2026-10-05 16:01:23
++++ b/modules/websocket/wsl_peer.cpp	2026-10-05 16:01:23
+@@ -30,7 +30,7 @@
+ 
+ #include "wsl_peer.h"
+ 
+-#ifndef WEB_ENABLED
++#if !defined(WEB_ENABLED) && !defined(GASM_ENABLED)
+ 
+ #include "core/io/stream_peer_tls.h"
+ #include "core/object/class_db.h"
+diff --color -ruN a/modules/websocket/wsl_peer.h b/modules/websocket/wsl_peer.h
+--- a/modules/websocket/wsl_peer.h	2026-10-05 16:01:23
++++ b/modules/websocket/wsl_peer.h	2026-10-05 16:01:23
+@@ -30,7 +30,7 @@
+ 
+ #pragma once
+ 
+-#ifndef WEB_ENABLED
++#if !defined(WEB_ENABLED) && !defined(GASM_ENABLED)
+ 
+ #include "packet_buffer.h"
+ #include "websocket_peer.h"

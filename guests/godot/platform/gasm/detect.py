@@ -45,7 +45,7 @@ def get_flags():
         "module_upnp_enabled": False,
         "module_webrtc_enabled": False,
         "module_webxr_enabled": False,
-        "module_websocket_enabled": False,
+        "module_websocket_enabled": True,  # WebSocketPeer on gasm:net (websocket_peer_gasm.cpp)
         "module_mobile_vr_enabled": False,
         "module_openxr_enabled": False,
         "module_camera_enabled": False,

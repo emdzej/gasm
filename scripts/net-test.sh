@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Network lockstep test: gasm-relay + two headless sumo peers on different
 # runners. Both must reach the same simulation state (and never log DESYNC).
+# Godot: two peers of the net example (WebSocketPeer on gasm:net), native and Node,
+# see each other's positions through a relay room.
 set -uo pipefail
 cd "$(dirname "$0")/.."
 NATIVE=runners/native/target/release/gasm-run
@@ -52,6 +54,32 @@ run_case() { # <name> <runner A> <runner B>
 run_case native-native native native
 run_case native-node   native node
 run_case node-native   node   native
+
+# Godot's WebSocketPeer: both peers get the other's position
+if [ -f build/godot.wasm ] && [ -f build/godot/net.pck ]; then
+  room="g$RANDOM"
+  gpeer() { # <runner command...> <log>: 6 s of real time, moving right
+    local log=$1; shift
+    perl -e "alarm $LIMIT; exec @ARGV" "$@" build/godot.wasm --asset game.pck=build/godot/net.pck --headless 360 --realtime \
+      --allow-net --param relay=ws://127.0.0.1:$PORT/$room --input '0-360:KEY(ArrowRight)' --no-hash </dev/null >/dev/null 2>"$log"
+  }
+  gpeer "$TMP/ga.log" "$NATIVE" &
+  ga=$!
+  sleep 0.5
+  gpeer "$TMP/gb.log" node runners/web/headless.mjs &
+  gb=$!
+  wait $ga; wait $gb
+  # either may join first (compiling Godot takes a while): each sees the other's position
+  if grep -q 'first position from player' "$TMP/ga.log" && grep -q 'first position from player' "$TMP/gb.log" \
+     && [ "$(grep -o 'joined as [0-9]*' "$TMP/ga.log")" != "$(grep -o 'joined as [0-9]*' "$TMP/gb.log")" ]; then
+    pass=$((pass + 1)); printf 'PASS  %-18s %s\n' "godot-websocket" "native and node see each other"
+  else
+    fail=$((fail + 1)); printf 'FAIL  godot-websocket\n'
+    for f in ga gb; do echo "  --- $f"; grep -E 'net:|ERROR|gasm\]' "$TMP/$f.log" | tail -6 | sed 's/^/    /'; done
+  fi
+else
+  echo "SKIP  godot-websocket (make godot)"
+fi
 
 # Same over TLS (wss://): throwaway CA + relay certificate for localhost. Config
 # files instead of -subj/-addext: portable across OpenSSL, old LibreSSL (macOS)

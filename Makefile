@@ -61,7 +61,7 @@ GUESTS   := $(BUILD)/test-pattern.wasm $(BUILD)/gltest.wasm $(BUILD)/glowtest.wa
 # made by the same recipes as the Asyncify builds
 RUN_BUILDS := $(BUILD)/loopdemo-run.wasm $(BUILD)/loopdemo-c-run.wasm $(BUILD)/sdl3-classic-run.wasm $(BUILD)/scummvm-run.wasm
 
-.PHONY: all guests native test web relay roms parity clean rust-toolchain doom scummvm sdl3 godot FORCE
+.PHONY: all guests native test web relay roms parity clean rust-toolchain doom scummvm sdl3 godot godot-2d godot-custom FORCE
 all: guests native
 
 guests: $(GUESTS)
@@ -160,8 +160,9 @@ GODOT_JOBS ?= $(shell getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)
 GODOT_FEATURES := --enable-exception-handling --enable-reference-types --enable-bulk-memory \
   --enable-nontrapping-float-to-int --enable-sign-ext --enable-mutable-globals --enable-multivalue
 
-godot: $(BUILD)/godot.wasm $(GODOT_PCKS)
-guests: $(BUILD)/godot.wasm $(GODOT_PCKS)
+godot: $(BUILD)/godot.wasm $(BUILD)/godot-2d.wasm $(GODOT_PCKS)
+guests: $(BUILD)/godot.wasm $(BUILD)/godot-2d.wasm $(GODOT_PCKS)
+godot-2d: $(BUILD)/godot-2d.wasm
 
 $(GODOT_SRC)/.gasm-fetch: scripts/fetch-godot.sh scripts/lib.sh guests/godot/godot.patch
 	scripts/fetch-godot.sh
@@ -174,6 +175,34 @@ $(BUILD)/godot.wasm: $(GODOT_SRC)/.gasm-fetch $(GODOT_PLATFORM) sdk/c/src/gasm_g
 	cd $(GODOT_SRC) && GASM_ROOT=$(CURDIR) WASI_SDK=$(WASI_SDK) PYTHONPATH=$(CURDIR)/tools/scons \
 	  python3 -c "import SCons.Script.Main as m; m.main()" platform=gasm target=template_release lto=full -j$(GODOT_JOBS)
 	$(WASM_OPT) $(GODOT_SRC)/bin/godot.gasm.template_release.wasm32.nothreads.wasm -Oz $(GODOT_FEATURES) -o $@
+
+# Godot without 3D, for 2D games: about a fifth smaller (no 3D nodes, physics,
+# navigation, XR, glTF, CSG, ...), in its own tree (scripts/sync-godot-variant.sh).
+GODOT_2D_FLAGS := disable_3d=yes disable_physics_3d=yes disable_navigation_3d=yes disable_xr=yes \
+  module_gltf_enabled=no module_fbx_enabled=no module_csg_enabled=no module_gridmap_enabled=no \
+  module_vhacd_enabled=no module_xatlas_unwrap_enabled=no module_meshoptimizer_enabled=no \
+  module_navigation_3d_enabled=no module_godot_physics_3d_enabled=no
+$(eval $(call flag_rule,godot-2d,$(GODOT_2D_FLAGS)))
+$(BUILD)/godot-2d.wasm: $(BUILD)/godot.wasm scripts/sync-godot-variant.sh $(call flags,godot-2d)
+	scripts/sync-godot-variant.sh tools/godot-src-2d
+	cd tools/godot-src-2d && GASM_ROOT=$(CURDIR) WASI_SDK=$(WASI_SDK) PYTHONPATH=$(CURDIR)/tools/scons \
+	  python3 -c "import SCons.Script.Main as m; m.main()" platform=gasm target=template_release lto=full $(GODOT_2D_FLAGS) -j$(GODOT_JOBS)
+	$(WASM_OPT) tools/godot-src-2d/bin/godot.gasm.template_release.wasm32.nothreads.wasm -Oz $(GODOT_FEATURES) -o $@
+
+# A game's own engine from a Godot build profile (the editor's Project > Tools >
+# Engine Compilation Configuration Editor: "Detect from Project", then save a .gdbuild):
+#   make godot-custom GODOT_PROFILE=path/to/game.gdbuild [GODOT_CUSTOM_FLAGS="disable_3d=yes ..."]
+# gives build/godot-custom.wasm (tree tools/godot-src-custom).
+godot-custom: $(GODOT_SRC)/.gasm-fetch scripts/sync-godot-variant.sh $(CLANG) $(WASM_OPT)
+	@test -n "$(GODOT_PROFILE)" || { echo "usage: make godot-custom GODOT_PROFILE=<file.gdbuild>"; exit 1; }
+	@mkdir -p $(BUILD)
+	scripts/fetch-godot.sh
+	scripts/sync-godot-variant.sh tools/godot-src-custom
+	cd tools/godot-src-custom && GASM_ROOT=$(CURDIR) WASI_SDK=$(WASI_SDK) PYTHONPATH=$(CURDIR)/tools/scons \
+	  python3 -c "import SCons.Script.Main as m; m.main()" platform=gasm target=template_release lto=full \
+	  build_profile=$(abspath $(GODOT_PROFILE)) $(GODOT_CUSTOM_FLAGS) -j$(GODOT_JOBS)
+	$(WASM_OPT) tools/godot-src-custom/bin/godot.gasm.template_release.wasm32.nothreads.wasm -Oz $(GODOT_FEATURES) -o $(BUILD)/godot-custom.wasm
+	@ls -l $(BUILD)/godot-custom.wasm
 
 # a project's pack: imported and exported by the Godot editor, from a copy (the
 # repository never gets the editor's .godot import cache). One rule per example,

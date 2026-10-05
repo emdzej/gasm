@@ -168,9 +168,30 @@ A Godot game on gasm is `godot.wasm` plus its `.pck`:
   (`run-godot.sh` shows how), or a precompiled `godot.cwasm` for a fast start.
 - **On the web:** host the player (or your own page with `@emdzej/gasm-host`),
   `godot.wasm` and the pack; serve them compressed (the engine gzips to 8 MB).
+- **2D games** can ship the [smaller engine](#a-smaller-engine) instead.
 - **Licenses:** Godot is MIT; ship its `LICENSE.txt` and `COPYRIGHT.txt` (the
   third-party components) with the engine, as the release's `THIRD-PARTY.txt`
   does.
+
+### A smaller engine
+
+`godot-2d.wasm` is the same engine without 3D (no 3D nodes, physics,
+navigation, XR, glTF, CSG, GridMap): 26.4 MB instead of 32.1 MB, 6.7 MB
+gzipped instead of 8.1 MB. 2D games run on it unchanged; a pack that uses a 3D
+class fails to load it. `make godot` builds both (the 2D one in its own tree,
+`tools/godot-src-2d`); the release bundles and the web player ship both, and
+the player runs the 2D examples on the small one.
+
+A game can go further with its own build profile: in the editor, *Project >
+Tools > Engine Compilation Configuration Editor*, *Detect from Project*, save a
+`.gdbuild` file, then
+
+```sh
+make godot-custom GODOT_PROFILE=path/to/game.gdbuild [GODOT_CUSTOM_FLAGS="disable_3d=yes ..."]
+```
+
+builds `build/godot-custom.wasm` with only the classes the game uses
+(SCons options in `GODOT_CUSTOM_FLAGS`, as in the Makefile's `GODOT_2D_FLAGS`).
 
 ## HTTP
 
@@ -192,6 +213,33 @@ does GETs and a POST.
   frame on every runner, so hashes compare.
 - `get_response_body_length()` is -1 (the length is known at the end), and
   there's no blocking mode or `StreamPeer`, as on Godot's web platform.
+
+## Multiplayer
+
+`WebSocketPeer` works as a client on [`gasm:net`](/docs/abi#gasm-net-optional-message-connections):
+`ws://` and `wss://` (the runner checks certificates), binary messages. Players
+meet in a [`gasm-relay`](/guide/#gasm-relay) room, which forwards each player's
+messages to the others; the
+[net example](https://github.com/emdzej/gasm/tree/main/guests/godot/examples/net)
+moves a square per player that way. `WebSocketMultiplayerPeer` (RPCs,
+`MultiplayerSynchronizer`) works as a client of a Godot server running outside
+gasm.
+
+```sh
+gasm-relay 127.0.0.1:9000 &
+gasm-run build/godot.wasm --asset game.pck=build/godot/net.pck --allow-net --param relay=ws://127.0.0.1:9000/roam
+```
+
+- **Permission:** natively `--allow-net` (or `--allow-net=relay.example.org`);
+  in browsers the page's rules apply.
+- **Messages are binary:** text frames arrive as bytes (`was_string_packet()`
+  is false); `send_text()` sends the text's bytes. No custom handshake headers
+  or subprotocols.
+- **No server:** `accept_stream` and so `create_server` aren't available.
+- Call `poll()` every frame, as on other platforms.
+
+Launch parameters reach GDScript through the `Gasm` singleton:
+`Engine.get_singleton("Gasm").get_param("relay")`.
 
 ## Clipboard
 
@@ -226,7 +274,7 @@ Natively the picture lands in `Pictures/<game>/` (other types in
 | Scripting | GDScript; no C# (.NET) and no GDExtension (no dynamic libraries) |
 | Threads | the engine is single-threaded (`threads=no`): `Thread` and `WorkerThreadPool` run their work on the main thread |
 | Physics | Godot Physics 2D and 3D (Jolt doesn't build for WASI yet) |
-| Networking | `HTTPRequest` and `HTTPClient` work, `https://` too (the runner makes the requests: [below](#http)); WebSockets, ENet and raw sockets don't; no TLS or `Crypto` in the engine |
+| Networking | `HTTPRequest` and `HTTPClient` work, `https://` too (the runner makes the requests: [below](#http)); `WebSocketPeer` as a client ([multiplayer](#multiplayer)); no servers, ENet or raw sockets; no TLS or `Crypto` in the engine |
 | Text | the fallback text server: no right-to-left scripts or ligatures |
 | Input | no touch, no IME |
 

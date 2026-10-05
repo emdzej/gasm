@@ -22,13 +22,15 @@ const GAMES = {
   'assetcheck.wasm': 'asset check (test)', 'fetchtest.wasm': 'HTTP requests (test)',
   'godot.wasm': 'Godot: your game (.pck)',
 };
-// Godot projects: the engine (build/godot.wasm) with the project's pack as asset game.pck.
+// Godot projects: an engine with the project's pack as asset game.pck. 2D games run on
+// the smaller engine without 3D (build/godot-2d.wasm), 3D ones on build/godot.wasm.
 const GODOT_GAMES = {
-  'godot-hello2d': { pck: 'godot/hello2d.pck', label: 'Godot: hello 2D' },
-  'godot-platformer': { pck: 'godot/platformer.pck', label: 'Godot: platformer' },
-  'godot-scene3d': { pck: 'godot/scene3d.pck', label: 'Godot: 3D scene' },
-  'godot-ui': { pck: 'godot/ui.pck', label: 'Godot: UI and saves' },
-  'godot-audio': { pck: 'godot/audio.pck', label: 'Godot: audio' },
+  'godot-hello2d': { pck: 'godot/hello2d.pck', label: 'Godot: hello 2D', engine: 'godot-2d.wasm' },
+  'godot-platformer': { pck: 'godot/platformer.pck', label: 'Godot: platformer', engine: 'godot-2d.wasm' },
+  'godot-scene3d': { pck: 'godot/scene3d.pck', label: 'Godot: 3D scene', engine: 'godot.wasm' },
+  'godot-ui': { pck: 'godot/ui.pck', label: 'Godot: UI and saves', engine: 'godot-2d.wasm' },
+  'godot-audio': { pck: 'godot/audio.pck', label: 'Godot: audio', engine: 'godot-2d.wasm' },
+  'godot-net': { pck: 'godot/net.pck', label: 'Godot: multiplayer (relay)', engine: 'godot-2d.wasm' },
 };
 for (const [id, g] of Object.entries(GODOT_GAMES)) GAMES[id] = g.label;
 // Games that take a content file from roms/ (or an opened/dropped file) as an asset.
@@ -476,12 +478,12 @@ async function start({ romBytes } = {}) {
     } catch (e) { splash?.ready(); return log(`${e.message}: open a folder with a game instead`); }
   }
   // Launch parameters: URL query plus the relay/room fields.
-  const skip = ['game', 'autostart', 'wasm', 'worker', 'opfs', 'prefix', 'hashframes', 'rom', 'filter', 'integer', 'asyncify', 'nosplash'];
+  const skip = ['game', 'autostart', 'wasm', 'worker', 'opfs', 'prefix', 'hashframes', 'rom', 'filter', 'integer', 'asyncify', 'nosplash', 'copykey', 'allownet'];
   const params = Object.fromEntries([...url].filter(([k]) => !skip.includes(k)));
   if (fg && params.args === undefined) params.args = folder || url.has('opfs') ? fg.folderArgs : fg.args;
   if ($('relay').value.trim()) { params.relay = $('relay').value.trim(); params.room = $('room').value.trim() || 'sumo'; }
   try {
-    const bytes = godot ? await fetchBytes(new URL('build/godot.wasm', ROOT))
+    const bytes = godot ? await fetchBytes(new URL(`build/${godot.engine}`, ROOT))
       : game.includes('/') ? await fetchBytes(new URL(game, location.href)) : await fetchGame(game);
     // compiled once: the imports tell where it can run, the same Module is instantiated
     const module = await WebAssembly.compile(bytes);

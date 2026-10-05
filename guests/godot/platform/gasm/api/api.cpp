@@ -11,6 +11,8 @@
 //
 // save_file hands the runner a copy for the player (gasm:files): natively in
 // Pictures/<game>/ (images) or Downloads/<game>/, in browsers a download.
+// get_param(name) is a launch parameter (--param name=value, the page's URL
+// parameters), "" if missing.
 
 #include "api.h"
 
@@ -28,9 +30,22 @@ protected:
 		ClassDB::bind_method(D_METHOD("save_file", "data", "name", "mime"), &Gasm::save_file);
 		ClassDB::bind_method(D_METHOD("save_state", "id"), &Gasm::save_state);
 		ClassDB::bind_method(D_METHOD("can_save_files"), &Gasm::can_save_files);
+		ClassDB::bind_method(D_METHOD("get_param", "name"), &Gasm::get_param);
 	}
 
 public:
+	String get_param(const String &p_name) const {
+		CharString name = p_name.utf8();
+		int32_t n = gasm_param(name.get_data(), name.length(), nullptr, 0);
+		if (n <= 0) {
+			return String();
+		}
+		Vector<uint8_t> v;
+		v.resize(n);
+		gasm_param(name.get_data(), name.length(), (char *)v.ptrw(), n);
+		return String::utf8((const char *)v.ptr(), n);
+	}
+
 	bool can_save_files() const {
 		static const bool has = gasm_has_str("gasm:files") == 1;
 		return has;

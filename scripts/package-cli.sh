@@ -12,7 +12,7 @@ cp "$BIN/gasm-run$EXE" "$BIN/gasm-relay$EXE" "$PKG/"
 # ANGLE next to gasm-run, for gasm:gl games (with its license notices)
 scripts/package-angle.sh "$PLATFORM" "$PKG"
 cp build/sumo.wasm build/nes.wasm build/doom.wasm build/triangle.wasm build/test-pattern.wasm build/inputtest.wasm build/scummvm-run.wasm \
-  build/sdl3-snake.wasm build/sdl3-woodeneye.wasm build/gltest.wasm build/godot.wasm "$PKG/games/"
+  build/sdl3-snake.wasm build/sdl3-woodeneye.wasm build/gltest.wasm build/godot.wasm build/godot-2d.wasm "$PKG/games/"
 mkdir -p "$PKG/games/godot" && cp build/godot/*.pck "$PKG/games/godot/"
 # license notices of the third-party code in the games (scripts/third-party-notices.sh)
 [ -f build/THIRD-PARTY.txt ] && cp build/THIRD-PARTY.txt "$PKG/games/"
@@ -75,7 +75,8 @@ SH
 #!/bin/sh
 # A Godot 4.7 game exported as a .pck (Compatibility renderer):
 #   ./run-godot.sh path/to/game.pck      (default: the 3D example)
-# The examples: games/godot/{hello2d,platformer,scene3d,ui,audio,http}.pck (http: with --allow-net)
+# The examples: games/godot/{hello2d,platformer,scene3d,ui,audio,http,net}.pck (http, net: with --allow-net)
+# 2D games also run on the smaller games/godot-2d.wasm (the engine without 3D)
 pck=${1:-games/godot/scene3d.pck}
 pck=$(cd "$(dirname "$pck")" && pwd)/$(basename "$pck")
 cd "$(dirname "$0")"
@@ -110,7 +111,8 @@ https://gasm.emdzej.pl
                    scummvm-run.wasm (ScummVM, GPL-3.0; bring your own games),
                    sdl3-snake.wasm, sdl3-woodeneye.wasm (SDL 3's demos, unchanged),
                    gltest.wasm (OpenGL ES 3 on gasm:gl),
-                   godot.wasm + godot/*.pck (Godot 4.7: run-godot <game.pck>)
+                   godot.wasm + godot/*.pck (Godot 4.7: run-godot <game.pck>);
+                   godot-2d.wasm: the engine without 3D, smaller, for 2D games
   libEGL, libGLESv2 ANGLE (OpenGL ES for gasm:gl games), with SwiftShader for
                    machines without a GPU; licenses in ANGLE-NOTICES.txt
 
