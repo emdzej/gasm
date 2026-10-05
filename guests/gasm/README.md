@@ -10,7 +10,7 @@ CI, bit-identically.
 crate-type = ["cdylib"]
 
 [dependencies]
-gasm-sdk = "0.9"
+gasm-sdk = "0.10"
 ```
 
 ```rust
