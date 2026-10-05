@@ -6,7 +6,7 @@ embedders. The ABI version is still 0: additions keep it (see
 guests can probe for newer imports with `gasm.has`. Versions are the git tags and
 the package versions (`gasm-sdk`, `gasm-host`, `@emdzej/gasm-host`).
 
-## Unreleased
+## 0.9.1 (2026-10-05)
 
 Games:
 - Godot: resizing the window (or the browser canvas) resizes the game. The gasm
