@@ -28,7 +28,17 @@ and in 0.9.0 HTTP requests (`gasm:fetch`,
 [design/fetch.md](https://github.com/emdzej/gasm/blob/main/design/fetch.md)),
 assets that change while a game runs and the player's time zone.
 
-1. **Godot, the rest** (below): threads, Jolt, TLS, multiplayer.
+1. **gasm splash screen** ([Runners](#runners)): players see what runs their
+   game, the same on every runner. In progress.
+2. **SDL 3 on `gasm:gl`** ([SDL 3](#sdl-3)): `SDL_GL_*` contexts on OpenGL ES, so
+   SDL games that draw with GL (most of them) run, not only those using SDL's
+   2D renderer.
+3. **Player consent** ([Runtime and ABI](#runtime-and-abi)): decide the open
+   questions first, then ask before network, files and other resources.
+4. **Guest memory limit** ([Runtime and ABI](#runtime-and-abi)): small, and with
+   consent what running untrusted games needs.
+5. **Godot, the rest** ([Godot](#godot)): threads or a smaller engine first (what
+   bigger games hit: speed, download size), then Jolt, TLS, multiplayer.
 
 ## Runtime and ABI
 
@@ -74,7 +84,7 @@ Left over:
 
 | Item | What it gives | Status |
 |---|---|---|
-| gasm splash screen | A short intro before the game starts, in the style of gasm's icon: a few frames of Pong (the two paddles, the dashed net, the square ball on the dark tile), then the paddles move and turn into the gasm logo, with the name "gasm" under it. The same on every runner (native window, browser player); skippable with a key or click, off for headless runs and with a flag. | idea |
+| gasm splash screen | A short intro before the game starts, in the style of gasm's icon: a few frames of Pong (the two paddles, the dashed net, the square ball on the dark tile), then the paddles move and turn into the gasm logo, with the name "gasm" under it. The same on every runner (native window, browser player); skippable with a key or click, off for headless runs and with a flag. | in progress |
 
 ## Netplay
 
