@@ -16,6 +16,9 @@ var pos := Vector2(320, 200)
 var others := {}   # relay index -> position
 var since_send := 0.0
 var closed_logged := false
+# tests: quit this many frames after first seeing another player (param quit_after; 0: never)
+var quit_after := 0
+var seen_at := -1
 
 func _ready() -> void:
 	var url := "ws://127.0.0.1:9000/godot-net"
@@ -25,12 +28,15 @@ func _ready() -> void:
 			url = gasm.get_param("relay")
 		if gasm.get_param("room") != "":
 			url = url.trim_suffix("/") + "/" + gasm.get_param("room")
+		quit_after = int(gasm.get_param("quit_after"))
 	var err := ws.connect_to_url(url)
 	print("net: connecting to %s: %s" % [url, error_string(err)])
 	if err != OK:
 		$Status.text = "can't connect to %s (natively: run with --allow-net)" % url
 
 func _process(delta: float) -> void:
+	if seen_at >= 0 and quit_after > 0 and Engine.get_process_frames() - seen_at >= quit_after:
+		get_tree().quit()
 	pos += Input.get_vector("ui_left", "ui_right", "ui_up", "ui_down") * 220.0 * delta
 	pos = pos.clamp(Vector2(10, 50), Vector2(630, 350))
 	ws.poll()
@@ -74,6 +80,8 @@ func _message(m: PackedByteArray) -> void:
 			if m.size() >= 10:
 				if not others.has(m[1]):
 					print("net: first position from player %d" % (m[1] + 1))
+					if seen_at < 0:
+						seen_at = Engine.get_process_frames()
 				others[m[1]] = Vector2(m.decode_float(2), m.decode_float(6))
 
 func _draw() -> void:

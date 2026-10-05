@@ -58,10 +58,10 @@ run_case node-native   node   native
 # Godot's WebSocketPeer: both peers get the other's position
 if [ -f build/godot.wasm ] && [ -f build/godot/net.pck ]; then
   room="g$RANDOM"
-  gpeer() { # <runner command...> <log>: 6 s of real time, moving right
+  gpeer() { # <log> <runner command...>: until it has seen the other player for 2 s (or LIMIT)
     local log=$1; shift
-    perl -e "alarm $LIMIT; exec @ARGV" "$@" build/godot.wasm --asset game.pck=build/godot/net.pck --headless 360 --realtime \
-      --allow-net --param relay=ws://127.0.0.1:$PORT/$room --input '0-360:KEY(ArrowRight)' --no-hash </dev/null >/dev/null 2>"$log"
+    perl -e "alarm $LIMIT; exec @ARGV" "$@" build/godot.wasm --asset game.pck=build/godot/net.pck --headless 100000000 --realtime \
+      --allow-net --param relay=ws://127.0.0.1:$PORT/$room --param quit_after=120 --input '0-100000000:KEY(ArrowRight)' --no-hash </dev/null >/dev/null 2>"$log"
   }
   gpeer "$TMP/ga.log" "$NATIVE" &
   ga=$!
