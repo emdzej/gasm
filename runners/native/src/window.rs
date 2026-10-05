@@ -20,6 +20,7 @@ use crate::host::{self, Game, Gamepad, KEY_STATE_BYTES, Pointer, RawInput, Stop}
 use crate::keymap;
 use crate::present::Present;
 use crate::session::Session;
+use crate::splash;
 
 pub struct Options {
     /// initial window size in logical pixels
@@ -30,6 +31,22 @@ pub struct Options {
     pub present: Present,
     /// write frame N as the window shows it and quit (gasm:gl games; for tests)
     pub screenshot: Option<(u64, String)>,
+    /// show the gasm splash screen while the game loads (`--no-splash`: off)
+    pub splash: bool,
+}
+
+/// The splash screen, shown while the game's module compiles on another thread.
+struct Splash {
+    frame: u32,
+    next: Instant,
+    compiling: Option<std::thread::JoinHandle<Result<wasmtime::Module, Stop>>>,
+    module: Option<Result<wasmtime::Module, Stop>>,
+    /// a key or click: end it as soon as the game is ready
+    skip: bool,
+    /// what the game starts with once it's compiled
+    audio: Option<Box<dyn AudioOut>>,
+    gfx: Gfx,
+    gl: Option<crate::angle::Angle>,
 }
 
 /// The platform window handle ANGLE draws into.
@@ -85,6 +102,7 @@ pub fn run(session: Session, opts: Options) -> Result<i32, String> {
         result: Ok(0),
         frames_run: 0,
         audio_stream: None,
+        splash: None,
     };
     event_loop.run_app(&mut app).map_err(|e| e.to_string())?;
     app.result
@@ -213,6 +231,7 @@ struct App {
     result: Result<i32, String>,
     /// the audio device stream (kept alive while the game plays)
     audio_stream: Option<AudioStream>,
+    splash: Option<Splash>,
 }
 
 impl App {
@@ -258,7 +277,68 @@ impl App {
         self.stop(el, Ok(0));
     }
 
+    /// One splash frame when it's due; starts the game when the splash is over and
+    /// the module compiled. Holds on the logo while it is still compiling.
+    fn tick_splash(&mut self, el: &ActiveEventLoop) {
+        let Some(sp) = &mut self.splash else { return };
+        if Instant::now() < sp.next {
+            return el.set_control_flow(ControlFlow::WaitUntil(sp.next));
+        }
+        if sp.compiling.as_ref().is_some_and(|t| t.is_finished()) {
+            let t = sp.compiling.take().expect("compile thread");
+            sp.module = Some(t.join().unwrap_or_else(|_| Err(Stop::Trap("the compiler thread panicked".into()))));
+        }
+        let ready = sp.module.is_some();
+        if sp.skip {
+            sp.frame = if ready { splash::FRAMES } else { sp.frame.max(splash::HOLD) };
+        }
+        if sp.frame >= splash::FRAMES && ready {
+            let sp = self.splash.take().expect("splash");
+            return self.start_game(el, sp.module.expect("compiled"), sp.audio, sp.gfx, sp.gl);
+        }
+        let rgba = splash::frame(sp.frame);
+        match &sp.gl {
+            Some(angle) => angle.show_image(&rgba, splash::W as u32, splash::H as u32),
+            None => sp.gfx.present_video(&rgba, splash::W as u32, splash::H as u32, None),
+        }
+        if sp.frame != splash::HOLD || ready {
+            sp.frame += 1;
+        }
+        sp.next += Duration::from_secs_f64(1.0 / 60.0);
+        if sp.next < Instant::now() {
+            sp.next = Instant::now();
+        }
+        el.set_control_flow(ControlFlow::WaitUntil(sp.next));
+    }
+
+    /// The game begins: instantiate it (its init runs) with the window's GPU and audio.
+    fn start_game(&mut self, el: &ActiveEventLoop, module: Result<wasmtime::Module, Stop>, audio: Option<Box<dyn AudioOut>>, gfx: Gfx, gl: Option<crate::angle::Angle>) {
+        let Some(session) = self.session.take() else { return };
+        let started = match module {
+            Ok(m) => session.start_compiled(m, audio, gfx, gl),
+            Err(e) => Err(e),
+        };
+        match started {
+            Ok(g) => self.game = Some(g),
+            Err(Stop::Exit(code)) => return self.stop(el, Ok(code)),
+            Err(Stop::Trap(e)) => return self.stop(el, Err(e)),
+        }
+        // what the player pressed during the splash isn't the game's
+        self.typed.clear();
+        self.key_events.clear();
+        self.mouse.pressed = 0;
+        self.mouse.released = 0;
+        self.next = Instant::now();
+        el.set_control_flow(ControlFlow::WaitUntil(self.next));
+    }
+
     fn tick(&mut self, el: &ActiveEventLoop) {
+        if self.splash.is_some() {
+            if self.esc_down.is_some_and(|t| t.elapsed() >= ESC_HOLD) {
+                return self.quit(el);
+            }
+            return self.tick_splash(el);
+        }
         let Some(game) = &mut self.game else { return };
         let period = Duration::from_secs_f64(1.0 / game.with_host(|h| h.frame_rate));
         let now = Instant::now();
@@ -427,15 +507,18 @@ impl ApplicationHandler for App {
                 }
             }
         };
-        let Some(session) = self.session.take() else { return };
-        match session.start(audio, gfx, gl, false, false) {
-            Ok(g) => self.game = Some(g),
-            Err(Stop::Exit(code)) => return self.stop(el, Ok(code)),
-            Err(Stop::Trap(e)) => return self.stop(el, Err(e)),
-        }
         self.window = Some(window);
-        self.next = Instant::now();
-        el.set_control_flow(ControlFlow::WaitUntil(self.next));
+        let Some(session) = self.session.as_ref() else { return };
+        if self.opts.splash {
+            // the module compiles while the splash plays; the game starts after both
+            let compiling = Some(session.compile_in_background());
+            let next = Instant::now();
+            self.splash = Some(Splash { frame: 0, next, compiling, module: None, skip: false, audio, gfx, gl });
+            el.set_control_flow(ControlFlow::WaitUntil(next));
+        } else {
+            let module = crate::host::Game::compile(&session.wasm, session.load.allow_precompiled);
+            self.start_game(el, module, audio, gfx, gl);
+        }
     }
 
     fn window_event(&mut self, el: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
@@ -444,6 +527,9 @@ impl ApplicationHandler for App {
             WindowEvent::Resized(size) => {
                 if let Some(g) = &mut self.game {
                     g.with_host(|h| h.gfx.resize(size.width, size.height));
+                }
+                if let Some(sp) = &mut self.splash {
+                    sp.gfx.resize(size.width, size.height);
                 }
             }
             WindowEvent::Focused(false) => {
@@ -467,6 +553,9 @@ impl ApplicationHandler for App {
             WindowEvent::CursorEntered { .. } => self.mouse.inside = true,
             WindowEvent::CursorLeft { .. } => self.mouse.inside = false,
             WindowEvent::MouseInput { state, button, .. } => {
+                if let Some(sp) = &mut self.splash {
+                    sp.skip |= state == ElementState::Pressed;
+                }
                 let bit = mouse_bit(button);
                 match state {
                     ElementState::Pressed => {
@@ -489,6 +578,9 @@ impl ApplicationHandler for App {
                 self.mouse.wheel_y -= y;
             }
             WindowEvent::KeyboardInput { event, .. } => {
+                if let Some(sp) = &mut self.splash {
+                    sp.skip |= event.state == ElementState::Pressed;
+                }
                 if let PhysicalKey::Code(code) = event.physical_key {
                     if code == KeyCode::Escape && !event.repeat {
                         self.esc_down = (event.state == ElementState::Pressed).then(Instant::now);

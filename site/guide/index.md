@@ -133,8 +133,14 @@ make web
 
 URL parameters are passed to the game: `?game=sumo.wasm&relay=ws://host:9000&room=abc&autostart`.
 `game`, `autostart`, `wasm`, `worker`, `opfs`, `prefix`, `rom`, `filter`,
-`integer`, `asyncify` and `hashframes` are used by the page itself; everything else becomes
+`integer`, `asyncify`, `nosplash` and `hashframes` are used by the page itself; everything else becomes
 a game parameter.
+
+**The splash screen:** while a game loads, the player shows gasm's splash (a
+moment of Pong that turns into the gasm logo, about 1.6 s; it waits on the logo
+if the game takes longer to load). A key or click shortens it; `?nosplash`
+turns it off. `gasm-run`'s window shows the same, and `--no-splash` turns it
+off there.
 
 **Scaling 2D games:** the filter drop-down (or `?filter=`) picks how frames
 are scaled up, as `gasm-run --filter` does: `sharp` (the default: even pixels
@@ -252,6 +258,7 @@ gasm-run <game.wasm|game.cwasm> [options]
 --filter <name>          how 2D frames are scaled up: sharp (default), nearest, xbr, fsr, crt
 --integer-scale          scale 2D frames by whole multiples only (black border around)
 --mute                   no audio output
+--no-splash              start without the gasm splash screen
 --compile <out.cwasm>    ahead-of-time compile to native code and exit
 --allow-precompiled      accept a .cwasm (native code: only files you compiled yourself)
 --call-timeout <secs>    trap a game call (init, a frame) that runs longer (default 30, 0 = never)

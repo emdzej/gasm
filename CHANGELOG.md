@@ -6,6 +6,21 @@ embedders. The ABI version is still 0: additions keep it (see
 guests can probe for newer imports with `gasm.has`. Versions are the git tags and
 the package versions (`gasm-sdk`, `gasm-host`, `@emdzej/gasm-host`).
 
+## Unreleased
+
+Runners:
+- The gasm splash screen: a moment of Pong in the style of gasm's icon that
+  turns into the logo and the name, about 1.6 s, while the game loads (natively
+  the module compiles meanwhile, so a slow-to-compile game like Godot starts no
+  later than before). The same frames on both runners
+  (`runners/native/src/splash.rs`, `lib/splash.js`, compared by `gen-abi.mjs
+  --check`), shown like 2D frames. A key or click shortens it; off with
+  `gasm-run --no-splash` and the player's `?nosplash`, and never in headless runs
+  or `--window-screenshot`. `@emdzej/gasm-host` exports `splashFrame` for pages
+  that embed games. `gasm-host`: `Game::compile` / `load_module` and
+  `Session::compile_in_background` / `start_compiled` split compiling from
+  starting.
+
 ## 0.9.1 (2026-10-05)
 
 Games:

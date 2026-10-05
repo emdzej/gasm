@@ -241,6 +241,15 @@ export interface GasmHostOptions {
   gl?: WebGL2RenderingContext | null;
 }
 
+/** The gasm splash screen (the same frames as gasm-run's): 2D RGBA8 frames at 60 Hz. */
+export declare const SPLASH_W: 320, SPLASH_H: 180, SPLASH_FRAMES: number;
+/** The frame with the logo and the name: stay on it while the game is still loading. */
+export declare const SPLASH_HOLD: number;
+/** Frame f (later frames are the last one, black) as RGBA8, SPLASH_W x SPLASH_H. */
+export declare function splashFrame(f: number): Uint8ClampedArray;
+/** FNV-1a 32 over every frame (equal to the native runner's). */
+export declare function splashHash(): number;
+
 /** A recorded gasm:fetch response (files <key>.json + <key>.body; key: recordKey). */
 export interface FetchRecord { status: number; headers: string; body: Uint8Array }
 /** FNV-1a 64 of method, URL and body as 16 hex digits: the name of a recorded response. */

@@ -280,6 +280,44 @@ impl Angle {
         (w.max(0) as u32, h.max(0) as u32)
     }
 
+    /// Show an RGBA8 image (rows top to bottom) letterboxed on black and swap: the
+    /// runner's own frames (the splash) before the game draws. Leaves no GL state behind
+    /// that the game could see (its objects are deleted, bindings reset to 0).
+    pub fn show_image(&self, rgba: &[u8], w: u32, h: u32) {
+        const TEXTURE_2D: u32 = 0x0DE1;
+        const READ_FRAMEBUFFER: u32 = 0x8CA8;
+        const DRAW_FRAMEBUFFER: u32 = 0x8CA9;
+        const COLOR_ATTACHMENT0: u32 = 0x8CE0;
+        const SCISSOR_TEST: u32 = 0x0C11;
+        let g = &self.gl;
+        let (dw, dh) = self.size();
+        let (ox, oy, sx, sy) = crate::present::letterbox((dw as f64, dh as f64), (w as f64, h as f64), true, None);
+        let (x0, x1) = (ox.round() as i32, (ox + sx * w as f64).round() as i32);
+        // GL counts rows from the bottom: the image's first row goes to the top
+        let (y0, y1) = ((dh as f64 - oy).round() as i32, (dh as f64 - oy - sy * h as f64).round() as i32);
+        unsafe {
+            let (mut tex, mut fbo) = (0u32, 0u32);
+            (g.glGenTextures)(1, &mut tex as *mut u32 as *mut c_void);
+            (g.glBindTexture)(TEXTURE_2D, tex);
+            (g.glPixelStorei)(0x0CF5, 1); // UNPACK_ALIGNMENT
+            (g.glTexImage2D)(TEXTURE_2D, 0, 0x8058 /* RGBA8 */ as i32, w as i32, h as i32, 0, 0x1908 /* RGBA */, 0x1401 /* UNSIGNED_BYTE */, rgba.as_ptr() as *const c_void);
+            (g.glPixelStorei)(0x0CF5, 4);
+            (g.glGenFramebuffers)(1, &mut fbo as *mut u32 as *mut c_void);
+            (g.glBindFramebuffer)(READ_FRAMEBUFFER, fbo);
+            (g.glFramebufferTexture2D)(READ_FRAMEBUFFER, COLOR_ATTACHMENT0, TEXTURE_2D, tex, 0);
+            (g.glBindFramebuffer)(DRAW_FRAMEBUFFER, 0);
+            (g.glDisable)(SCISSOR_TEST);
+            (g.glClearColor)(0.0, 0.0, 0.0, 1.0);
+            (g.glClear)(0x4000); // COLOR_BUFFER_BIT
+            (g.glBlitFramebuffer)(0, 0, w as i32, h as i32, x0, y0, x1, y1, 0x4000, 0x2600 /* NEAREST */);
+            (g.glBindFramebuffer)(READ_FRAMEBUFFER, 0);
+            (g.glBindTexture)(TEXTURE_2D, 0);
+            (g.glDeleteFramebuffers)(1, &fbo as *const u32 as *const c_void);
+            (g.glDeleteTextures)(1, &tex as *const u32 as *const c_void);
+        }
+        self.swap();
+    }
+
     pub fn swap(&self) {
         unsafe {
             (self.egl.SwapBuffers)(self.display, self.surface);

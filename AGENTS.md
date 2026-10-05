@@ -267,6 +267,12 @@ from the repo root, then
 - **Time zone:** `gasm.utc_offset_minutes` is the system's natively
   (`localtime_r`/`GetTimeZoneInformation`), `-getTimezoneOffset()` in JS, and 0
   in headless runs and the native stub (reproducible, like the clocks).
+- **The splash screen** is drawn twice, in integer arithmetic only:
+  `runners/native/src/splash.rs` and `runners/web/lib/splash.js` must give the same
+  frames (`SPLASH_HASH` in splash.rs: its unit test checks Rust, `gen-abi.mjs
+  --check` the JS). Change both, then the constant. It's for windows and the player
+  only: never in headless runs or `--window-screenshot`; pages and scripts that
+  screenshot the player pass `&nosplash`.
 - **gasm:gl null GL limits** are WebGL 2's minimums, in `null_limit` (gl.rs) and
   `NULL_LIMITS` (gl.js): `gen-abi.mjs --check` compares the two tables.
 - **Raw input:** keys are W3C `KeyboardEvent.code` names numbered in

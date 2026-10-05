@@ -476,6 +476,15 @@ async function fetchRulesCheck() {
   return errors;
 }
 
+// The splash screen is drawn twice (runners/native/src/splash.rs, runners/web/lib/splash.js):
+// the JS frames must hash to splash.rs's SPLASH_HASH (which its unit test checks natively).
+async function splashCheck() {
+  const { splashHash } = await import(join(ROOT, 'runners/web/lib/splash.js'));
+  const want = /pub const SPLASH_HASH: u32 = (0x[0-9a-fA-F]+);/.exec(read('runners/native/src/splash.rs'))?.[1];
+  const got = `0x${splashHash().toString(16).padStart(8, '0')}`;
+  return want && Number(want) === Number(got) ? [] : [`splash: lib/splash.js frames hash ${got}, splash.rs SPLASH_HASH is ${want}`];
+}
+
 // ---- main ----------------------------------------------------------------------------------
 
 const outputs = {
@@ -483,7 +492,7 @@ const outputs = {
   'runners/native/src/gl_sigs.rs': genGlSigs(), 'guests/gasm/src/native_gl.rs': genGlStub(),
 };
 if (process.argv.includes('--check')) {
-  const errors = [...(await conformance()), ...(await keymapCheck()), ...(await nullLimitsCheck()), ...(await fetchRulesCheck())];
+  const errors = [...(await conformance()), ...(await keymapCheck()), ...(await nullLimitsCheck()), ...(await fetchRulesCheck()), ...(await splashCheck())];
   for (const [p, content] of Object.entries(outputs)) {
     if (read(p) !== content) errors.push(`${p} is out of date: run node scripts/gen-abi.mjs`);
   }

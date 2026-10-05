@@ -27,6 +27,7 @@ pub mod net;
 pub mod present;
 pub mod script;
 pub mod session;
+pub mod splash;
 pub mod storage;
 pub mod switching;
 pub mod wasi;

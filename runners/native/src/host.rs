@@ -1122,19 +1122,31 @@ pub struct Game {
 
 impl Game {
     pub fn load(wasm: &[u8], host: Host, opts: LoadOptions) -> Result<Game, Stop> {
-        Self::load_inner(wasm, host, opts).map_err(classify)
+        let module = Self::compile(wasm, opts.allow_precompiled)?;
+        Self::load_module(module, host, opts)
     }
 
-    fn load_inner(wasm: &[u8], host: Host, opts: LoadOptions) -> wasmtime::Result<Game> {
+    /// Compile a module (or load a `.cwasm`) for [`Game::load_module`]: the slow
+    /// part of loading, and possible on another thread.
+    pub fn compile(wasm: &[u8], allow_precompiled: bool) -> Result<Module, Stop> {
         let module = if wasm.starts_with(b"\0asm") {
-            Module::new(engine(), wasm)?
-        } else if opts.allow_precompiled {
+            Module::new(engine(), wasm)
+        } else if allow_precompiled {
             // Precompiled artifact from `gasm-run --compile`: native code, trusted
             // like the runner itself (unlike .wasm, which is sandboxed).
-            unsafe { Module::deserialize(engine(), wasm)? }
+            unsafe { Module::deserialize(engine(), wasm) }
         } else {
-            bail!("not a wasm module (a precompiled .cwasm runs as native code: pass --allow-precompiled if you made it yourself)");
+            Err(format_err!("not a wasm module (a precompiled .cwasm runs as native code: pass --allow-precompiled if you made it yourself)"))
         };
+        module.map_err(classify)
+    }
+
+    /// Instantiate a compiled module and run its init.
+    pub fn load_module(module: Module, host: Host, opts: LoadOptions) -> Result<Game, Stop> {
+        Self::load_inner(module, host, opts).map_err(classify)
+    }
+
+    fn load_inner(module: Module, host: Host, opts: LoadOptions) -> wasmtime::Result<Game> {
         let gl = module.imports().any(|i| i.module() == "gasm:gl");
         if gl && module.imports().any(|i| i.module() == "gasm:gfx") {
             bail!("a module imports gasm:gfx or gasm:gl, not both");

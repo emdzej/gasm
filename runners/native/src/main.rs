@@ -45,6 +45,7 @@ options:
                            else the built-in two-player layout below)
   --print-keymap           print the active keyboard layout (a starting point for --keymap) and exit
   --mute                   no audio output
+  --no-splash              start the game without the gasm splash screen (window only)
   --compile <out.cwasm>    AOT-compile the game to native code and exit
                            (then run the .cwasm with --allow-precompiled)
   --allow-precompiled      accept a .cwasm: native code, so only files you compiled yourself
@@ -84,6 +85,7 @@ struct Args {
     watch_assets: Vec<(String, String)>,
     params: HashMap<String, String>,
     allow_net: bool,
+    no_splash: bool,
     allow_hosts: Vec<String>,
     fetch: gasm_host::fetch::FetchMode,
     storage_dir: Option<String>,
@@ -118,6 +120,7 @@ fn parse_args() -> Result<Args, String> {
         asset_dirs: Vec::new(),
         params: HashMap::new(),
         allow_net: false,
+        no_splash: false,
         allow_hosts: Vec::new(),
         fetch: Default::default(),
         storage_dir: None,
@@ -172,6 +175,7 @@ fn parse_args() -> Result<Args, String> {
                 args.params.insert(k.into(), p.into());
             }
             "--allow-net" => args.allow_net = true,
+            "--no-splash" => args.no_splash = true,
             a if a.starts_with("--allow-net=") => {
                 args.allow_net = true;
                 args.allow_hosts = a["--allow-net=".len()..].split(',').map(str::trim).filter(|h| !h.is_empty()).map(String::from).collect();
@@ -379,7 +383,7 @@ fn run(args: Args) -> Result<i32, String> {
         None => {
             let (keymap, _, source) = load_keymap(&args)?;
             eprintln!("[gasm] keyboard layout: {source}");
-            gasm_host::window::run(session, gasm_host::window::Options { size: args.window, keymap, mute: args.mute, present: args.present, screenshot: args.window_screenshot.clone() })
+            gasm_host::window::run(session, gasm_host::window::Options { size: args.window, keymap, mute: args.mute, present: args.present, screenshot: args.window_screenshot.clone(), splash: !args.no_splash && args.window_screenshot.is_none() })
         }
         #[cfg(not(feature = "window"))]
         None => Err("this gasm-run was built without the window feature: use --headless".into()),

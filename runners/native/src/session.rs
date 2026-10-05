@@ -61,7 +61,23 @@ impl Session {
     /// Instantiate the guest and run its init. `reproducible`: headless rules
     /// (virtual time, fixed random sequence, hashing). `gl`: the GL that executes a
     /// gasm:gl guest's calls (None: the null GL).
+    /// Compile the module on a background thread (the window runner shows the splash
+    /// meanwhile); hand the result to [`Session::start_compiled`].
+    pub fn compile_in_background(&self) -> std::thread::JoinHandle<Result<wasmtime::Module, Stop>> {
+        let (wasm, allow) = (self.wasm.clone(), self.load.allow_precompiled);
+        std::thread::spawn(move || Game::compile(&wasm, allow))
+    }
+
     pub fn start(self, audio: Option<Box<dyn AudioOut>>, gfx: Gfx, gl: Option<Angle>, reproducible: bool, hashing: bool) -> Result<Game, Stop> {
+        self.start_with(None, audio, gfx, gl, reproducible, hashing)
+    }
+
+    /// [`Session::start`] with a module compiled earlier (`compile_in_background`).
+    pub fn start_compiled(self, module: wasmtime::Module, audio: Option<Box<dyn AudioOut>>, gfx: Gfx, gl: Option<Angle>) -> Result<Game, Stop> {
+        self.start_with(Some(module), audio, gfx, gl, false, false)
+    }
+
+    fn start_with(self, module: Option<wasmtime::Module>, audio: Option<Box<dyn AudioOut>>, gfx: Gfx, gl: Option<Angle>, reproducible: bool, hashing: bool) -> Result<Game, Stop> {
         let policy = crate::net::NetPolicy::new(self.allow_net, self.allow_hosts);
         let mut host = Host::new(self.assets, self.params, audio, gfx, Net::with_policy(policy.clone()), self.storage);
         host.fetch = crate::fetch::Fetch::new(policy, self.fetch);
@@ -74,7 +90,11 @@ impl Session {
         }
         host.hashing = hashing;
         let t0 = Instant::now();
-        let mut game = Game::load(&self.wasm, host, self.load)?;
+        let module = match module {
+            Some(m) => m,
+            None => Game::compile(&self.wasm, self.load.allow_precompiled)?,
+        };
+        let mut game = Game::load_module(module, host, self.load)?;
         for w in self.watch_assets {
             game.add_watch(w);
         }

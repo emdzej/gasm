@@ -37,8 +37,8 @@ shot woodeneye sdl3-woodeneye 400 --input '50-150:KEY(KeyW),100-200:MOVE(8,0)' \
 python3 -m http.server 8765 >/dev/null 2>&1 </dev/null &
 SERVER=$!
 sleep 1
-node scripts/web-smoke.mjs "http://localhost:8765/runners/web/?game=gltest.wasm&autostart" "$TMP/gltest.png" 3 >/dev/null
-node scripts/web-smoke.mjs "http://localhost:8765/runners/web/?game=scummvm.wasm&autostart" "$TMP/player.png" 25 \
+node scripts/web-smoke.mjs "http://localhost:8765/runners/web/?game=gltest.wasm&autostart&nosplash" "$TMP/gltest.png" 3 >/dev/null
+node scripts/web-smoke.mjs "http://localhost:8765/runners/web/?game=scummvm.wasm&autostart&nosplash" "$TMP/player.png" 25 \
   "8:keydown:Escape;8.1:keyup:Escape" >/dev/null
 
 # filters side by side: the same 240x240 crop of each, scaled 4:3 like the window
