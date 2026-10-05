@@ -1,14 +1,13 @@
 <script setup lang="ts">
-// The home page's background is a gasm game: guests/pong (attract-mode Pong in the
-// icon's colours, 23 KB) on @emdzej/gasm-host, the player's copy under /play/. Its
-// frames have a transparent background, so the page's colours (light, dark) show
-// through; the court takes the hero's shape (params w, h: 120 pixels high). The
-// right paddle follows the pointer while it moves over the hero. Paused while off
-// screen or in a hidden tab; one still frame with reduced motion.
+// The home page's background is a gasm game: guests/bricks (a brick breaker that plays
+// itself, in gasm's colours, 26 KB) on @emdzej/gasm-host, the player's copy under /play/. Its frames
+// have a transparent background, so the page's colours (light, dark) show through;
+// the picture takes the hero's shape (params w, h: 360 pixels high), the ball and
+// paddle the theme's colour (fg). It plays by itself. Paused while off screen or in a hidden tab; one still frame with reduced motion.
 import { onBeforeUnmount, onMounted } from 'vue'
 import { withBase } from 'vitepress'
 
-const HEIGHT = 120
+const HEIGHT = 360
 let cleanup = () => {}
 
 onMounted(async () => {
@@ -16,63 +15,61 @@ onMounted(async () => {
   const home = document.querySelector('.VPHome')
   if (!home) return
   const el = document.createElement('div')
-  el.className = 'gasm-pong-bg'
+  el.className = 'gasm-bricks-bg'
   el.setAttribute('aria-hidden', 'true')
   const c = document.createElement('canvas')
   el.append(c)
   home.prepend(el)
+  // as tall as the hero, so the paddle plays just under its buttons, above the features
+  const hero = home.querySelector('.VPHero') as HTMLElement | null
+  const fit = () => { if (hero) el.style.height = `${hero.offsetTop + hero.offsetHeight}px` }
+  fit()
   cleanup = () => el.remove()
   const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches
   const play = new URL(withBase('/play/'), location.href)
   let GasmHost: any, wasm: ArrayBuffer
   try {
     ({ GasmHost } = await import(/* @vite-ignore */ new URL('gasm-host.js', play).href))
-    wasm = await (await fetch(new URL('build/pong.wasm', play))).arrayBuffer()
+    wasm = await (await fetch(new URL('build/bricks.wasm', play))).arrayBuffer()
   } catch (e) {
     return   // no runner here (a dev server without /play/): no background
   }
   const ctx = c.getContext('2d')!
-  const pointer = { x: 0, y: 0, dx: 0, dy: 0, wheelX: 0, wheelY: 0, buttons: 0, pressed: 0, released: 0, flags: 0, drawable: [1, 1], integerScale: false }
-  let host: any = null, size = [0, 0], generation = 0
+  let host: any = null, size = [0, 0], generation = 0, shownFg = ''
 
   // (re)start the game for the box's shape: frames HEIGHT high, as wide as the box's aspect
   const start = async () => {
     const r = el.getBoundingClientRect()
     if (r.width < 1 || r.height < 1) return
-    const w = Math.max(64, Math.min(960, Math.round(HEIGHT * r.width / r.height)))
-    if (host && Math.abs(w - size[0]) / size[0] < 0.15) return   // close enough: keep playing
+    const w = Math.max(160, Math.min(1600, Math.round(HEIGHT * r.width / r.height)))
+    const fg = document.documentElement.classList.contains('dark') ? 'f2f4f8' : '2d333b'   // ball and paddle
+    if (host && fg === shownFg && Math.abs(w - size[0]) / size[0] < 0.15) return   // close enough: keep playing
+    shownFg = fg
     const gen = ++generation
     const h = new GasmHost({
-      params: { w: String(w), h: String(HEIGHT) },
+      params: { w: String(w), h: String(HEIGHT), fg },
       onLog: () => {},
       onPresent: (rgba: Uint8ClampedArray, fw: number, fh: number) => {
         if (c.width !== fw || c.height !== fh) { c.width = fw; c.height = fh }
         ctx.putImageData(new ImageData(rgba, fw, fh), 0, 0)
       },
     })
-    h.input = { pointer }
     await h.load(wasm)
     if (gen !== generation) return
     host = h
     size = [w, HEIGHT]
-    pointer.drawable = size
-    if (reduce) for (let i = 0; i < 90; i++) host.frame()   // a still frame, mid-rally
+    if (reduce) for (let i = 0; i < 90; i++) host.frame()   // a still frame, mid-game
   }
   await start()
 
-  // the pointer in the frame's pixels (the canvas fills the box exactly)
-  const move = (e: PointerEvent) => {
-    const r = c.getBoundingClientRect()
-    const inside = e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom
-    pointer.x = (e.clientX - r.left) / r.width * size[0]
-    pointer.y = (e.clientY - r.top) / r.height * size[1]
-    pointer.flags = inside ? 1 : 0
-  }
-  addEventListener('pointermove', move, { passive: true })
-  const resized = new ResizeObserver(() => { start() })
+  const resized = new ResizeObserver(() => { fit(); start() })
   resized.observe(el)
+  if (hero) resized.observe(hero)
+  // the light / dark switch: the ball and paddle change colour
+  const theme = new MutationObserver(() => { start() })
+  theme.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] })
   if (reduce) {
-    cleanup = () => { resized.disconnect(); removeEventListener('pointermove', move); el.remove() }
+    cleanup = () => { resized.disconnect(); theme.disconnect(); el.remove() }
     return
   }
 
@@ -89,7 +86,7 @@ onMounted(async () => {
     for (let n = 0; acc >= 1000 / 60 && n < 4; n++) { acc -= 1000 / 60; host.frame() }
   }
   raf = requestAnimationFrame(tick)
-  cleanup = () => { cancelAnimationFrame(raf); seen.disconnect(); resized.disconnect(); removeEventListener('pointermove', move); el.remove() }
+  cleanup = () => { cancelAnimationFrame(raf); seen.disconnect(); resized.disconnect(); theme.disconnect(); el.remove() }
 })
 
 onBeforeUnmount(() => cleanup())

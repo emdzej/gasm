@@ -1,6 +1,6 @@
 # golden hashes: <case> frames=… presented=… size=… video_fnv32=… audio_fnv32=… audio_frames=…
 # from scripts/determinism-test.sh; regenerate with UPDATE_GOLDEN=1 after an intended output change
-pong frames=600 presented=600 size=213x120 video_fnv32=549871ff audio_fnv32=811c9dc5 audio_frames=0 
+bricks frames=1800 presented=1800 size=640x360 video_fnv32=af32f890 audio_fnv32=811c9dc5 audio_frames=0 
 test-pattern frames=300 presented=300 size=256x240 video_fnv32=965b2f26 audio_fnv32=bc02d445 audio_frames=220500 
 textured-text frames=600 presented=600 size=0x0 video_fnv32=30bb1c03 audio_fnv32=811c9dc5 audio_frames=0 
 inputtest frames=200 presented=200 size=320x240 video_fnv32=7b055572 audio_fnv32=811c9dc5 audio_frames=0 

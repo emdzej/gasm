@@ -92,6 +92,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "bricks"
+version = "0.1.0"
+dependencies = [
+ "gasm-sdk",
+]
+
+[[package]]
 name = "bumpalo"
 version = "3.20.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -823,13 +830,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "50596ddc09eb5ad5f75cacd40209568e66df71baf86e1499a0e99c4cff12a5a6"
 dependencies = [
  "arrayvec",
-]
-
-[[package]]
-name = "pong"
-version = "0.1.0"
-dependencies = [
- "gasm-sdk",
 ]
 
 [[package]]

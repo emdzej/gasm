@@ -9,10 +9,10 @@ the package versions (`gasm-sdk`, `gasm-host`, `@emdzej/gasm-host`).
 ## Unreleased
 
 Website:
-- The home page's background is a gasm game: `guests/pong` (attract-mode Pong in
-  the icon's colours, 23 KB), running on `@emdzej/gasm-host` behind the hero.
-  The court takes the hero's shape, the right paddle follows the pointer, it
-  pauses off screen and shows a still frame with reduced motion.
+- The home page's background is a gasm game: `guests/bricks`, a brick breaker
+  that plays itself in gasm's colours (26 KB), running on `@emdzej/gasm-host`
+  behind the hero. It takes the hero's shape, pauses off screen and shows a still
+  frame with reduced motion.
 
 SDKs:
 - SDL 3: OpenGL ES on `gasm:gl` for programs linked with `lib/gasm_gl.o`

@@ -25,7 +25,7 @@ for n in node ${NODE24:-} "$HOME"/.nvm/versions/node/v2[4-9]*/bin/node; do
 done
 [ -n "$NODE_JSPI" ] || echo "note: no Node with JSPI (24+): run builds are checked natively only"
 [ -d roms ] && [ -n "$(ls roms/*.nes 2>/dev/null)" ] && [ -f roms/freedoom2.wad ] && [ -f roms/doom1.wad ] && [ -f roms/bass/sky.dnr ] && [ -d roms/scumm/dott-dos-ni-demo-en ] && [ -f roms/drascula/flac/audio/track28.flac ] || scripts/fetch-roms.sh
-for g in pong nes godot test-pattern gltest glowtest eguidemo fetchtest sumo triangle textured inputtest threadtest pthreadtest rthreadtest sdl3-threads loopdemo loopdemo-run loopdemo-c loopdemo-c-run doom scummvm scummvm-run sdl3-snake sdl3-snake-gl sdl3-gl sdl3-woodeneye sdl3-callbacks sdl3-classic sdl3-classic-run; do "$NATIVE" build/$g.wasm --compile build/$g.cwasm 2>/dev/null; done
+for g in bricks nes godot test-pattern gltest glowtest eguidemo fetchtest sumo triangle textured inputtest threadtest pthreadtest rthreadtest sdl3-threads loopdemo loopdemo-run loopdemo-c loopdemo-c-run doom scummvm scummvm-run sdl3-snake sdl3-snake-gl sdl3-gl sdl3-woodeneye sdl3-callbacks sdl3-classic sdl3-classic-run; do "$NATIVE" build/$g.wasm --compile build/$g.cwasm 2>/dev/null; done
 
 pass=0; fail=0
 run() { "$@" 2>/dev/null | grep -E '^(frames|video)' | tr '\n' ' '; }
@@ -59,9 +59,9 @@ check() { # <name> <guest-basename> <frames> [runner args...]
   fi
 }
 
-# the website's background (guests/pong): the court at the hero's shape; the pointer
-# takes the right paddle, then lets it play by itself again
-check pong                pong 600 --param w=213 --param h=120 --input '100:PTR(1200,100),101-160:MOVE(0,4),161:PTR(1200,600)'
+# the website's background (guests/bricks): a brick breaker playing itself at the hero's
+# shape, long enough to break a good part of the first wall
+check bricks              bricks 1800 --param w=640 --param h=360
 check test-pattern       test-pattern 300 --input "30-200:RIGHT+A,100-150:DOWN,50-80:KEY(ShiftLeft),220-230:PTR(500,200,L)"
 # sumo: gfx null backend hashes every GPU buffer upload (uniforms = full scene state)
 # textured: texture uploads (full mip chain + a region per frame), dynamic offsets,

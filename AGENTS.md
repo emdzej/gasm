@@ -20,7 +20,7 @@ property: most tests assert bit-identical hashes.
 | `spec/ABI.md`, `spec/gasm.h` | Normative prose + generated C header (don't edit `gasm.h` or `sys.rs` by hand) |
 | `CHANGELOG.md` | What each release added (guest authors: which runner a feature needs). Add to "Unreleased" with every ABI or behaviour change |
 | `sdk/c/` | C/C++ SDK: CMake toolchain (wraps wasi-sdk) + `Gasm.cmake` + examples; `gasm_vfile.h` (`FILE*` over assets and storage, used by DOOM and SDL 3) |
-| `guests/` | Rust workspace (`wasm32-unknown-unknown`): `gasm` (SDK + native stub host), `sumo`, `nes` (tetanes-core), `triangle`, `textured` (textures/layouts/offsets test), `inputtest` (raw input tester), `loopdemo` (`gasm::main_loop!`), `assetcheck` (asset providers; `watch=name` for replaced assets), `fetchtest` (gasm:fetch), `pong` (the website's background: `site/.vitepress/theme/components/PongBackground.vue` runs it from `/play/`), `parity` (native harness) |
+| `guests/` | Rust workspace (`wasm32-unknown-unknown`): `gasm` (SDK + native stub host), `sumo`, `nes` (tetanes-core), `triangle`, `textured` (textures/layouts/offsets test), `inputtest` (raw input tester), `loopdemo` (`gasm::main_loop!`), `assetcheck` (asset providers; `watch=name` for replaced assets), `fetchtest` (gasm:fetch), `bricks` (the website's background, a self-playing brick breaker: `site/.vitepress/theme/components/BricksBackground.vue` runs it from `/play/`), `parity` (native harness) |
 | `guests/test-pattern/` | C guest (wasi-sdk) |
 | `guests/threadtest/` | C guest: cooperative threads (`gasm_thread.h`), deterministic schedule; `mode=many`, `mode=deadlock` |
 | `guests/rthreadtest/` | Rust guest: `gasm::thread` / `gasm::sync` on the same scheduler (`threaded_main_loop!`); `mode=many`, `mode=deadlock` |
