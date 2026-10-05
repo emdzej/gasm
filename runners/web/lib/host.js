@@ -79,7 +79,7 @@ export class GasmHost {
   constructor({ assets = {}, params = {}, gfx = new NullGfx(), storage = new MemoryStorage(), allowNet = false,
                 onPresent = () => {}, onAudio = () => {}, onLog = console.log, onTitle = () => {},
                 getPad = () => 0, virtualTime = false, stackSwitching = STACK_SWITCHING, gl = null,
-                fetchReplay = null, fetchRecord = null, memoryLimit = DEFAULT_MEMORY_LIMIT } = {}) {
+                fetchReplay = null, fetchRecord = null, memoryLimit = DEFAULT_MEMORY_LIMIT, userAgent = null } = {}) {
     // GasmAssetProvider ({ size(name), readAt(name, offset, dst), names() }), or a plain
     // { name: Uint8Array } record (wrapped as an in-memory provider).
     this.assets = isAssetProvider(assets) ? assets : memoryAssets(assets);
@@ -91,7 +91,7 @@ export class GasmHost {
     this.storage = storage;          // MemoryStorage (headless) or IdbStorage (browser)
     // allowNet: false, true or a list of host names (gasm:net and gasm:fetch)
     this.net = new NetConnections(allowNet, (m) => this.onLog(m));
-    this.fetch = new FetchRequests(allowNet, (m) => this.onLog(m), { replay: fetchReplay, record: fetchRecord });
+    this.fetch = new FetchRequests(allowNet, (m) => this.onLog(m), { replay: fetchReplay, record: fetchRecord, userAgent });
     this.showFrame = true;           // false during catch-up frames: begin_frame returns 0
     this.catchUp = false;            // a catch-up frame (not the last of a batch): gasm:gl frame_shown 0
     this.onPresent = onPresent;      // (rgba: Uint8ClampedArray, w, h)

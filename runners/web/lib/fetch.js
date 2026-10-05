@@ -107,9 +107,11 @@ export class FetchRequests {
   /**
    * allowNet: false | true | host list. replay(key) -> { status, headers, body } | null:
    * answer from records only. record(key, { method, url, status, headers, body }): store
-   * completed responses (live requests).
+   * completed responses (live requests). userAgent: sent as User-Agent (Node; pages leave
+   * it to the browser, where setting it would also need a CORS preflight).
    */
-  constructor(allowNet, log, { replay = null, record = null } = {}) {
+  constructor(allowNet, log, { replay = null, record = null, userAgent = null } = {}) {
+    this.userAgent = userAgent;
     this.policy = new NetPolicy(allowNet);
     this.log = log;
     this.replay = replay;
@@ -160,7 +162,8 @@ export class FetchRequests {
       Object.assign(r, { state: FETCH_FAILED, status: 0, chunks: [], queued: 0 });
       clearTimeout(timer);
     };
-    const init = { method: d.method, headers: d.headers, credentials: 'omit', cache: 'no-store', redirect: 'follow', signal: abort.signal };
+    const headers = this.userAgent ? [...d.headers, ['user-agent', this.userAgent]] : d.headers;
+    const init = { method: d.method, headers, credentials: 'omit', cache: 'no-store', redirect: 'follow', signal: abort.signal };
     if (body.length) init.body = body;
     fetch(d.url, init).then(async (resp) => {
       const why = resp.url && resp.url !== d.url ? this.policy.refusal(resp.url) : null;

@@ -30,6 +30,8 @@ options:
   --allow-net[=<hosts>]    allow the guest to open network connections (gasm:net) and make HTTP
                            requests (gasm:fetch); with a comma-separated list only to those hosts
                            (api.example.org, *.example.org for its subdomains)
+  --app-id <text>          who the game is in its HTTP requests: gasm:fetch sends
+                           User-Agent: <text> gasm-run/<version>, e.g. --app-id 'mygame/1.0 (+https://mygame.example)'
   --fetch-record <dir>     store every gasm:fetch response in <dir> (with --allow-net)
   --fetch-replay <dir>     answer gasm:fetch requests from <dir> only (never the network): each
                            completes at the next frame, so headless runs stay reproducible
@@ -91,6 +93,7 @@ struct Args {
     fetch: gasm_host::fetch::FetchMode,
     storage_dir: Option<String>,
     storage_id: Option<String>,
+    app_id: Option<String>,
     window: (u32, u32),
     present: Present,
     keymap: Option<String>,
@@ -127,6 +130,7 @@ fn parse_args() -> Result<Args, String> {
         fetch: Default::default(),
         storage_dir: None,
         storage_id: None,
+        app_id: None,
         window: (960, 720),
         present: Present::default(),
         keymap: None,
@@ -190,6 +194,13 @@ fn parse_args() -> Result<Args, String> {
             "--fetch-replay" => args.fetch = gasm_host::fetch::FetchMode::Replay(val("--fetch-replay")?.into()),
             "--storage-dir" => args.storage_dir = Some(val("--storage-dir")?),
             "--storage-id" => args.storage_id = Some(val("--storage-id")?),
+            "--app-id" => {
+                let id = val("--app-id")?;
+                if !gasm_host::fetch::valid_app_id(&id) {
+                    return Err("--app-id expects 1 to 256 printable ASCII characters".into());
+                }
+                args.app_id = Some(id);
+            }
             "--window" => {
                 let v = val("--window")?;
                 let (w, h) = v.split_once('x').ok_or("--window expects WxH")?;
@@ -351,6 +362,7 @@ fn run(args: Args) -> Result<i32, String> {
         allow_net: args.allow_net,
         allow_hosts: args.allow_hosts.clone(),
         fetch: args.fetch.clone(),
+        app_id: args.app_id.clone(),
         storage: open_storage(&args)?,
         load: LoadOptions {
             allow_precompiled: args.allow_precompiled,

@@ -6,7 +6,7 @@
 //        [--asset-dir [prefix=]dir] [--param k=v] [--allow-net] [--storage-dir dir]
 //        [--storage-id id] [--input script] [--screenshot out.png] [--realtime] [--no-hash]
 //        [--no-stack-switching] [--watch-asset n=p] [--allow-net=hosts]
-//        [--fetch-record dir] [--fetch-replay dir] [--memory-limit MiB]
+//        [--fetch-record dir] [--fetch-replay dir] [--memory-limit MiB] [--app-id text]
 //
 // The options mean what they mean for gasm-run. --screenshot writes the last
 // video_present frame: there is no GPU here, so gasm:gfx games can't be captured
@@ -18,13 +18,15 @@ import { deflateSync } from 'node:zlib';
 import { AssetTable, GasmHost, MemoryStorage, ProcExit, bytesSource, staticTitle, validKey } from './gasm-host.js';
 import { InputScript } from './input-script.mjs';
 
+const VERSION = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8')).version;
+
 const USAGE = 'usage: headless.mjs <game.wasm> --headless N [--rom path] [--asset name=path] [--watch-asset name=path] [--asset-dir [prefix=]dir] ' +
-  '[--param k=v] [--allow-net[=hosts]] [--fetch-record dir] [--fetch-replay dir] [--storage-dir dir] [--storage-id id] [--input script] [--screenshot out.png] [--realtime] [--no-hash]';
+  '[--param k=v] [--allow-net[=hosts]] [--fetch-record dir] [--fetch-replay dir] [--app-id text] [--storage-dir dir] [--storage-id id] [--input script] [--screenshot out.png] [--realtime] [--no-hash]';
 const fileStamp = (p) => { try { const s = statSync(p); return `${s.mtimeMs}:${s.size}`; } catch { return null; } };
 const fail = (msg) => { console.error(`error: ${msg}\n\n${USAGE}`); process.exit(2); };
 const argv = process.argv.slice(2);
 let wasm, frames = 600, screenshot, noHash = false, allowNet = false, realtime = false, storageDir = null, storageId = null;
-let stackSwitching = true, fetchRecord = null, fetchReplay = null, memoryLimit;
+let stackSwitching = true, fetchRecord = null, fetchReplay = null, memoryLimit, appId = null;
 // --input: see input-script.mjs (same syntax as gasm-run --input)
 let script = new InputScript();
 const assets = {}, params = {}, assetDirs = [], watches = [];
@@ -62,6 +64,7 @@ for (let i = 0; i < argv.length; i++) {
   else if (a === '--no-stack-switching') stackSwitching = false;
   else if (a === '--storage-dir') storageDir = val();
   else if (a === '--storage-id') storageId = val();
+  else if (a === '--app-id') { appId = val(); if (!/^[\x20-\x7e]{1,256}$/.test(appId)) fail('--app-id expects 1 to 256 printable ASCII characters'); }
   else if (a === '-h' || a === '--help') { console.error(USAGE); process.exit(0); }
   else if (a.startsWith('--')) fail(`unknown option ${a}`);
   else wasm = a;
@@ -148,7 +151,7 @@ const record = fetchRecord && ((key, r) => {
 });
 const host = new GasmHost({
   assets: table, params, allowNet, storage, virtualTime: true, onLog: (m) => console.error(m), stackSwitching,
-  fetchReplay: replay, fetchRecord: record, ...(memoryLimit !== undefined ? { memoryLimit } : {}),
+  fetchReplay: replay, fetchRecord: record, userAgent: [appId, `gasm-headless/${VERSION}`].filter(Boolean).join(' '), ...(memoryLimit !== undefined ? { memoryLimit } : {}),
   onTitle: (t) => console.error(`[gasm] title: ${t ?? '(default)'}`),
   getPad: (p) => (p !== 0 ? 0 : script.pad(host.frameIndex)),
 });

@@ -27,6 +27,10 @@ SDKs:
   renderer) are copied into buffers at the draw.
 
 Runners:
+- `--app-id <text>` (`gasm-run`, `gasm-headless`): gasm:fetch requests identify
+  the game, `User-Agent: <text> gasm-run/<version>` (NiP #8). Without it the
+  runner sends `gasm-run/<version>` (`gasm-headless/<version>` in Node);
+  browsers keep their own. `GasmHost` takes it as `userAgent` (Node only).
 - Audio keeps playing when the game drops below its frame rate or the output
   device changes (NiP #12). Natively the stream is rebuilt when it fails or the
   default device changes (checked once a second; a macOS system sound could

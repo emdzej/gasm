@@ -172,6 +172,8 @@ struct Req {
 
 pub struct Fetch {
     policy: NetPolicy,
+    /// sent with every live request (guests can't set User-Agent)
+    user_agent: String,
     mode: FetchMode,
     reqs: HashMap<i32, Req>,
     next: i32,
@@ -187,7 +189,12 @@ impl Default for Fetch {
 
 impl Fetch {
     pub fn new(policy: NetPolicy, mode: FetchMode) -> Fetch {
-        Fetch { policy, mode, reqs: HashMap::new(), next: 1, denied: Default::default() }
+        Fetch { policy, user_agent: user_agent(None), mode, reqs: HashMap::new(), next: 1, denied: Default::default() }
+    }
+
+    /// Identify the game in requests (`--app-id`): see [`user_agent`].
+    pub fn set_app_id(&mut self, app_id: Option<&str>) {
+        self.user_agent = user_agent(app_id);
     }
 
     /// Start a request; a handle > 0 or -1 (logged). `frame` is the current frame index.
@@ -231,8 +238,8 @@ impl Fetch {
                     _ => None,
                 };
                 let (tx, rx) = mpsc::sync_channel(QUEUE);
-                let policy = self.policy.clone();
-                std::thread::spawn(move || run(d, body, policy, tx, cancel, record));
+                let (policy, ua) = (self.policy.clone(), self.user_agent.clone());
+                std::thread::spawn(move || run(d, body, policy, ua, tx, cancel, record));
                 req.events = Some(rx);
             }
         }
@@ -384,12 +391,27 @@ fn resolve(base: &str, location: &str) -> String {
     format!("{scheme}://{authority}{}{location}", if dir.is_empty() { "/" } else { dir })
 }
 
-fn run(d: Desc, body: Vec<u8>, policy: NetPolicy, tx: SyncSender<Event>, cancel: Arc<AtomicBool>, record: Option<PathBuf>) {
+/// `gasm-run/<version>`, after the game's own identity if it has one
+/// (`--app-id "mygame/1.2 (+https://mygame.example)"`).
+pub fn user_agent(app_id: Option<&str>) -> String {
+    let runner = concat!("gasm-run/", env!("CARGO_PKG_VERSION"));
+    match app_id {
+        Some(id) => format!("{id} {runner}"),
+        None => runner.to_owned(),
+    }
+}
+
+/// Whether `id` can go into a User-Agent header: printable ASCII, 1 to 256 characters.
+pub fn valid_app_id(id: &str) -> bool {
+    !id.is_empty() && id.len() <= 256 && id.bytes().all(|c| (0x20..0x7f).contains(&c))
+}
+
+fn run(d: Desc, body: Vec<u8>, policy: NetPolicy, user_agent: String, tx: SyncSender<Event>, cancel: Arc<AtomicBool>, record: Option<PathBuf>) {
     let result = (|| -> Result<(), String> {
         let (mut method, mut url, mut body) = (d.method.clone(), d.url.clone(), body);
         let mut hops = 0;
         let resp = loop {
-            let mut b = ureq::http::Request::builder().method(method.as_str()).uri(url.as_str());
+            let mut b = ureq::http::Request::builder().method(method.as_str()).uri(url.as_str()).header("user-agent", user_agent.as_str());
             for (k, v) in &d.headers {
                 b = b.header(k.as_str(), v.as_str());
             }

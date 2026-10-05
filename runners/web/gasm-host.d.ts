@@ -220,6 +220,9 @@ export interface GasmHostOptions {
   /** Largest guest memory in bytes (default DEFAULT_MEMORY_LIMIT, 1 GiB; 0: no limit). A guest that
    *  grows past it traps (checked after each call: browsers can't refuse the growth itself). */
   memoryLimit?: number;
+  /** gasm:fetch's User-Agent where the platform lets it be set (Node: `gasm-headless --app-id`).
+   *  Leave it unset in pages: the browser identifies them, and a custom User-Agent needs a CORS preflight. */
+  userAgent?: string | null;
   /** gasm:fetch from recorded responses only (reproducible runs): record key -> response, or null if unrecorded. */
   fetchReplay?: ((key: string) => FetchRecord | null) | null;
   /** Called with every completed live gasm:fetch response (to record them). */

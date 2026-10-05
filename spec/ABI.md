@@ -430,6 +430,13 @@ descriptions: request headers browsers forbid (`host`, `cookie`, `origin`,
 `proxy-*`, …), invalid header names or values, unknown methods. Requests are
 stateless: no cookies or credentials, no cache.
 
+**Identity.** The runner chooses the `User-Agent`, never the guest. Browsers
+send their own. Native and Node runners send `gasm-run/<version>` or
+`gasm-headless/<version>`; whoever launches the game names it with `--app-id <text>`
+(e.g. `--app-id 'mygame/1.0 (+https://mygame.example)'`), which goes in front:
+`mygame/1.0 (+https://mygame.example) gasm-run/0.10.0`. Some APIs ask for that
+(MET Norway's terms want an app name and contact).
+
 **Permission.** Natively off unless `gasm-run --allow-net` (any host) or
 `--allow-net=api.example.org,*.example.org` (only those; `*.` for subdomains;
 the list applies to `gasm:net` too). Every redirect hop must be allowed. In the

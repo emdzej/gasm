@@ -3,6 +3,7 @@
 // - live requests natively and in Node give the same results (the guest's hash covers
 //   statuses, headers and bodies; requests finish in any order, the hash doesn't care);
 // - denied without --allow-net, and for a host that isn't on the --allow-net list;
+// - --app-id: every request's User-Agent is "<app id> <runner>/<version>";
 // - --fetch-record writes the same files on both runners, and replaying them gives the
 //   recorded results (the determinism suite replays tests/fixtures/fetch);
 // - in Chrome, through the player (skipped without Chrome).
@@ -26,6 +27,8 @@ const check = (name, want, got) => {
 const server = spawn('node', [join(ROOT, 'scripts/fetch-server.mjs'), '0'], { stdio: ['ignore', 'pipe', 'inherit'] });
 const port = await new Promise((resolve) => server.stdout.on('data', (d) => { const m = /listening (\d+)/.exec(String(d)); if (m) resolve(Number(m[1])); }));
 const base = `http://127.0.0.1:${port}/api`;
+let agents = [];
+server.stdout.on('data', (d) => { for (const m of String(d).matchAll(/^user-agent: (.*)$/gm)) agents.push(m[1]); });
 const tmp = mkdtempSync(join(tmpdir(), 'gasm-fetch-test-'));
 try {
   const runners = { native: [NATIVE], node: ['node', join(ROOT, 'runners/web/headless.mjs')] };
@@ -47,6 +50,12 @@ try {
   check('live: native == node (results)', results(live.native), results(live.node));
   check('live: native == node (hash)', done(live.native), done(live.node));
   check('live: all six requests answered', 6, results(live.native).split(' | ').length);
+  const version = JSON.parse(readFileSync(join(ROOT, 'runners/web/package.json'), 'utf8')).version;
+  for (const [r, name] of [['native', 'gasm-run'], ['node', 'gasm-headless']]) {
+    agents = []; // six requests, the redirect twice
+    await run(r, '--allow-net=127.0.0.1', '--app-id', 'fetchtest/1.0 (+https://gasm.emdzej.pl)');
+    check(`${r}: --app-id in every User-Agent`, `7 x fetchtest/1.0 (+https://gasm.emdzej.pl) ${name}/${version}`, `${agents.length} x ${[...new Set(agents)].join(', ')}`);
+  }
   for (const r of Object.keys(runners)) {
     const denied = await run(r);
     check(`${r}: denied without --allow-net`, true, /fetch: denied .* \(/.test(denied) && /get: not sent/.test(denied));

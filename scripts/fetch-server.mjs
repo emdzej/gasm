@@ -17,6 +17,8 @@ const server = createServer((req, res) => {
   res.setHeader('access-control-allow-origin', '*');
   res.setHeader('access-control-allow-headers', 'x-test, content-type');
   const path = new URL(req.url, 'http://x').pathname;
+  // for scripts/fetch-test.mjs (--app-id)
+  if (path.startsWith('/api/')) process.stdout.write(`user-agent: ${req.headers['user-agent'] ?? ''}\n`);
   const chunks = [];
   req.on('data', (c) => chunks.push(c));
   req.on('end', () => {

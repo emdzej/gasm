@@ -24,6 +24,8 @@ pub struct Session {
     pub allow_hosts: Vec<String>,
     /// gasm:fetch: live, recording or replaying responses (headless)
     pub fetch: crate::fetch::FetchMode,
+    /// `--app-id`: the game's identity in gasm:fetch's User-Agent
+    pub app_id: Option<String>,
     pub storage: Storage,
     pub load: LoadOptions,
     /// where ANGLE is (gasm:gl games): None searches the usual places (`angle::find`)
@@ -81,6 +83,7 @@ impl Session {
         let policy = crate::net::NetPolicy::new(self.allow_net, self.allow_hosts);
         let mut host = Host::new(self.assets, self.params, audio, gfx, Net::with_policy(policy.clone()), self.storage);
         host.fetch = crate::fetch::Fetch::new(policy, self.fetch);
+        host.fetch.set_app_id(self.app_id.as_deref());
         if let Some(a) = gl {
             eprintln!("[gasm] gl: {}", a.renderer);
             host.gl.attach(a);
