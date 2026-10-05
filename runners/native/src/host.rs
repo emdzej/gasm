@@ -301,6 +301,8 @@ pub struct Host {
     pub audio_frames: u64,
     /// the guest's memory cap (`LoadOptions::memory_limit`)
     pub memory_limit: MemoryLimit,
+    /// a catch-up frame (the runner shows only the last of a batch): gasm:gl `frame_shown` is 0
+    pub catch_up: bool,
 }
 
 impl Host {
@@ -329,6 +331,7 @@ impl Host {
             gl: Default::default(),
             fetch: Default::default(),
             memory_limit: MemoryLimit(Some(DEFAULT_MEMORY_LIMIT)),
+            catch_up: false,
             frame_index: 0,
             net,
             storage,

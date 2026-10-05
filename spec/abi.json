@@ -102,7 +102,7 @@
       "functions": [
         {"name": "width", "result": "u32", "doc": "Drawable width in pixels (the default framebuffer follows it)."},
         {"name": "height", "result": "u32", "doc": "Drawable height in pixels."},
-        {"name": "frame_shown", "result": "u32", "doc": "0 during catch-up frames (the guest may skip drawing)."},
+        {"name": "frame_shown", "result": "u32", "doc": "0 during catch-up frames (the runner runs several frames to catch up and shows only the last; the guest may skip drawing); 1 otherwise, headless included."},
         {"name": "present", "doc": "Show the default framebuffer now; otherwise the runner presents at the end of the frame."},
         {"name": "get_error", "result": "u32", "doc": "The oldest GL error flag (GL rules: a call with an error has no effect), or 0."},
         {"name": "get_string", "params": [{"name": "name", "type": "u32"}, {"name": "dst", "type": "ptr", "c": "void *", "rust": "*mut u8"}, {"name": "cap", "type": "u32"}], "result": "i32", "doc": "GL_VENDOR, GL_RENDERER, GL_VERSION, GL_SHADING_LANGUAGE_VERSION or GL_EXTENSIONS (space-separated): its length, copied if it fits; -1 for an invalid name (GL_INVALID_ENUM)."},

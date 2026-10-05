@@ -339,7 +339,8 @@ export class GlHost {
   // ---- frames, context ---------------------------------------------------------------
   width() { return this.ctx ? this.ctx.drawingBufferWidth : 1280; }
   height() { return this.ctx ? this.ctx.drawingBufferHeight : 720; }
-  frame_shown() { return this.host.showFrame ? 1 : 0; }
+  // 0 only on catch-up frames (the runner shows the batch's last one): headless runs draw too
+  frame_shown() { return this.host.catchUp ? 0 : 1; }
   present() {}
   get_error() { return this.model.getError(); }
   get_string(name, dst, cap) {

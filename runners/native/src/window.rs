@@ -399,6 +399,7 @@ impl App {
                     host.input.pointer = Some(pointer);
                 }
                 host.show_frame = k + 1 == steps;
+                host.catch_up = k + 1 < steps;
                 host.gfx.used = false;
                 });
                 let r = game.frame();
@@ -447,6 +448,9 @@ impl App {
             }
         }
         self.apply_input_mode();
+        if let Some(s) = &mut self.audio_stream {
+            s.check(); // a broken stream or a new output device: reopen
+        }
         if self.fps_t.elapsed() >= Duration::from_secs(1) {
             self.fps = self.fps_n;
             self.show_title();

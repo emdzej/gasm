@@ -54,8 +54,10 @@ public:
 	void window_set_input_text_callback(const Callable &p_callable, DisplayServerEnums::WindowID p_window = DisplayServerEnums::MAIN_WINDOW_ID) override { input_text_callback = p_callable; }
 	void window_set_rect_changed_callback(const Callable &p_callable, DisplayServerEnums::WindowID p_window = DisplayServerEnums::MAIN_WINDOW_ID) override { rect_changed_callback = p_callable; }
 	bool window_is_focused(DisplayServerEnums::WindowID p_window = DisplayServerEnums::MAIN_WINDOW_ID) const override { return true; }
-	bool window_can_draw(DisplayServerEnums::WindowID p_window = DisplayServerEnums::MAIN_WINDOW_ID) const override { return true; }
-	bool can_any_window_draw() const override { return true; }
+	// not on the runner's catch-up frames (it won't show them): those are process and
+	// physics only, so a game that is slow to draw can catch up
+	bool window_can_draw(DisplayServerEnums::WindowID p_window = DisplayServerEnums::MAIN_WINDOW_ID) const override { return can_any_window_draw(); }
+	bool can_any_window_draw() const override;
 
 	void mouse_set_mode(DisplayServerEnums::MouseMode p_mode) override;
 	DisplayServerEnums::MouseMode mouse_get_mode() const override { return mouse_mode; }

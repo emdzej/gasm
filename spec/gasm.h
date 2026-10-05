@@ -517,7 +517,9 @@ GASM_GFX_IMPORT("destroy") void gasm_gfx_destroy(uint32_t handle);
 GASM_GL_IMPORT("width") uint32_t gasm_gl_width(void);
 /* Drawable height in pixels. */
 GASM_GL_IMPORT("height") uint32_t gasm_gl_height(void);
-/* 0 during catch-up frames (the guest may skip drawing). */
+/* 0 during catch-up frames (the runner runs several frames to catch up and
+ * shows only the last; the guest may skip drawing); 1 otherwise, headless
+ * included. */
 GASM_GL_IMPORT("frame_shown") uint32_t gasm_gl_frame_shown(void);
 /* Show the default framebuffer now; otherwise the runner presents at the end
  * of the frame. */

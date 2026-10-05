@@ -21,9 +21,19 @@ void AudioDriverGasm::mix_frame(double p_frame_rate) {
 	if (!active) {
 		return;
 	}
-	// exactly rate / frame_rate frames on average: whole frames, no drift
-	ticks++;
-	uint64_t want = (uint64_t)((double)ticks * (double)mix_rate / p_frame_rate);
+	// up to the end of this frame, by the frame's time: natively real time, so a slow frame
+	// (the game below 60 fps, the runner's catch-up) mixes more and the sound doesn't run
+	// dry; in headless runs virtual time, exactly rate / frame_rate frames each (735 at
+	// 44.1 kHz and 60 Hz: the same audio as mixing per frame)
+	const double now = gasm_time_ms();
+	if (start_ms < 0.0) {
+		start_ms = now;
+	}
+	uint64_t want = (uint64_t)((now - start_ms) * (double)mix_rate / 1000.0 + (double)mix_rate / p_frame_rate + 0.5);
+	// a long stall (a suspended app, a debugger): play on from now, not all of it at once
+	if (want > frames_out + (uint64_t)mix_rate / 4) {
+		frames_out = want - (uint64_t)mix_rate / 10;
+	}
 	int n = (int)(want - frames_out);
 	if (n <= 0) {
 		return;

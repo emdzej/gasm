@@ -549,7 +549,7 @@ fn model_call(
     let (mem, host) = mem.data_and_store_mut(c);
     let hashing = host.hashing;
     let frame = host.frame_index;
-    let show = host.show_frame;
+    let catch_up = host.catch_up;
     let (gl, hash) = (&mut host.gl, &mut host.video_hash);
     let a = |i: usize| -> i32 {
         match args[i] {
@@ -588,7 +588,8 @@ fn model_call(
         // ---- frames, context ----
         "width" => ret(1280),
         "height" => ret(720),
-        "frame_shown" => ret(show as i64),
+        // 0 only on catch-up frames: headless runs draw too (as in the JS runner)
+        "frame_shown" => ret(!catch_up as i64),
         "get_error" => ret(gl.get_error() as i64),
         "get_string" => match null_string(u(0)) {
             Some(s) => ret(text(mem, u(1), u(2), s)? as i64),

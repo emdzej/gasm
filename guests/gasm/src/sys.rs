@@ -147,7 +147,7 @@ mod imports {
         /// Drawable height in pixels.
         #[link_name = "height"]
         pub fn gl_height() -> u32;
-        /// 0 during catch-up frames (the guest may skip drawing).
+        /// 0 during catch-up frames (the runner runs several frames to catch up and shows only the last; the guest may skip drawing); 1 otherwise, headless included.
         #[link_name = "frame_shown"]
         pub fn gl_frame_shown() -> u32;
         /// Show the default framebuffer now; otherwise the runner presents at the end of the frame.

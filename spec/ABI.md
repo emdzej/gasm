@@ -337,7 +337,7 @@ C and C++ games use the drop-in `<GLES3/gl3.h>` of the C SDK instead (below).
 | Import | Signature | Semantics |
 |---|---|---|
 | `width` / `height` | `() -> u32` | Drawable size; the default framebuffer follows it on resize. |
-| `frame_shown` | `() -> u32` | `0` during catch-up frames (the guest may skip drawing). |
+| `frame_shown` | `() -> u32` | `0` during catch-up frames (the runner runs several frames to catch up and shows only the last; the guest may skip drawing); `1` otherwise, headless included. |
 | `present` | `()` | Show the default framebuffer now; otherwise the runner presents at the end of the frame. |
 
 The default framebuffer has depth 24 + stencil 8, no alpha and no

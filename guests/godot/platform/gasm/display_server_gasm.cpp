@@ -85,6 +85,15 @@ Vector<DisplayServerEnums::WindowID> DisplayServerGasm::get_window_list() const 
 	return list;
 }
 
+bool DisplayServerGasm::can_any_window_draw() const {
+#ifdef GLES3_ENABLED
+	if (gl) {
+		return gasm_gl_frame_shown() != 0;
+	}
+#endif
+	return true;
+}
+
 Size2i DisplayServerGasm::window_get_size(DisplayServerEnums::WindowID p_window) const {
 #ifdef GLES3_ENABLED
 	if (gl) {

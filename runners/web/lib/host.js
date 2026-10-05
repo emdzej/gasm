@@ -93,6 +93,7 @@ export class GasmHost {
     this.net = new NetConnections(allowNet, (m) => this.onLog(m));
     this.fetch = new FetchRequests(allowNet, (m) => this.onLog(m), { replay: fetchReplay, record: fetchRecord });
     this.showFrame = true;           // false during catch-up frames: begin_frame returns 0
+    this.catchUp = false;            // a catch-up frame (not the last of a batch): gasm:gl frame_shown 0
     this.onPresent = onPresent;      // (rgba: Uint8ClampedArray, w, h)
     this.onAudio = onAudio;          // (samples: Float32Array interleaved, rate, channels)
     this.onLog = onLog;
@@ -578,13 +579,14 @@ export class GasmHost {
     if (!this.switching) return this.runFrames(steps, show);
     const before = this.videoFrames;
     for (let i = 0; i < steps.length; i++) {
-      this.prepareStep(steps[i], show && i === steps.length - 1);
+      this.prepareStep(steps[i], show && i === steps.length - 1, i < steps.length - 1);
       await this.frameAsync();
     }
     return this.finishBatch(before, show);
   }
 
-  prepareStep(s, show) {
+  prepareStep(s, show, catchUp = false) {
+    this.catchUp = catchUp;
     this.getPad = (p) => s.pads?.[p] ?? 0;
     if (s.text !== undefined) this.text = s.text;
     this.input = s.input ?? NO_INPUT;
@@ -608,7 +610,7 @@ export class GasmHost {
   runFrames(steps, show = true) {
     const before = this.videoFrames;
     for (let i = 0; i < steps.length; i++) {
-      this.prepareStep(steps[i], show && i === steps.length - 1);
+      this.prepareStep(steps[i], show && i === steps.length - 1, i < steps.length - 1);
       this.frame();
     }
     return this.finishBatch(before, show);

@@ -27,6 +27,15 @@ SDKs:
   renderer) are copied into buffers at the draw.
 
 Runners:
+- Audio keeps playing when the game drops below its frame rate or the output
+  device changes (NiP #12). Natively the stream is rebuilt when it fails or the
+  default device changes (checked once a second; a macOS system sound could
+  stall it), and the buffer grows from 60 ms by 30 ms steps, up to 150 ms, after
+  repeated underruns. `gasm_gl.frame_shown` now answers 0 only during catch-up
+  frames on both runners (1 headless).
+- Godot: audio is mixed by elapsed time instead of one frame's worth per frame,
+  so sound no longer stutters or stops when the game runs below 60 fps; it skips
+  drawing on catch-up frames (`frame_shown`).
 - Guest memory is capped: 1 GiB by default, `--memory-limit <MiB>` (0: none) on
   both runners, `memoryLimit` for `GasmHost` and `GasmWorker`. Natively a
   growth past it traps (a wasmtime resource limiter); browsers can't refuse a
