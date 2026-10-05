@@ -6,7 +6,7 @@
 //        [--asset-dir [prefix=]dir] [--param k=v] [--allow-net] [--storage-dir dir]
 //        [--storage-id id] [--input script] [--screenshot out.png] [--realtime] [--no-hash]
 //        [--no-stack-switching] [--watch-asset n=p] [--allow-net=hosts]
-//        [--fetch-record dir] [--fetch-replay dir]
+//        [--fetch-record dir] [--fetch-replay dir] [--memory-limit MiB]
 //
 // The options mean what they mean for gasm-run. --screenshot writes the last
 // video_present frame: there is no GPU here, so gasm:gfx games can't be captured
@@ -24,7 +24,7 @@ const fileStamp = (p) => { try { const s = statSync(p); return `${s.mtimeMs}:${s
 const fail = (msg) => { console.error(`error: ${msg}\n\n${USAGE}`); process.exit(2); };
 const argv = process.argv.slice(2);
 let wasm, frames = 600, screenshot, noHash = false, allowNet = false, realtime = false, storageDir = null, storageId = null;
-let stackSwitching = true, fetchRecord = null, fetchReplay = null;
+let stackSwitching = true, fetchRecord = null, fetchReplay = null, memoryLimit;
 // --input: see input-script.mjs (same syntax as gasm-run --input)
 let script = new InputScript();
 const assets = {}, params = {}, assetDirs = [], watches = [];
@@ -56,6 +56,7 @@ for (let i = 0; i < argv.length; i++) {
     if (!allowNet.length) fail('--allow-net= expects host names');
   }
   else if (a === '--fetch-record') fetchRecord = val();
+  else if (a === '--memory-limit') { const mib = Number(val()); if (!Number.isInteger(mib) || mib < 0) fail('--memory-limit expects MiB'); memoryLimit = mib * 1048576; }
   else if (a === '--fetch-replay') fetchReplay = val();
   else if (a === '--realtime') realtime = true;
   else if (a === '--no-stack-switching') stackSwitching = false;
@@ -147,7 +148,7 @@ const record = fetchRecord && ((key, r) => {
 });
 const host = new GasmHost({
   assets: table, params, allowNet, storage, virtualTime: true, onLog: (m) => console.error(m), stackSwitching,
-  fetchReplay: replay, fetchRecord: record,
+  fetchReplay: replay, fetchRecord: record, ...(memoryLimit !== undefined ? { memoryLimit } : {}),
   onTitle: (t) => console.error(`[gasm] title: ${t ?? '(default)'}`),
   getPad: (p) => (p !== 0 ? 0 : script.pad(host.frameIndex)),
 });

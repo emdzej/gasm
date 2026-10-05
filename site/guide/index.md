@@ -262,6 +262,7 @@ gasm-run <game.wasm|game.cwasm> [options]
 --compile <out.cwasm>    ahead-of-time compile to native code and exit
 --allow-precompiled      accept a .cwasm (native code: only files you compiled yourself)
 --call-timeout <secs>    trap a game call (init, a frame) that runs longer (default 30, 0 = never)
+--memory-limit <MiB>     stop the game if its memory grows past this (default 1024, 0 = no limit)
 --gl-lib <dir>           where ANGLE is, for OpenGL ES (gasm:gl) games (default: next to gasm-run)
 --gl-software            gasm:gl on SwiftShader (software) instead of the GPU
 --window-screenshot <frames>:<out.png>

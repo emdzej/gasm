@@ -38,7 +38,7 @@ const inWorker = typeof WorkerGlobalScope !== 'undefined' && globalThis instance
 
 export class GasmWorker {
   static async start({
-    wasm, assets = [], params = {}, storage = null, allowNet = false, keyboard = false,
+    wasm, assets = [], params = {}, storage = null, allowNet = false, keyboard = false, memoryLimit = undefined,
     hashing = false, virtualTime = false, onLog = console.log, onAudio = () => {}, onTitle = () => {},
     canvas = null, size = null, url = null,
   }) {
@@ -53,7 +53,7 @@ export class GasmWorker {
     const bytes = module || wasm instanceof ArrayBuffer ? wasm : wasm.buffer.slice(wasm.byteOffset, wasm.byteOffset + wasm.byteLength);
     const transfer = [...(module ? [] : [bytes]), ...(canvas ? [canvas] : [])];
     const ready = w.next('ready');
-    w.worker.postMessage({ type: 'init', wasm: bytes, assets, params, storage, allowNet, keyboard, hashing, virtualTime, canvas, size }, transfer);
+    w.worker.postMessage({ type: 'init', wasm: bytes, assets, params, storage, allowNet, keyboard, hashing, virtualTime, canvas, size, memoryLimit }, transfer);
     try {
       const r = await ready;
       w.frameRate = r.frameRate;
@@ -187,6 +187,7 @@ if (inWorker) {
         keyboard = m.keyboard;
         host = new GasmHost({
           assets, params: m.params, storage, allowNet: m.allowNet, virtualTime: m.virtualTime, onLog: log,
+          ...(m.memoryLimit !== undefined ? { memoryLimit: m.memoryLimit } : {}),
           onAudio: (samples, rate, channels) => audio.push({ samples, rate, channels }), ...(gfx ? { gfx } : {}),
         });
         host.hashing = m.hashing;

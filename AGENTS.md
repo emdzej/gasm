@@ -247,7 +247,8 @@ from the repo root, then
   Every guest pointer, handle and string argument is validated; violations trap,
   never panic (a guest call that never returns traps after `--call-timeout`).
   Resource limits: 16 net connections with bounded queues; the relay caps clients
-  and per-peer queues.
+  and per-peer queues; guest memory 1 GiB by default (`--memory-limit`: natively
+  a `ResourceLimiter`, in JS checked after each call, the same message).
 - **gfx:** "auto" layouts are pipeline-exclusive (one bind group per pipeline);
   explicit layouts (`create_bind_group_layout`) are shared across pipelines.
   Both runners keep a per-object record and the render pass state (`Meta`/`Pass`

@@ -70,11 +70,16 @@ export function staticTitle(module) {
 /** Whether this JS engine can suspend wasm (JSPI): gasm_run guests, design/stack-switching.md. */
 export const STACK_SWITCHING = typeof WebAssembly.Suspending === 'function' && typeof WebAssembly.promising === 'function';
 
+/** The default cap on guest memory, as natively (1 GiB). */
+export const DEFAULT_MEMORY_LIMIT = 1 << 30;
+/** The trap message when a guest needs more memory than allowed (the same natively). */
+export const memoryLimitMessage = (limit) => `the game needs more memory than its limit (${Math.floor(limit / 1048576)} MiB; see --memory-limit)`;
+
 export class GasmHost {
   constructor({ assets = {}, params = {}, gfx = new NullGfx(), storage = new MemoryStorage(), allowNet = false,
                 onPresent = () => {}, onAudio = () => {}, onLog = console.log, onTitle = () => {},
                 getPad = () => 0, virtualTime = false, stackSwitching = STACK_SWITCHING, gl = null,
-                fetchReplay = null, fetchRecord = null } = {}) {
+                fetchReplay = null, fetchRecord = null, memoryLimit = DEFAULT_MEMORY_LIMIT } = {}) {
     // GasmAssetProvider ({ size(name), readAt(name, offset, dst), names() }), or a plain
     // { name: Uint8Array } record (wrapped as an in-memory provider).
     this.assets = isAssetProvider(assets) ? assets : memoryAssets(assets);
@@ -131,6 +136,7 @@ export class GasmHost {
     this.memory = null;
     this.exports = null;
     this.dead = null;                // why the guest can't be called any more (trapped, exited)
+    this.memoryLimit = memoryLimit;  // bytes (0: no limit); checked after each guest call
     this.provided = new Set();       // what `has` reports
     this.t0 = performance.now();
   }
@@ -501,12 +507,21 @@ export class GasmHost {
       const version = ex.gasm_abi_version();
       if (version !== ABI_VERSION) throw new Error(`guest targets gasm ABI v${version}, runner implements v${ABI_VERSION}`);
       const rc = ex.gasm_init();
+      this.checkMemory();
       if (rc !== 0) throw new Error(`gasm_init failed with code ${rc}`);
     } catch (e) {
       this.dead = e;
       throw e;
     }
     this.exports = ex;
+  }
+
+  /** The guest's memory grew past memoryLimit: a trap (browsers can't refuse the growth
+   *  itself, so this is checked after each call; natively the growth traps). */
+  checkMemory() {
+    if (this.memoryLimit > 0 && this.memory && this.memory.buffer.byteLength > this.memoryLimit) {
+      throw new WebAssembly.RuntimeError(memoryLimitMessage(this.memoryLimit));
+    }
   }
 
   /** Run one frame. After the guest trapped or exited, this throws without calling it.
@@ -518,6 +533,7 @@ export class GasmHost {
     try {
       this.gfx.checkErrors?.();
       this.exports.gasm_frame();
+      this.checkMemory();
     } catch (e) {
       this.dead = e;
       throw e;
@@ -547,6 +563,7 @@ export class GasmHost {
         r();
       }
       await ended;
+      this.checkMemory();
     } catch (e) {
       this.dead = e;
       throw e;

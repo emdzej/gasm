@@ -381,10 +381,10 @@ which translates it to C (see [engines](/dev/runners#_1-choose-an-engine)).
 - Calls are bounded natively: a guest call (init, a frame) that runs longer
   than `--call-timeout` (30 s by default) traps. Network connections (16) and
   their queues are bounded too.
-- Memory isn't capped yet: a malicious guest could grow its memory to the
-  engine maximum (4 GiB for wasm32). A limit is on the
-  [roadmap](/docs/roadmap#runtime-and-abi), needed before running untrusted
-  content.
+- Memory is capped: 1 GiB by default (`--memory-limit <MiB>`, `GasmHost`'s
+  `memoryLimit`). Natively a growth past it traps at once; in browsers, which
+  can't refuse a guest's own growth, the runner checks after each call and stops
+  the game with the same message.
 
 ## Measured costs (Apple M1 Pro)
 

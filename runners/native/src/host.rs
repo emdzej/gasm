@@ -224,6 +224,30 @@ pub fn static_title(wasm: &[u8]) -> Option<String> {
     clean_title(std::str::from_utf8(custom_section(wasm, "gasm.title")?).ok()?)
 }
 
+/// The guest's memory cap (`--memory-limit`): growing past it traps, with a message
+/// that says so (the JS runner checks after each guest call, with the same message).
+pub struct MemoryLimit(pub Option<usize>);
+
+impl wasmtime::ResourceLimiter for MemoryLimit {
+    fn memory_growing(&mut self, _current: usize, desired: usize, _maximum: Option<usize>) -> wasmtime::Result<bool> {
+        match self.0 {
+            Some(limit) if desired > limit => bail!("{}", memory_limit_message(limit)),
+            _ => Ok(true),
+        }
+    }
+    fn table_growing(&mut self, _current: usize, _desired: usize, _maximum: Option<usize>) -> wasmtime::Result<bool> {
+        Ok(true)
+    }
+}
+
+/// The trap message when a guest needs more memory than allowed (also the JS runner's).
+pub fn memory_limit_message(limit: usize) -> String {
+    format!("the game needs more memory than its limit ({} MiB; see --memory-limit)", limit >> 20)
+}
+
+/// The default memory cap: far above what the games here use (Godot's 3D example: 39 MiB).
+pub const DEFAULT_MEMORY_LIMIT: usize = 1 << 30;
+
 pub struct Host {
     memory: Option<Memory>,
     start: Instant,
@@ -275,6 +299,8 @@ pub struct Host {
     pub video_hash: Fnv,
     pub audio_hash: Fnv,
     pub audio_frames: u64,
+    /// the guest's memory cap (`LoadOptions::memory_limit`)
+    pub memory_limit: MemoryLimit,
 }
 
 impl Host {
@@ -302,6 +328,7 @@ impl Host {
             gfx,
             gl: Default::default(),
             fetch: Default::default(),
+            memory_limit: MemoryLimit(Some(DEFAULT_MEMORY_LIMIT)),
             frame_index: 0,
             net,
             storage,
@@ -1088,11 +1115,13 @@ pub struct LoadOptions {
     /// Run guests that export `gasm_run` that way (the runner switches stacks).
     /// Off: always `gasm_frame` (tests of the Asyncify path).
     pub stack_switching: bool,
+    /// Largest guest memory in bytes (None: the engine's maximum, 4 GiB for wasm32).
+    pub memory_limit: Option<usize>,
 }
 
 impl Default for LoadOptions {
     fn default() -> Self {
-        LoadOptions { allow_precompiled: false, call_timeout: Some(Duration::from_secs(30)), stack_switching: true }
+        LoadOptions { allow_precompiled: false, call_timeout: Some(Duration::from_secs(30)), stack_switching: true, memory_limit: Some(DEFAULT_MEMORY_LIMIT) }
     }
 }
 
@@ -1172,6 +1201,8 @@ impl Game {
         add_fetch_imports(&mut linker)?;
         add_storage_imports(&mut linker)?;
         let mut store = Store::new(engine, host);
+        store.data_mut().memory_limit = MemoryLimit(opts.memory_limit);
+        store.limiter(|h| &mut h.memory_limit);
         // what `has` reports: the gasm modules and functions above (not WASI stubs or traps)
         let mut provided = HashSet::new();
         for (m, f, _) in linker.iter(&mut store) {

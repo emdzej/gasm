@@ -7,6 +7,7 @@
 //! - `stream=name`: read `reads` chunks of `chunk` bytes per frame at pseudo-random offsets
 //! - `reads=64`, `chunk=4096`, `frames=120`: then log totals and exit
 //! - `list=1`: enumerate assets (asset_count/asset_name), log and hash the names
+//! - `grow=MiB`: allocate (and touch) that much memory at start, for memory limit tests
 //! - `watch=name`: every frame, log the asset's version and contents when they change
 //!   (assets replaced while running: `--watch-asset`, `setAsset`)
 
@@ -38,6 +39,10 @@ impl gasm::Game for Check {
         let num = |k: &str, d: u32| gasm::param(k).and_then(|v| v.parse().ok()).unwrap_or(d);
         let mut hash = 0x811c_9dc5u32;
         let mut bytes = 0u64;
+        if let Some(mib) = gasm::param("grow").and_then(|v| v.parse::<usize>().ok()) {
+            let block = vec![1u8; mib << 20];
+            log!("[assetcheck] grew by {mib} MiB ({} touched)", block.iter().step_by(4096).map(|&b| b as usize).sum::<usize>());
+        }
         if gasm::param("list").is_some() {
             let names = gasm::asset_names();
             log!("[assetcheck] {} assets: {}", names.len(), names.join(" "));

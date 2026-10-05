@@ -50,6 +50,7 @@ options:
                            (then run the .cwasm with --allow-precompiled)
   --allow-precompiled      accept a .cwasm: native code, so only files you compiled yourself
   --call-timeout <secs>    trap a guest call (init, a frame) that runs longer (default 30, 0 = never)
+  --memory-limit <MiB>     trap when the guest's memory grows past this (default 1024, 0 = 4 GiB)
   --no-stack-switching     call gasm_frame even if the game exports gasm_run (its Asyncify path)
   --gl-lib <dir>           where ANGLE's libEGL/libGLESv2 are, for gasm:gl games (default: next
                            to gasm-run, ../Frameworks in a .app, or $GASM_ANGLE_DIR)
@@ -105,6 +106,7 @@ struct Args {
     no_hash: bool,
     allow_precompiled: bool,
     call_timeout: Option<Duration>,
+    memory_limit: Option<usize>,
     stack_switching: bool,
     gl_lib: Option<String>,
     gl_software: bool,
@@ -139,6 +141,7 @@ fn parse_args() -> Result<Args, String> {
         no_hash: false,
         allow_precompiled: false,
         call_timeout: Some(Duration::from_secs(30)),
+        memory_limit: Some(gasm_host::host::DEFAULT_MEMORY_LIMIT),
         stack_switching: true,
         gl_lib: None,
         gl_software: false,
@@ -222,6 +225,10 @@ fn parse_args() -> Result<Args, String> {
                     return Err("--call-timeout expects seconds".into());
                 }
                 args.call_timeout = (secs > 0.0).then(|| Duration::from_secs_f64(secs));
+            }
+            "--memory-limit" => {
+                let mib: usize = val("--memory-limit")?.parse().map_err(|_| "--memory-limit expects MiB")?;
+                args.memory_limit = (mib > 0).then_some(mib << 20);
             }
             "-h" | "--help" => return Err(String::new()),
             s if s.starts_with("--") => return Err(format!("unknown option {s}")),
@@ -345,7 +352,12 @@ fn run(args: Args) -> Result<i32, String> {
         allow_hosts: args.allow_hosts.clone(),
         fetch: args.fetch.clone(),
         storage: open_storage(&args)?,
-        load: LoadOptions { allow_precompiled: args.allow_precompiled, call_timeout: args.call_timeout, stack_switching: args.stack_switching },
+        load: LoadOptions {
+            allow_precompiled: args.allow_precompiled,
+            call_timeout: args.call_timeout,
+            stack_switching: args.stack_switching,
+            memory_limit: args.memory_limit,
+        },
         gl_lib: args.gl_lib.as_ref().map(std::path::PathBuf::from),
         gl_software: args.gl_software,
         watch_assets,

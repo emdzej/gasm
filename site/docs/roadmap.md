@@ -27,13 +27,11 @@ threads in Rust, Godot 4.7
 and in 0.9.0 HTTP requests (`gasm:fetch`,
 [design/fetch.md](https://github.com/emdzej/gasm/blob/main/design/fetch.md)),
 assets that change while a game runs and the player's time zone, the gasm
-splash screen, and OpenGL ES through SDL 3.
+splash screen, OpenGL ES through SDL 3, and a guest memory limit.
 
 1. **Player consent** ([Runtime and ABI](#runtime-and-abi)): decide the open
    questions first, then ask before network, files and other resources.
-2. **Guest memory limit** ([Runtime and ABI](#runtime-and-abi)): small, and with
-   consent what running untrusted games needs.
-3. **Godot, the rest** ([Godot](#godot)): threads or a smaller engine first (what
+2. **Godot, the rest** ([Godot](#godot)): threads or a smaller engine first (what
    bigger games hit: speed, download size), then Jolt, TLS, multiplayer.
 
 ## Runtime and ABI
@@ -42,7 +40,6 @@ splash screen, and OpenGL ES through SDL 3.
 |---|---|---|
 | Stack switching beyond JSPI | Browsers without JSPI (and Node 22) still need the Asyncify builds; wasm's stack-switching proposal would cover them too. | waiting on engines |
 | Real wasm threads | Shared memory and atomics, opt-in, for guests that need parallel CPU (physics, job systems, Godot's worker pool). Not deterministic. | proposal, after cooperative threads: [design/threads.md](https://github.com/emdzej/gasm/blob/main/design/threads.md) (part B) |
-| Guest memory limit | A cap on linear memory growth. Today a guest can grow to the engine maximum (4 GiB for wasm32); needed before running untrusted content. | not started |
 | Player consent | The runner asks the player before a game reaches anything outside itself: network connections (`gasm:net`, `gasm:fetch`; per host), files beyond its own assets, other external resources. Natively a prompt in the window (`--allow-net` and friends answer it in advance), in the browser one in the page. Four answers: **this time** (allowed until the game ends), **always** (remembered for this game), **no** (denied this time, asked again next run) or **no, and don't ask again** (denied and remembered). Denied requests get the same refusal games see today. Remembered answers can be changed: per game, and a way to clear them all (natively a command-line option, in the browser a control in the player). Open: which resources count (assets outside the asset dir? storage?), how fine-grained a question is (per host?), what headless runs do, and how it fits the capabilities manifest below. | to be discussed |
 | Capabilities manifest | Custom section `gasm.manifest` declaring required and optional imports, network hosts and platform extensions (`gasm:ext/*`), so runners can check a game before running it. | not started |
 | `.gasm` packages | One file bundling `game.wasm`, its assets and a manifest. | not started |

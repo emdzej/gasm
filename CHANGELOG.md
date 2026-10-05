@@ -21,6 +21,11 @@ SDKs:
   renderer) are copied into buffers at the draw.
 
 Runners:
+- Guest memory is capped: 1 GiB by default, `--memory-limit <MiB>` (0: none) on
+  both runners, `memoryLimit` for `GasmHost` and `GasmWorker`. Natively a
+  growth past it traps (a wasmtime resource limiter); browsers can't refuse a
+  guest's own growth, so the JS runner checks after each guest call and traps
+  with the same message. `gasm-host`: `LoadOptions::memory_limit`.
 - gasm:gl model (both runners): a draw with an enabled attribute that has no
   buffer is `INVALID_OPERATION`, and attribute indices from 16 are
   `INVALID_VALUE`, as in WebGL (Chrome reported them, the null GL didn't).

@@ -178,6 +178,18 @@ for runner in "$NATIVE" "$NODE"; do
   fi
 done
 
+# --memory-limit: a guest that grows past it traps with the same message on both runners
+# (natively at the growth, in JS after the call); below the limit it runs
+for runner in "$NATIVE" "$NODE"; do
+  over=$($runner build/assetcheck.wasm --headless 2 --memory-limit 32 --param grow=64 2>&1)
+  under=$($runner build/assetcheck.wasm --headless 2 --memory-limit 128 --param grow=64 2>&1)
+  if grep -q 'needs more memory than its limit (32 MiB' <<<"$over" && grep -q 'grew by 64 MiB' <<<"$under"; then
+    pass=$((pass + 1)); printf 'PASS  %-22s %s\n' "memory-limit" "${runner##*/}"
+  else
+    fail=$((fail + 1)); printf 'FAIL  memory-limit (%s)\n%s\n%s\n' "$runner" "$(tail -3 <<<"$over")" "$(tail -3 <<<"$under")"
+  fi
+done
+
 echo "$pass passed, $fail failed"
 if [ -n "$UPDATE" ] && [ "$fail" -eq 0 ]; then
   mkdir -p "$(dirname "$GOLDEN")"

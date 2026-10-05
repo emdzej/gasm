@@ -217,6 +217,9 @@ export interface GasmHostOptions {
   /** Allow gasm:net connections (WebSocket) and gasm:fetch requests: true (any host), or
    *  only these hosts (`*.example.org`: its subdomains). The browser's rules (CORS) apply too. Default false. */
   allowNet?: boolean | string[];
+  /** Largest guest memory in bytes (default DEFAULT_MEMORY_LIMIT, 1 GiB; 0: no limit). A guest that
+   *  grows past it traps (checked after each call: browsers can't refuse the growth itself). */
+  memoryLimit?: number;
   /** gasm:fetch from recorded responses only (reproducible runs): record key -> response, or null if unrecorded. */
   fetchReplay?: ((key: string) => FetchRecord | null) | null;
   /** Called with every completed live gasm:fetch response (to record them). */
@@ -249,6 +252,11 @@ export declare const SPLASH_HOLD: number;
 export declare function splashFrame(f: number): Uint8ClampedArray;
 /** FNV-1a 32 over every frame (equal to the native runner's). */
 export declare function splashHash(): number;
+
+/** The default memory cap (1 GiB), as natively. */
+export declare const DEFAULT_MEMORY_LIMIT: number;
+/** The trap message of a guest past its memory limit (the same natively). */
+export declare function memoryLimitMessage(limit: number): string;
 
 /** A recorded gasm:fetch response (files <key>.json + <key>.body; key: recordKey). */
 export interface FetchRecord { status: number; headers: string; body: Uint8Array }
