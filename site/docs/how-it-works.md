@@ -44,7 +44,7 @@ optional modules on top.
 
 ```mermaid
 flowchart LR
-  imp["<b>game.wasm imports</b><br/>gasm.log / time_ms / set_frame_rate / param<br/>gasm.video_present / audio_config / audio_push<br/>gasm.input_pad / text_input<br/>gasm.asset_size / asset_read / has<br/>gasm:gfx.* (optional: WebGPU subset)<br/>gasm:gl.* (optional: OpenGL ES 3.0)<br/>gasm:net.* (optional: message connections)<br/>gasm:storage.* (optional: saves)<br/>wasi_snapshot_preview1.proc_exit (+ libc subset)"]
+  imp["<b>game.wasm imports</b><br/>gasm.log / time_ms / set_frame_rate / param<br/>gasm.video_present / audio_config / audio_push<br/>gasm.input_pad / text_input<br/>gasm.asset_size / asset_read / has<br/>gasm:gfx.* (optional: WebGPU subset)<br/>gasm:gl.* (optional: OpenGL ES 3.0)<br/>gasm:net.* (optional: message connections)<br/>gasm:fetch.* (optional: HTTP requests)<br/>gasm:storage.* (optional: saves)<br/>gasm:clipboard.* · gasm:files.* (optional)<br/>wasi_snapshot_preview1.proc_exit (+ libc subset)"]
   runner(["runner"])
   exp["<b>game.wasm exports</b><br/>memory<br/>gasm_abi_version() → 0<br/>gasm_init() → 0 = ok<br/>gasm_frame()<br/>_initialize() (optional)<br/>gasm_exit() (optional)"]
   imp -- "the guest calls" --> runner
@@ -321,6 +321,22 @@ A per-game key/value store for saves, settings and scores:
   periodically, because a crash skips it. The NES game checks its battery RAM
   every 5 s; sumo writes its record when a match ends.
 
+## Clipboard and files for the player
+
+Two small optional modules for what a game hands to the player or takes from
+them, with the runner in between:
+
+- **`gasm:clipboard`**: `set_text` copies (always allowed); `get_text` returns
+  text only during the frame that carries the player's Ctrl/Cmd+V, so a game
+  can't read the clipboard behind the player's back. The runners' F2 copies the
+  game's frame as an image, with no import at all.
+- **`gasm:files`**: `save(name, mime, data)` hands the runner a copy (a photo,
+  an export) and `state(handle)` says when it's written. Natively images go to
+  `Pictures/<game>/`, the rest to `Downloads/<game>/` (`--save-dir`,
+  `--no-save`); browsers download it. Names are made safe and never overwrite.
+- **Reproducible tests:** headless runs never paste and write saves only with
+  `--save-dir`; a save completes by the next frame on every runner.
+
 ## Assets and params
 
 Assets are a flat, read-only `name → bytes` map provided at launch. **Params**
@@ -373,9 +389,16 @@ which translates it to C (see [engines](/dev/runners#_1-choose-an-engine)).
   guest; it never crashes the host.
 - No filesystem, env or args are exposed. Assets are read-only and chosen by
   the user.
-- Network access is **opt-in** natively (`--allow-net`), and the guest can only
-  open WebSocket connections. The browser applies its usual rules
-  (same-origin, mixed content).
+- Network access is **the player's choice**: hosts allowed up front
+  (`--allow-net`, `?allownet` in the player) are reached at once; for any other
+  host the window runner and the player ask (allow this time, always, not now,
+  never), and headless runs refuse. The guest can only open WebSocket
+  connections and HTTP requests, which the runner makes. The browser applies its
+  usual rules (same-origin, mixed content).
+- Files outside the game go through the runner: a save for the player
+  (`gasm:files`) lands where the runner decides (natively after the player
+  agrees), and the game never learns the path. The clipboard can be read only
+  in the frame of the player's paste key press (`gasm:clipboard`).
 - Imports a runner doesn't implement link as traps, so they can't be used to
   reach anything.
 - Calls are bounded natively: a guest call (init, a frame) that runs longer

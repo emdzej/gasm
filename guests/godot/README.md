@@ -29,8 +29,13 @@ cases (the same hashes on wasmtime JIT, AOT and V8) and demos on the website.
 | [`examples/ui`](examples/ui) | Controls (`LineEdit`, `CheckBox`, `HSlider`, `OptionButton`, `ItemList`), text input, saves with `ConfigFile` in `user://` |
 | [`examples/audio`](examples/audio) | `AudioStreamGenerator` synthesis, a WAV built in code, a reverb bus, the spectrum analyzer |
 | [`examples/http`](examples/http) | `HTTPRequest` GETs and a POST on gasm:fetch (against `scripts/fetch-server.mjs`; replayed in the determinism suite) |
+| [`examples/net`](examples/net) | Multiplayer: `WebSocketPeer` on gasm:net in a `gasm-relay` room, a square per player (`--allow-net --param relay=ws://host:9000/room`) |
 
-`make godot` builds the engine and exports the examples (`build/godot/*.pck`).
+`make godot` builds the engine (`build/godot.wasm`), the smaller engine without
+3D for 2D games (`build/godot-2d.wasm`: 26.4 MB, 6.7 MB gzipped, against 32.1 /
+8.1 MB) and exports the examples (`build/godot/*.pck`). `make godot-custom
+GODOT_PROFILE=game.gdbuild` builds a game's own engine from a Godot build
+profile.
 
 ## Exporting your game
 
@@ -60,11 +65,20 @@ scenes get random node ids at export).
   natively and in the browser). Storage keys are paths with `/` encoded, at
   most 128 bytes; a file is at most 1 MiB, 16 MiB per game.
 - **HTTP:** `HTTPRequest`/`HTTPClient` on gasm:fetch (the runner makes the
-  requests, `https://` included; natively with `--allow-net`).
+  requests, `https://` included; natively with `--allow-net`, or the player
+  agrees when asked).
+- **WebSockets:** `WebSocketPeer` (and `WebSocketMultiplayerPeer`) as a client
+  on gasm:net (`websocket_peer_gasm.cpp`): binary messages, no servers.
+- **Clipboard:** `DisplayServer.clipboard_set`/`clipboard_get` on
+  gasm:clipboard; pasting works while handling Ctrl+V (Ctrl on every system).
+- **Files for the player and launch parameters:** the `Gasm` singleton
+  (`platform/gasm/api`): `save_file(bytes, name, mime)` on gasm:files (a picture
+  in Pictures/<game>/, a download in browsers), `get_param(name)`.
 - **Not available:** threads (Godot is built with `threads=no`; work runs on
-  the main thread), sockets (`ENet`, WebSockets, `StreamPeerTCP`: gasm:net is
-  messages, not sockets), TLS in the engine (`Crypto`), complex text shaping (the
-  fallback text server: no right-to-left or ligatures), several windows.
+  the main thread; see design/threads.md), raw sockets and servers (`ENet`,
+  `StreamPeerTCP`, `TCPServer`), TLS in the engine (`Crypto`), complex text
+  shaping (the fallback text server: no right-to-left or ligatures), several
+  windows.
 - **Time:** frames are paced by the runner (60 Hz); `OS.get_ticks_usec()` is
   the frame's time, virtual in headless runs, so runs are reproducible. Local
   time and the time zone's offset come from the runner (`gasm.utc_offset_minutes`;

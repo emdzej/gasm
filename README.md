@@ -26,7 +26,7 @@ flowchart TB
   subgraph game ["game.wasm (one artifact)"]
     code["Rust/C/C++ game"] --- sdk["gasm crate / gasm.h bindings"]
   end
-  game --> abi(["gasm ABI v0: gasm.* (video, audio, input, assets, params)<br/>gasm:gfx (WebGPU subset) · gasm:gl (OpenGL ES 3) · gasm:net (messages) · gasm:storage (saves)"])
+  game --> abi(["gasm ABI v0: gasm.* (video, audio, input, assets, params)<br/>gasm:gfx (WebGPU subset) · gasm:gl (OpenGL ES 3) · gasm:net (messages) · gasm:fetch (HTTP)<br/>gasm:storage (saves) · gasm:clipboard · gasm:files"])
   abi --> native["gasm-run (Rust)<br/>wasmtime, wgpu, ANGLE<br/>winit, cpal, gilrs"]
   abi --> aot["gasm-run --compile<br/>AOT .cwasm (no JIT)"]
   abi --> web["browser runner<br/>WebGPU, WebGL 2, canvas,<br/>AudioWorklet, Gamepad"]
