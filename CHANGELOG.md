@@ -6,6 +6,13 @@ embedders. The ABI version is still 0: additions keep it (see
 guests can probe for newer imports with `gasm.has`. Versions are the git tags and
 the package versions (`gasm-sdk`, `gasm-host`, `@emdzej/gasm-host`).
 
+## Unreleased
+
+Runners:
+- A screenshot on the clipboard (NiP #6): F2 copies the game's frame, in
+  `gasm-run`'s window (2D and `gasm:gl` games; `--copy-key <code|none>`) and in
+  the web player (every kind of game; `?copykey=`). The key also reaches the game.
+
 ## 0.10.0 (2026-10-05)
 
 Website:

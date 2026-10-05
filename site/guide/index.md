@@ -133,8 +133,14 @@ make web
 
 URL parameters are passed to the game: `?game=sumo.wasm&relay=ws://host:9000&room=abc&autostart`.
 `game`, `autostart`, `wasm`, `worker`, `opfs`, `prefix`, `rom`, `filter`,
-`integer`, `asyncify`, `nosplash` and `hashframes` are used by the page itself; everything else becomes
+`integer`, `asyncify`, `nosplash`, `copykey` and `hashframes` are used by the page itself; everything else becomes
 a game parameter.
+
+**Copying a screenshot:** F2 copies the game's frame to the clipboard (a 2D
+game's frame at its own size, a GPU game's as shown), ready to paste into a
+chat or an image editor. The key still reaches the game; `?copykey=F8` picks
+another key (a `KeyboardEvent.code` name) and `?copykey=none` turns it off.
+`gasm-run`'s window does the same for 2D and OpenGL ES games (`--copy-key`).
 
 **The splash screen:** while a game loads, the player shows gasm's splash (a
 moment of Pong that turns into the gasm logo, about 1.6 s; it waits on the logo
@@ -259,12 +265,15 @@ gasm-run <game.wasm|game.cwasm> [options]
 --integer-scale          scale 2D frames by whole multiples only (black border around)
 --mute                   no audio output
 --no-splash              start without the gasm splash screen
+--copy-key <code>        copy the game's frame to the clipboard on this key (default F2, or none)
+--app-id <text>          who the game is in its HTTP requests (User-Agent: <text> gasm-run/<version>)
 --compile <out.cwasm>    ahead-of-time compile to native code and exit
 --allow-precompiled      accept a .cwasm (native code: only files you compiled yourself)
 --call-timeout <secs>    trap a game call (init, a frame) that runs longer (default 30, 0 = never)
 --memory-limit <MiB>     stop the game if its memory grows past this (default 1024, 0 = no limit)
 --gl-lib <dir>           where ANGLE is, for OpenGL ES (gasm:gl) games (default: next to gasm-run)
 --gl-software            gasm:gl on SwiftShader (software) instead of the GPU
+--gl-stats               print the game's OpenGL ES calls a frame, by name, when it ends
 --window-screenshot <frames>:<out.png>
                          write that frame as the window shows it, then quit (gasm:gl games)
 --headless <N>           run N frames with no window or audio; print hashes

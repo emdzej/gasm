@@ -47,6 +47,8 @@ options:
                            else the built-in two-player layout below)
   --print-keymap           print the active keyboard layout (a starting point for --keymap) and exit
   --mute                   no audio output
+  --copy-key <code>        (window) copy the game's frame to the clipboard on this key (default F2;
+                           a KeyboardEvent.code name, or none); the key also reaches the game
   --no-splash              start the game without the gasm splash screen (window only)
   --compile <out.cwasm>    AOT-compile the game to native code and exit
                            (then run the .cwasm with --allow-precompiled)
@@ -107,6 +109,7 @@ struct Args {
     script: script::Script,
     realtime: bool,
     mute: bool,
+    copy_key: String,
     no_hash: bool,
     allow_precompiled: bool,
     call_timeout: Option<Duration>,
@@ -144,6 +147,7 @@ fn parse_args() -> Result<Args, String> {
         script: script::Script::default(),
         realtime: false,
         mute: false,
+        copy_key: "F2".into(),
         no_hash: false,
         allow_precompiled: false,
         call_timeout: Some(Duration::from_secs(30)),
@@ -228,6 +232,7 @@ fn parse_args() -> Result<Args, String> {
             "--input" => args.script = script::Script::parse(&val("--input")?)?,
             "--realtime" => args.realtime = true,
             "--mute" => args.mute = true,
+            "--copy-key" => args.copy_key = val("--copy-key")?,
             "--no-hash" => args.no_hash = true,
             "--allow-precompiled" => args.allow_precompiled = true,
             "--no-stack-switching" => args.stack_switching = false,
@@ -412,7 +417,14 @@ fn run(args: Args) -> Result<i32, String> {
         None => {
             let (keymap, _, source) = load_keymap(&args)?;
             eprintln!("[gasm] keyboard layout: {source}");
-            gasm_host::window::run(session, gasm_host::window::Options { size: args.window, keymap, mute: args.mute, present: args.present, screenshot: args.window_screenshot.clone(), splash: !args.no_splash && args.window_screenshot.is_none() })
+            let copy_key = match args.copy_key.as_str() {
+                "none" => None,
+                k => match gasm_host::keymap::key_from_code(gasm_host::keymap::normalize(k)) {
+                    Some(c) => Some(c),
+                    None => return Err(format!("--copy-key: unknown key code {k:?} (use a KeyboardEvent.code name like F2, or none)")),
+                },
+            };
+            gasm_host::window::run(session, gasm_host::window::Options { size: args.window, keymap, mute: args.mute, present: args.present, screenshot: args.window_screenshot.clone(), splash: !args.no_splash && args.window_screenshot.is_none(), copy_key })
         }
         #[cfg(not(feature = "window"))]
         None => Err("this gasm-run was built without the window feature: use --headless".into()),

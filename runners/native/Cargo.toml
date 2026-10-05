@@ -33,7 +33,7 @@ wat = "1"
 default = ["window"]
 # the windowed runner: winit window, cpal audio, gilrs gamepads, keyboard layouts.
 # Without it the library (and gasm-run) are headless only.
-window = ["dep:winit", "dep:cpal", "dep:gilrs"]
+window = ["dep:winit", "dep:cpal", "dep:gilrs", "dep:arboard"]
 
 [dependencies]
 wasmtime = "49"
@@ -51,6 +51,8 @@ ureq = { version = "3", default-features = false, features = ["rustls-no-provide
 rustls-native-certs = "0.8"
 cpal = { version = "0.18", optional = true }
 gilrs = { version = "0.11", optional = true }
+# the screenshot hotkey (F2): images on the system clipboard
+arboard = { version = "3", optional = true, default-features = false, features = ["image-data"] }
 png = "0.18"
 # ANGLE (gasm:gl natively) is loaded at run time
 libloading = "0.8"

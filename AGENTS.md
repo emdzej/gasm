@@ -58,6 +58,7 @@ node scripts/fetch-test.mjs   # gasm:fetch against scripts/fetch-server.mjs: nat
 scripts/gl-native-test.sh     # gasm:gl on ANGLE: gltest hashes == null GL, frame drawn
 node scripts/gl-web-test.mjs  # Chrome: gltest/glowtest on WebGL 2 == golden hashes, no WebGL errors
 node scripts/opfs-test.mjs    # Chrome: OPFS + Worker mode == Node, memory flat
+node scripts/clipboard-test.mjs # Chrome: the player's copy key (F2) puts 2D, gl and gfx frames on the clipboard
 make parity                   # NES native Rust build == wasm build
 node scripts/present-test.mjs # Chrome: 2D filters, WebGL 2 == native wgpu == tests/golden/present (skips without a GPU)
                               # UPDATE_GOLDEN=1 re-records the golden images

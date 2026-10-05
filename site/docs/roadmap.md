@@ -53,6 +53,7 @@ splash screen, OpenGL ES through SDL 3, and a guest memory limit.
 | `gasm:gl` on Wayland | ANGLE draws into X11 windows, so `gasm:gl` games use XWayland on Wayland desktops. | not started |
 | `gasm:gl` on SwiftShader on macOS | `--gl-software` needs a Vulkan loader there (Electron doesn't ship one); Metal is always available, so it only matters for tests. | not planned |
 | ANGLE built from source | The libraries come from Electron 43, the last release that ships them as separate files; a newer ANGLE means building it (depot_tools) or another distribution. | when needed |
+| Copying `gasm:gfx` frames natively | `gasm-run`'s copy key (F2) copies 2D and `gasm:gl` frames; WebGPU games draw straight to the window's surface, which can't be read back yet (the web player copies them). | not started |
 | `gasm:gl` in Worker mode | WebGL 2 on a transferred `OffscreenCanvas`; `gasm:gl` games run on the main thread for now. | not started |
 | glow upstream | Rust GL code runs on a fork of glow (`sdk/glow`: its native backend on wasm32), used through `[patch.crates-io]`. Upstream support (a loader-based backend on `wasm32-unknown-unknown`) would make the patch unnecessary. | idea |
 | A display scale | Guests only see drawable pixels, so UI code guesses a scale (the egui demo uses the drawable height). A `gasm.display_scale()` import would give the real one. | idea |

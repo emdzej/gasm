@@ -101,6 +101,30 @@ addEventListener('keydown', (e) => {
   e.preventDefault();
 });
 const takeTyped = () => { const t = typed; typed = ''; return t; };
+// F2 (?copykey=<KeyboardEvent.code> or none): copy the game's frame to the clipboard, as
+// gasm-run does. The key also reaches the game. A WebGL or WebGPU canvas can only be read
+// in the task that drew it, so the copy happens right after the next frame.
+const COPY_KEY = new URLSearchParams(location.search).get('copykey') ?? 'F2';
+let copyPending = false;
+addEventListener('keydown', (e) => { if (e.code === COPY_KEY && !e.repeat && running) copyPending = true; });
+function copyFrame() {
+  copyPending = false;
+  let png;
+  if (shown) {   // a 2D frame: its own pixels, opaque, at the game's size
+    const [rgba, w, h] = shown;
+    const img = new ImageData(new Uint8ClampedArray(rgba), w, h);
+    for (let i = 3; i < img.data.length; i += 4) img.data[i] = 255;
+    const c = new OffscreenCanvas(w, h);
+    c.getContext('2d').putImageData(img, 0, 0);
+    png = c.convertToBlob({ type: 'image/png' });
+  } else if (gpu) {
+    const c = gpu.gl?.canvas ?? canvas;
+    png = new Promise((resolve, reject) => c.toBlob((b) => (b ? resolve(b) : reject(new Error('empty canvas'))), 'image/png'));
+  } else return log('copy: nothing to copy (yet)');
+  // still within the key press's user activation, which the clipboard requires
+  navigator.clipboard.write([new ClipboardItem({ 'image/png': png })])
+    .then(() => log('copied the frame to the clipboard'), (e) => log(`copy: ${e.message}`));
+}
 addEventListener('keyup', (e) => { held.delete(normalizeCode(e.code)); });
 addEventListener('blur', () => held.clear());
 
@@ -295,6 +319,7 @@ function tick(now) {
         inflight = false;
         fpsN += due;
         if (r.frame) { present(r.frame.rgba, r.frame.width, r.frame.height, r.frame.aspect); draw2d(); }
+        if (copyPending) copyFrame();
         rawInput.setMode(w.inputMode);
       }, stopped);
     }
@@ -309,6 +334,7 @@ function tick(now) {
         inflight = false;
         fpsN += due;
         draw2d();
+        if (copyPending) copyFrame();
         rawInput.setMode(h.inputMode);
       }, stopped);
     }
@@ -318,6 +344,7 @@ function tick(now) {
     try { host.runFrames(batch(due), true); } catch (e) { return stopped(e); }
     acc -= due * period; fpsN += due;
     draw2d();
+    if (copyPending) copyFrame();
     rawInput.setMode(host.inputMode);
   }
   if (acc > period * 4) acc = 0; // fell far behind: resync

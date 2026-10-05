@@ -33,6 +33,8 @@ pub struct Options {
     pub screenshot: Option<(u64, String)>,
     /// show the gasm splash screen while the game loads (`--no-splash`: off)
     pub splash: bool,
+    /// copy the game's frame to the clipboard on this key (`--copy-key`; None: off)
+    pub copy_key: Option<KeyCode>,
 }
 
 /// The splash screen, shown while the game's module compiles on another thread.
@@ -103,6 +105,8 @@ pub fn run(session: Session, opts: Options) -> Result<i32, String> {
         frames_run: 0,
         audio_stream: None,
         splash: None,
+        copy_pending: false,
+        clipboard: None,
     };
     event_loop.run_app(&mut app).map_err(|e| e.to_string())?;
     app.result
@@ -232,9 +236,34 @@ struct App {
     /// the audio device stream (kept alive while the game plays)
     audio_stream: Option<AudioStream>,
     splash: Option<Splash>,
+    /// the copy key was pressed: copy the next frame shown
+    copy_pending: bool,
+    /// kept open: on X11 and Wayland the copied image lives as long as its owner
+    clipboard: Option<arboard::Clipboard>,
+}
+
+/// Put a frame (RGBA8, top to bottom) on the system clipboard (opened on first use).
+fn copy_frame(clipboard: &mut Option<arboard::Clipboard>, w: u32, h: u32, mut rgba: Vec<u8>) {
+    // opaque, as the window shows it (GL frames can carry any alpha)
+    for px in rgba.chunks_exact_mut(4) {
+        px[3] = 255;
+    }
+    if clipboard.is_none() {
+        match arboard::Clipboard::new() {
+            Ok(c) => *clipboard = Some(c),
+            Err(e) => return eprintln!("[gasm] copy: no clipboard ({e})"),
+        }
+    }
+    let img = arboard::ImageData { width: w as usize, height: h as usize, bytes: rgba.into() };
+    match clipboard.as_mut().map(|c| c.set_image(img)) {
+        Some(Ok(())) => eprintln!("[gasm] copied the frame ({w}x{h}) to the clipboard"),
+        Some(Err(e)) => eprintln!("[gasm] copy: {e}"),
+        None => {}
+    }
 }
 
 impl App {
+
     fn stop(&mut self, el: &ActiveEventLoop, result: Result<i32, String>) {
         self.result = result;
         // the event loop can tick again before it ends: never call into a guest
@@ -405,12 +434,20 @@ impl App {
                 let r = game.frame();
                 self.frames_run += 1;
                 let shot = self.opts.screenshot.as_ref().filter(|(n, _)| *n == self.frames_run).map(|(_, p)| p.clone());
-                let img = game.with_host(|h| {
+                let copy = std::mem::take(&mut self.copy_pending);
+                let (img, copied) = game.with_host(|h| {
                     let img = shot.as_ref().and_then(|_| h.gl.read_frame());
+                    // the copy key: the GL frame, else the last 2D frame
+                    let copied = copy.then(|| h.gl.read_frame().or_else(|| (h.width > 0).then(|| (h.width as u32, h.height as u32, h.rgba.clone())))).flatten();
                     let show = h.show_frame;
                     h.gl.end_frame(show);
-                    img
+                    (img, copied)
                 });
+                match copied {
+                    Some((w, h, rgba)) => copy_frame(&mut self.clipboard, w, h, rgba),
+                    None if copy => eprintln!("[gasm] copy: nothing to copy (gasm:gfx games can't be copied yet)"),
+                    None => {}
+                }
                 if let Some(path) = shot {
                     let r = match img {
                         Some((w, h, rgba)) => crate::headless::write_png(&path, w, h, &rgba).map(|_| eprintln!("[gasm] wrote {path}")),
@@ -589,6 +626,10 @@ impl ApplicationHandler for App {
                     if code == KeyCode::Escape && !event.repeat {
                         self.esc_down = (event.state == ElementState::Pressed).then(Instant::now);
                     }
+                    // the copy key also goes to the game
+                    if Some(code) == self.opts.copy_key && event.state == ElementState::Pressed && !event.repeat {
+                        self.copy_pending = true;
+                    }
                     let k = keymap::gasm_key(code);
                     if !event.repeat && k != 0 {
                         self.key_events.push((k, event.state == ElementState::Pressed));
@@ -630,3 +671,19 @@ impl ApplicationHandler for App {
     }
 }
 
+
+#[cfg(test)]
+mod tests {
+    /// Needs a desktop session (CI has no clipboard): `cargo test -- --ignored copy_frame`
+    #[test]
+    #[ignore]
+    fn copy_frame_puts_the_image_on_the_clipboard() {
+        let rgba: Vec<u8> = (0..4 * 3 * 4).map(|i| (i * 7) as u8 | 3).collect();
+        let mut clipboard = None;
+        super::copy_frame(&mut clipboard, 4, 3, rgba.clone());
+        let img = clipboard.as_mut().unwrap().get_image().unwrap();
+        assert_eq!((img.width, img.height), (4, 3));
+        let opaque: Vec<u8> = rgba.chunks(4).flat_map(|p| [p[0], p[1], p[2], 255]).collect();
+        assert_eq!(img.bytes.into_owned(), opaque);
+    }
+}
