@@ -24,7 +24,7 @@ edition = "2024"
 crate-type = ["cdylib"]
 
 [dependencies]
-gasm-sdk = "0.11"                   # crates.io; the library is named `gasm`
+gasm-sdk = "0.12"                   # crates.io; the library is named `gasm`
 
 [profile.release]
 lto = true
