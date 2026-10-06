@@ -7,7 +7,7 @@
 //        [--storage-id id] [--input script] [--screenshot out.png] [--realtime] [--no-hash]
 //        [--no-stack-switching] [--watch-asset n=p] [--allow-net=hosts]
 //        [--fetch-record dir] [--fetch-replay dir] [--memory-limit MiB] [--app-id text]
-//        [--save-dir dir] [--no-save]
+//        [--save-dir dir] [--no-save] [--mods dir] [--no-mods]
 //
 // The options mean what they mean for gasm-run. --screenshot writes the last
 // video_present frame: there is no GPU here, so gasm:gfx games can't be captured
@@ -22,12 +22,12 @@ import { InputScript } from './input-script.mjs';
 const VERSION = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8')).version;
 
 const USAGE = 'usage: headless.mjs <game.wasm> --headless N [--rom path] [--asset name=path] [--watch-asset name=path] [--asset-dir [prefix=]dir] ' +
-  '[--param k=v] [--allow-net[=hosts]] [--fetch-record dir] [--fetch-replay dir] [--app-id text] [--save-dir dir] [--no-save] [--storage-dir dir] [--storage-id id] [--input script] [--screenshot out.png] [--realtime] [--no-hash]';
+  '[--param k=v] [--allow-net[=hosts]] [--fetch-record dir] [--fetch-replay dir] [--app-id text] [--save-dir dir] [--no-save] [--mods dir] [--no-mods] [--storage-dir dir] [--storage-id id] [--input script] [--screenshot out.png] [--realtime] [--no-hash]';
 const fileStamp = (p) => { try { const s = statSync(p); return `${s.mtimeMs}:${s.size}`; } catch { return null; } };
 const fail = (msg) => { console.error(`error: ${msg}\n\n${USAGE}`); process.exit(2); };
 const argv = process.argv.slice(2);
 let wasm, frames = 600, screenshot, noHash = false, allowNet = false, realtime = false, storageDir = null, storageId = null;
-let stackSwitching = true, fetchRecord = null, fetchReplay = null, memoryLimit, appId = null, saveDir = null, noSave = false;
+let stackSwitching = true, fetchRecord = null, fetchReplay = null, memoryLimit, appId = null, saveDir = null, noSave = false, modsDir = null, noMods = false;
 // --input: see input-script.mjs (same syntax as gasm-run --input)
 let script = new InputScript();
 const assets = {}, params = {}, assetDirs = [], watches = [];
@@ -66,6 +66,8 @@ for (let i = 0; i < argv.length; i++) {
   else if (a === '--storage-dir') storageDir = val();
   else if (a === '--save-dir') saveDir = val();
   else if (a === '--no-save') noSave = true;
+  else if (a === '--mods') modsDir = val();
+  else if (a === '--no-mods') noMods = true;
   else if (a === '--storage-id') storageId = val();
   else if (a === '--app-id') { appId = val(); if (!/^[\x20-\x7e]{1,256}$/.test(appId)) fail('--app-id expects 1 to 256 printable ASCII characters'); }
   else if (a === '-h' || a === '--help') { console.error(USAGE); process.exit(0); }
@@ -119,6 +121,36 @@ for (const [prefix, dir] of assetDirs) {
   };
   walk(dir, []);
   console.error(`[gasm-node] assets: ${n} files from ${dir}${prefix ? ` as ${prefix}/` : ''}`);
+}
+// --mods: the folder's resource packs (*.pck, *.zip, top level) as mods/<name>, read on
+// demand, in name order; unreadable ones are refused (asset mods.refused), as gasm-run does
+if (modsDir && noMods) console.error('[gasm] mods: off (--no-mods)');
+else if (modsDir && !(statSync(modsDir, { throwIfNoEntry: false })?.isDirectory())) console.error(`[gasm] mods: none (${modsDir} isn't a folder)`);
+else if (modsDir) {
+  const mounted = [], refused = [];
+  const names = readdirSync(modsDir).filter((n) => !n.startsWith('.') && /\.(pck|zip)$/i.test(n)).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+  for (const name of names) {
+    const path = join(modsDir, name);
+    try {
+      const st = lstatSync(path);
+      if (!st.isFile()) throw new Error('not a regular file');
+      closeSync(openSync(path, 'r'));
+      const size = st.size;
+      table.add(`mods/${name}`, {
+        size: () => size,
+        readAt: (offset, dst) => {
+          const fd = fdFor(path);
+          let done = 0;
+          while (done < dst.length) { const k = readSync(fd, dst, done, dst.length - done, offset + done); if (!k) break; done += k; }
+          return done;
+        },
+      }, { fromDir: true });
+      mounted.push(name);
+    } catch (e) { refused.push([name, e.code === 'EACCES' ? 'Permission denied (os error 13)' : e.message]); }
+  }
+  if (refused.length) table.add('mods.refused', bytesSource(new TextEncoder().encode(refused.map(([n, w]) => `${n}\t${w}\n`).join(''))));
+  console.error(`[gasm] mods: ${mounted.length} from ${modsDir}${mounted.length ? `: ${mounted.join(', ')}` : ''}`);
+  for (const [n, w] of refused) console.error(`[gasm] mods: refused ${n} (${w})`);
 }
 table.finish();
 

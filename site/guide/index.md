@@ -272,6 +272,8 @@ gasm-run <game.wasm|game.cwasm> [options]
 --mute                   no audio output
 --no-splash              start without the gasm splash screen
 --copy-key <code>        copy the game's frame to the clipboard on this key (default F2, or none)
+--mods <dir>             the game's mods: the folder's resource packs (*.pck, *.zip), in name order
+--no-mods                no mods, even with --mods
 --save-dir <dir>         where files the game saves for you go (default Pictures/<game>/ for
                          images, Downloads/<game>/ otherwise)
 --no-save                refuse every file the game wants to save for you

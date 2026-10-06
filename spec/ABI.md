@@ -674,6 +674,19 @@ Nothing else changes assets: a native file asset that is modified some other
 way (without `--watch-asset`) has no new version, and what the guest reads is
 undefined.
 
+### Mods
+
+Mods are assets too, so they need no import: `gasm-run --mods <dir>` (and the
+Node runner's flag) mounts the folder's resource packs, the top-level `*.pck`
+and `*.zip` files that aren't hidden, as assets `mods/<file name>`, read on
+demand like folder entries (a mod can be hundreds of MB). The game lists
+`mods/` (`asset_count`/`asset_name`) and loads them in name order, which is the
+load order. Files the runner can't read are refused, not fatal: they're logged
+and listed in asset `mods.refused`, one `name<TAB>reason` line each, so the game
+can tell the player. A folder that doesn't exist is no mods; `--no-mods` turns
+mods off even with `--mods` (launchers pass a default folder). Mods run inside
+the game's sandbox and get nothing the game itself wasn't given.
+
 ### Worker mode (browser runner)
 
 Games can run in a dedicated Worker (`@emdzej/gasm-host/worker`). The page

@@ -1,0 +1,24 @@
+; A mod for the mods example: overrides content/settings.cfg and adds content/extra.tscn.
+config_version=5
+
+[application]
+
+config/name="Mod pack (for the mods example)"
+config/features=PackedStringArray("4.7", "GL Compatibility")
+
+[display]
+
+window/size/viewport_width=640
+window/size/viewport_height=360
+window/stretch/mode="canvas_items"
+window/stretch/aspect="keep"
+
+[rendering]
+
+renderer/rendering_method="gl_compatibility"
+renderer/rendering_method.mobile="gl_compatibility"
+
+[editor]
+
+; text scenes in the pack: binary conversion gives nodes random ids, so exports would differ
+export/convert_text_resources_to_binary=false

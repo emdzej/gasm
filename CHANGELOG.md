@@ -6,6 +6,21 @@ embedders. The ABI version is still 0: additions keep it (see
 guests can probe for newer imports with `gasm.has`. Versions are the git tags and
 the package versions (`gasm-sdk`, `gasm-host`, `@emdzej/gasm-host`).
 
+## Unreleased
+
+Runners:
+- Mods (NiP #13): `--mods <dir>` (both runners) mounts the folder's resource packs
+  (`*.pck`, `*.zip`) as assets `mods/<name>`, read on demand, in name order;
+  unreadable ones are refused, logged and listed in asset `mods.refused`;
+  `--no-mods` turns them off. The release bundles' `run-godot` passes
+  `~/Documents/<game>/mods/`. No ABI change.
+
+Godot:
+- `Gasm.get_mods()` (load order, ready for `ProjectSettings.load_resource_pack`)
+  and `Gasm.get_refused_mods()`. New examples `mods` and `modpack` (a mod that
+  replaces a settings file and adds a scene); determinism cases with and without
+  the mod.
+
 ## 0.11.0 (2026-10-05)
 
 ABI:

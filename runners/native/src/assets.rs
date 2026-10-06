@@ -199,6 +199,44 @@ impl Assets {
         Ok(added)
     }
 
+    /// `--mods <dir>`: the folder's resource packs (`*.pck`, `*.zip`, top level, not
+    /// hidden), each read on demand as `mods/<file name>`, sorted by name (the load
+    /// order). Files that can't be read are refused, not fatal: the game gets them as
+    /// asset `mods.refused` (`name<TAB>reason` lines) and they're logged. Returns
+    /// (mounted, refused).
+    pub fn add_mods(&mut self, dir: &Path) -> Result<(Vec<String>, Vec<(String, String)>), String> {
+        let entries = std::fs::read_dir(dir).map_err(|e| format!("--mods {}: {e}", dir.display()))?;
+        let mut names: Vec<(String, PathBuf)> = entries
+            .filter_map(|e| e.ok())
+            .filter_map(|e| Some((e.file_name().into_string().ok()?, e.path())))
+            .filter(|(n, _)| !n.starts_with('.'))
+            .filter(|(n, _)| {
+                let l = n.to_ascii_lowercase();
+                l.ends_with(".pck") || l.ends_with(".zip")
+            })
+            .collect();
+        names.sort();
+        let (mut mounted, mut refused) = (Vec::new(), Vec::new());
+        for (name, path) in names {
+            let ok = std::fs::symlink_metadata(&path)
+                .map_err(|e| e.to_string())
+                .and_then(|m| if m.is_file() { Ok(m.len()) } else { Err("not a regular file".into()) })
+                .and_then(|len| File::open(&path).map(|_| len).map_err(|e| e.to_string()));
+            match ok {
+                Ok(len) => {
+                    self.exact.insert(format!("mods/{name}"), Entry { source: Source::Lazy { path, len }, from_dir: true, version: 0 });
+                    mounted.push(name);
+                }
+                Err(why) => refused.push((name, why)),
+            }
+        }
+        if !refused.is_empty() {
+            let text: String = refused.iter().map(|(n, w)| format!("{n}\t{w}\n")).collect();
+            self.exact.insert("mods.refused".into(), Entry { source: Source::Memory(text.into_bytes()), from_dir: false, version: 0 });
+        }
+        Ok((mounted, refused))
+    }
+
     /// Add or replace an asset from memory while the game runs (between frames):
     /// it gets a new version. Returns that version.
     pub fn set(&mut self, name: &str, bytes: Vec<u8>) -> u32 {
@@ -393,6 +431,33 @@ fn walk(dir: &Path, prefix: &mut Vec<String>, out: &mut Vec<(Vec<String>, PathBu
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mods_are_the_folders_packs_in_name_order() {
+        let dir = std::env::temp_dir().join(format!("gasm-mods-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("sub")).unwrap();
+        for f in ["b.ZIP", "a.pck", ".hidden.pck", "notes.txt", "sub/c.pck"] {
+            std::fs::write(dir.join(f), f).unwrap();
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::write(dir.join("locked.pck"), "x").unwrap();
+            std::fs::set_permissions(dir.join("locked.pck"), std::fs::Permissions::from_mode(0)).unwrap();
+        }
+        let mut a = Assets::new();
+        let (mounted, refused) = a.add_mods(&dir).unwrap();
+        assert_eq!(mounted, ["a.pck", "b.ZIP"]);
+        assert_eq!(a.size("mods/a.pck"), Some(5));
+        #[cfg(unix)]
+        if refused.len() == 1 {
+            // (as root everything is readable)
+            assert_eq!(refused[0].0, "locked.pck");
+            assert!(a.size("mods.refused").is_some());
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     fn tree() -> PathBuf {
         let d = std::env::temp_dir().join(format!("gasm-assets-test-{}", std::process::id()));

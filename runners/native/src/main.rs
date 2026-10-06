@@ -30,6 +30,9 @@ options:
   --allow-net[=<hosts>]    allow the guest to open network connections (gasm:net) and make HTTP
                            requests (gasm:fetch); with a comma-separated list only to those hosts
                            (api.example.org, *.example.org for its subdomains)
+  --mods <dir>             the game's mods: the folder's resource packs (*.pck, *.zip), read on
+                           demand as assets mods/<name> in name order (Godot: Gasm.get_mods())
+  --no-mods                no mods, even with --mods (for launchers that always pass it)
   --save-dir <dir>         where files the game saves for the player go (gasm:files; default:
                            Pictures/<game>/ for images, Downloads/<game>/ otherwise; headless:
                            nowhere unless given)
@@ -107,6 +110,8 @@ struct Args {
     storage_id: Option<String>,
     app_id: Option<String>,
     save_dir: Option<String>,
+    mods: Option<String>,
+    no_mods: bool,
     no_save: bool,
     no_ask: bool,
     forget_consent: Option<String>,
@@ -150,6 +155,8 @@ fn parse_args() -> Result<Args, String> {
         storage_id: None,
         app_id: None,
         save_dir: None,
+        mods: None,
+        no_mods: false,
         no_save: false,
         no_ask: false,
         forget_consent: None,
@@ -219,6 +226,8 @@ fn parse_args() -> Result<Args, String> {
             "--storage-dir" => args.storage_dir = Some(val("--storage-dir")?),
             "--storage-id" => args.storage_id = Some(val("--storage-id")?),
             "--save-dir" => args.save_dir = Some(val("--save-dir")?),
+            "--mods" => args.mods = Some(val("--mods")?),
+            "--no-mods" => args.no_mods = true,
             "--no-save" => args.no_save = true,
             "--no-ask" => args.no_ask = true,
             "--forget-consent" => args.forget_consent = Some(val("--forget-consent")?),
@@ -323,6 +332,19 @@ fn open_assets(args: &Args) -> Result<(assets::Assets, Vec<assets::AssetWatch>),
     for (prefix, dir) in &args.asset_dirs {
         let n = a.add_dir(prefix.as_deref(), std::path::Path::new(dir))?;
         eprintln!("[gasm] assets: {n} files from {dir}{}", prefix.as_ref().map_or(String::new(), |p| format!(" as {p}/")));
+    }
+    // --mods: resource packs as mods/<name> (a missing folder is just no mods)
+    match (&args.mods, args.no_mods) {
+        (Some(_), true) => eprintln!("[gasm] mods: off (--no-mods)"),
+        (Some(dir), false) if std::path::Path::new(dir).is_dir() => {
+            let (mounted, refused) = a.add_mods(std::path::Path::new(dir))?;
+            eprintln!("[gasm] mods: {} from {dir}{}", mounted.len(), if mounted.is_empty() { String::new() } else { format!(": {}", mounted.join(", ")) });
+            for (name, why) in refused {
+                eprintln!("[gasm] mods: refused {name} ({why})");
+            }
+        }
+        (Some(dir), false) => eprintln!("[gasm] mods: none ({dir} isn't a folder)"),
+        _ => {}
     }
     a.finish();
     Ok((a, watches))

@@ -77,10 +77,12 @@ SH
 #   ./run-godot.sh path/to/game.pck      (default: the 3D example)
 # The examples: games/godot/{hello2d,platformer,scene3d,ui,audio,http,net}.pck (http, net: with --allow-net)
 # 2D games also run on the smaller games/godot-2d.wasm (the engine without 3D)
+# Mods: resource packs in ~/Documents/<game>/mods/ (<game>: the pack's name), if any
 pck=${1:-games/godot/scene3d.pck}
 pck=$(cd "$(dirname "$pck")" && pwd)/$(basename "$pck")
+mods="$HOME/Documents/$(basename "$pck" .pck)/mods"
 cd "$(dirname "$0")"
-exec ./gasm-run games/godot.wasm --asset "game.pck=$pck"
+exec ./gasm-run games/godot.wasm --asset "game.pck=$pck" --mods "$mods"
 SH
   cat > "$PKG/run-relay.sh" <<'SH'
 #!/bin/sh
@@ -94,7 +96,7 @@ else
   printf '@echo off\r\nrem Sumo vs. the bot: run-sumo.cmd    Online: run-sumo.cmd ws://HOST:9000 [room]\r\ncd /d "%%~dp0"\r\nif "%%~1"=="" (gasm-run.exe games\\sumo.wasm) else (if "%%~2"=="" (gasm-run.exe games\\sumo.wasm --allow-net --param relay=%%1 --param room=sumo) else (gasm-run.exe games\\sumo.wasm --allow-net --param relay=%%1 --param room=%%2))\r\n' > "$PKG/run-sumo.cmd"
   printf '@echo off\r\nrem run-nes.cmd path\\to\\game.nes\r\ncd /d "%%~dp0"\r\ngasm-run.exe games\\nes.wasm --rom %%1\r\n' > "$PKG/run-nes.cmd"
   printf '@echo off\r\ncd /d "%%~dp0"\r\ngasm-relay.exe 0.0.0.0:9000\r\n' > "$PKG/run-relay.cmd"
-  printf '@echo off\r\nrem run-godot.cmd path\\to\\game.pck (a Godot 4.7 export; default: the 3D example)\r\ncd /d "%%~dp0"\r\nset pck=%%~f1\r\nif "%%~1"=="" set pck=games\\godot\\scene3d.pck\r\ngasm-run.exe games\\godot.wasm --asset "game.pck=%%pck%%"\r\n' > "$PKG/run-godot.cmd"
+  printf '@echo off\r\nrem run-godot.cmd path\\to\\game.pck (a Godot 4.7 export; default: the 3D example)\r\ncd /d "%%~dp0"\r\nset pck=%%~f1\r\nif "%%~1"=="" set pck=games\\godot\\scene3d.pck\r\nfor %%%%p in ("%%pck%%") do set name=%%%%~np\r\ngasm-run.exe games\\godot.wasm --asset "game.pck=%%pck%%" --mods "%%USERPROFILE%%\\Documents\\%%name%%\\mods"\r\n' > "$PKG/run-godot.cmd"
   printf '@echo off\r\nrem run-scummvm.cmd path\\to\\game-folder (detects the game and starts it)\r\ncd /d "%%~dp0"\r\ngasm-run.exe games\\scummvm-run.wasm --asset-dir %%1 --param "args=--auto-detect -p /"\r\n' > "$PKG/run-scummvm.cmd"
   printf '@echo off\r\nrem run-doom.cmd path\\to\\doom1.wad [DOOM options, e.g. -warp 1 1 -skill 4] (any IWAD: doom1.wad, doom.wad, doom2.wad, Freedoom)\r\ncd /d "%%~dp0"\r\ngasm-run.exe games\\doom.wasm --asset wad=%%1 --param "args=%%2 %%3 %%4 %%5 %%6 %%7 %%8 %%9"\r\n' > "$PKG/run-doom.cmd"
 fi

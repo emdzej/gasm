@@ -266,6 +266,36 @@ if Engine.has_singleton("Gasm"):
 Natively the picture lands in `Pictures/<game>/` (other types in
 `Downloads/<game>/`), in the browser it's a download.
 
+## Mods
+
+Players add mods as resource packs (`.pck` or `.zip`, exported like the game)
+in a folder; the runner mounts them (`gasm-run --mods <dir>`; the release
+bundles' `run-godot` passes `~/Documents/<game>/mods/`) and the game loads them
+with Godot's own `load_resource_pack`. A later pack overrides earlier ones by
+path, so a mod can replace a file or add new ones:
+
+```gdscript
+if Engine.has_singleton("Gasm"):
+    var gasm = Engine.get_singleton("Gasm")
+    for path in gasm.get_mods():               # in load order (by file name)
+        ProjectSettings.load_resource_pack(path)
+    var refused: Dictionary = gasm.get_refused_mods()   # { name: why }: tell the player
+```
+
+Mods are read on demand, so big ones cost nothing until used, and their
+scripts run inside the game's sandbox: a mod can do nothing the game couldn't.
+The [mods example](https://github.com/emdzej/gasm/tree/main/guests/godot/examples/mods)
+loads [a mod pack](https://github.com/emdzej/gasm/tree/main/guests/godot/examples/modpack)
+that replaces a settings file and adds a scene:
+
+```sh
+mkdir -p /tmp/mods && cp build/godot/modpack.pck /tmp/mods/
+gasm-run build/godot-2d.wasm --asset game.pck=build/godot/mods.pck --mods /tmp/mods
+```
+
+Mods in the browser player and per-mod permissions are on the
+[roadmap](/docs/roadmap#godot).
+
 ## Limits
 
 | | |

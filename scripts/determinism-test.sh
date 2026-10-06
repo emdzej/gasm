@@ -111,10 +111,24 @@ check godot-net           godot 60 $GP/net.pck --input '10-50:KEY(ArrowRight)'
 # a different build lays memory out differently)
 check godot2d-platformer  godot-2d 420 $GP/platformer.pck --input '30-400:KEY(ArrowRight),60-64:KEY(Space),130-134:KEY(Space),200-204:KEY(Space),270-274:KEY(Space)'
 check godot2d-ui          godot-2d 90 $GP/ui.pck --input '20:PTR(200,126),21-22:PTR(200,126,L),23:PTR(200,126),30:"Ada",50:PTR(500,303),51-53:PTR(500,303,L),54:PTR(500,303),70:PTR(190,492),71-72:PTR(190,492,L),73:PTR(190,492)'
+# Mods (--mods): the mods example with the mod pack in a folder, and without it
+MODS=$(mktemp -d)
+cp build/godot/modpack.pck "$MODS/"
+check godot2d-mods        godot-2d 60 $GP/mods.pck --mods "$MODS"
+check godot2d-nomods      godot-2d 30 $GP/mods.pck
+for runner in "$NATIVE" "$NODE"; do
+  out=$($runner build/godot-2d.wasm $GP/mods.pck --mods "$MODS" --headless 5 --no-hash 2>&1)
+  if grep -q 'mods: loaded modpack.pck' <<<"$out" && grep -q 'Modded: the mod replaced' <<<"$out" && grep -q 'the mod added content/extra.tscn' <<<"$out"; then
+    pass=$((pass + 1)); printf 'PASS  %-22s %s\n' "godot-mods-load" "${runner##*/}"
+  else
+    fail=$((fail + 1)); printf 'FAIL  godot-mods-load (%s)\n%s\n' "$runner" "$(grep -E 'mods' <<<"$out" | tail -4)"
+  fi
+done
+rm -rf "$MODS"
 # Godot logs an error and carries on (a shader it rejects draws nothing, alike on every
 # runner, so the hashes still agree): the examples must log no errors on either null GL,
 # on the full engine, and the 2D ones on the 2D engine too
-for e in hello2d platformer scene3d ui audio http net 2d:hello2d 2d:platformer 2d:ui 2d:audio 2d:http 2d:net; do
+for e in hello2d platformer scene3d ui audio http net mods 2d:hello2d 2d:platformer 2d:ui 2d:audio 2d:http 2d:net 2d:mods; do
   engine=godot; case $e in 2d:*) engine=godot-2d; e=${e#2d:};; esac
   errs=$( { "$NATIVE" build/$engine.wasm $GP/$e.pck --fetch-replay tests/fixtures/fetch --headless 60 2>&1 >/dev/null; $NODE build/$engine.wasm $GP/$e.pck --fetch-replay tests/fixtures/fetch --headless 60 2>&1 >/dev/null; } | grep -E '^(SHADER )?ERROR' | sort -u | head -5)
   name=$engine-$e-log
