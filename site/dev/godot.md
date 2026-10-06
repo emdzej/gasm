@@ -293,8 +293,21 @@ mkdir -p /tmp/mods && cp build/godot/modpack.pck /tmp/mods/
 gasm-run build/godot-2d.wasm --asset game.pck=build/godot/mods.pck --mods /tmp/mods
 ```
 
-Mods in the browser player and per-mod permissions are on the
-[roadmap](/docs/roadmap#godot).
+A mod that wants to connect somewhere says so in a manifest next to it,
+`modpack.json` for `modpack.pck`:
+
+```json
+{ "manifest": 1, "name": "Map tiles", "hosts": ["tiles.example.org"] }
+```
+
+The player is asked about it before the game starts; if they say no (or a
+headless run's `--allow-net` doesn't cover its hosts) it isn't mounted and
+`get_refused_mods()` says why. In the browser player, "mods…" picks the folder.
+
+A Godot game's own manifest (the hosts it reaches, `"files": true` for a photo
+mode) can't go in `godot.wasm`, which every game shares: give it as an asset,
+`--asset gasm.manifest=mygame.json` (or `gasm-run --manifest mygame.json`), and
+ship it with the pack.
 
 ## Limits
 

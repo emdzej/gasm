@@ -6,6 +6,9 @@
 //! finished, logging "[fetchtest] done ...".
 
 use gasm::fetch::{Request, Response, State};
+
+// the hosts it reaches (the test servers), asked about once up front in a window
+gasm::manifest!(r#"{ "manifest": 1, "name": "fetchtest", "requires": ["gasm:fetch"], "hosts": ["127.0.0.1", "localhost"] }"#);
 use gasm::log;
 
 fn fnv(h: u32, bytes: &[u8]) -> u32 {

@@ -30,6 +30,11 @@ pub struct Session {
     pub save: crate::files::SaveTarget,
     /// the window runner: ask the player about hosts and saves the command line didn't allow
     pub consent: Option<crate::consent::Consent>,
+    /// the game's capabilities manifest (embedded, asset `gasm.manifest` or `--manifest`)
+    pub manifest: Option<crate::manifest::Manifest>,
+    /// mounted mods whose manifests ask for hosts: (file, hosts); each needs the
+    /// player's yes (or hosts --allow-net covers), else it's unmounted before the game starts
+    pub mod_requests: Vec<(String, Vec<String>)>,
     pub storage: Storage,
     pub load: LoadOptions,
     /// where ANGLE is (gasm:gl games): None searches the usual places (`angle::find`)
@@ -80,14 +85,35 @@ impl Session {
         self.start_with(None, audio, gfx, gl, reproducible, hashing)
     }
 
+    /// Mods that ask for hosts: kept if --allow-net covers them or the player said yes
+    /// (asked before the game starts), else unmounted and listed in `mods.refused`.
+    fn decide_mods(&mut self, policy: &crate::net::NetPolicy) {
+        for (file, hosts) in std::mem::take(&mut self.mod_requests) {
+            let covered = policy.allowed && hosts.iter().all(|h| policy.permits(h));
+            let said = || self.consent.as_ref().and_then(|c| c.lock().unwrap().check_mod(&file, &hosts));
+            if covered || said() == Some(true) {
+                eprintln!("[gasm] mods: {file} may connect to {}", hosts.join(", "));
+                continue;
+            }
+            let why = match &self.consent {
+                Some(_) => format!("it connects to {} and the player said no", hosts.join(", ")),
+                None => format!("it connects to {}, which --allow-net doesn't cover", hosts.join(", ")),
+            };
+            eprintln!("[gasm] mods: refused {file} ({why})");
+            self.assets.refuse_mod(&file, &why);
+        }
+    }
+
     /// [`Session::start`] with a module compiled earlier (`compile_in_background`).
     pub fn start_compiled(self, module: wasmtime::Module, audio: Option<Box<dyn AudioOut>>, gfx: Gfx, gl: Option<Angle>) -> Result<Game, Stop> {
         self.start_with(Some(module), audio, gfx, gl, false, false)
     }
 
-    fn start_with(self, module: Option<wasmtime::Module>, audio: Option<Box<dyn AudioOut>>, gfx: Gfx, gl: Option<Angle>, reproducible: bool, hashing: bool) -> Result<Game, Stop> {
-        let policy = crate::net::NetPolicy::new(self.allow_net, self.allow_hosts).with_consent(self.consent.clone());
+    fn start_with(mut self, module: Option<wasmtime::Module>, audio: Option<Box<dyn AudioOut>>, gfx: Gfx, gl: Option<Angle>, reproducible: bool, hashing: bool) -> Result<Game, Stop> {
+        let policy = crate::net::NetPolicy::new(self.allow_net, self.allow_hosts.clone()).with_consent(self.consent.clone());
+        self.decide_mods(&policy);
         let mut host = Host::new(self.assets, self.params, audio, gfx, Net::with_policy(policy.clone()), self.storage);
+        host.requires = self.manifest.map(|m| m.requires).unwrap_or_default();
         host.fetch = crate::fetch::Fetch::new(policy, self.fetch);
         host.fetch.set_app_id(self.app_id.as_deref());
         host.files = crate::files::Files::new(self.save).with_consent(self.consent.clone());

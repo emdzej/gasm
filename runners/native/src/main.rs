@@ -37,6 +37,10 @@ options:
                            Pictures/<game>/ for images, Downloads/<game>/ otherwise; headless:
                            nowhere unless given)
   --no-save                refuse every file the game wants to save for the player
+  --manifest <file>        the game's capabilities manifest (JSON; else asset gasm.manifest, else the
+                           module's gasm.manifest section): what it requires, the hosts it reaches
+                           and whether it saves files, asked about once before it starts
+  --info                   print the game's manifest and imports, whether this runner has them, and exit
   --no-ask                 (window) don't ask the player: refuse network hosts and saves the
                            options above didn't allow (headless runs never ask)
   --forget-consent <game|all>
@@ -114,6 +118,8 @@ struct Args {
     no_mods: bool,
     no_save: bool,
     no_ask: bool,
+    manifest: Option<String>,
+    info: bool,
     forget_consent: Option<String>,
     window: (u32, u32),
     present: Present,
@@ -159,6 +165,8 @@ fn parse_args() -> Result<Args, String> {
         no_mods: false,
         no_save: false,
         no_ask: false,
+        manifest: None,
+        info: false,
         forget_consent: None,
         window: (960, 720),
         present: Present::default(),
@@ -230,6 +238,8 @@ fn parse_args() -> Result<Args, String> {
             "--no-mods" => args.no_mods = true,
             "--no-save" => args.no_save = true,
             "--no-ask" => args.no_ask = true,
+            "--manifest" => args.manifest = Some(val("--manifest")?),
+            "--info" => args.info = true,
             "--forget-consent" => args.forget_consent = Some(val("--forget-consent")?),
             "--app-id" => {
                 let id = val("--app-id")?;
@@ -314,7 +324,11 @@ fn main() -> ExitCode {
 
 /// Open (not read) every asset: explicit files first, so they win over folder entries.
 /// Also returns the --watch-asset watches.
-fn open_assets(args: &Args) -> Result<(assets::Assets, Vec<assets::AssetWatch>), String> {
+/// Mods whose manifests (`<stem>.json` next to the pack) ask for hosts: (file, hosts).
+type ModRequests = Vec<(String, Vec<String>)>;
+
+fn open_assets(args: &Args) -> Result<(assets::Assets, Vec<assets::AssetWatch>, ModRequests), String> {
+    let mut requests = Vec::new();
     let mut a = assets::Assets::new();
     for (name, path) in &args.assets {
         a.insert_file(name, std::path::Path::new(path))?;
@@ -342,12 +356,89 @@ fn open_assets(args: &Args) -> Result<(assets::Assets, Vec<assets::AssetWatch>),
             for (name, why) in refused {
                 eprintln!("[gasm] mods: refused {name} ({why})");
             }
+            // each mod's manifest, if it has one: what it asks for (a broken one refuses the mod)
+            for name in mounted {
+                let stem = name.rsplit_once('.').map_or(name.as_str(), |(s, _)| s);
+                let path = std::path::Path::new(dir).join(format!("{stem}.json"));
+                let Ok(text) = std::fs::read_to_string(&path) else { continue };
+                match gasm_host::manifest::Manifest::parse(&text) {
+                    Ok(m) if m.hosts.is_empty() => {}
+                    Ok(m) => requests.push((name, m.hosts)),
+                    Err(e) => {
+                        let why = format!("its manifest {stem}.json: {e}");
+                        eprintln!("[gasm] mods: refused {name} ({why})");
+                        a.refuse_mod(&name, &why);
+                    }
+                }
+            }
         }
         (Some(dir), false) => eprintln!("[gasm] mods: none ({dir} isn't a folder)"),
         _ => {}
     }
     a.finish();
-    Ok((a, watches))
+    Ok((a, watches, requests))
+}
+
+/// The game's manifest: --manifest <file>, else asset `gasm.manifest`, else the module's
+/// `gasm.manifest` section. One that's present but invalid refuses the game.
+fn load_manifest(args: &Args, wasm: &[u8]) -> Result<Option<gasm_host::manifest::Manifest>, String> {
+    use gasm_host::manifest::{self, Manifest};
+    let asset = args.assets.iter().find(|(n, _)| n.as_str() == manifest::SECTION).map(|(_, p)| p.clone());
+    let (text, from) = match args.manifest.clone().or(asset) {
+        Some(f) => (std::fs::read_to_string(&f).map_err(|e| format!("{f}: {e}"))?, f),
+        None => match manifest::from_module(wasm) {
+            Some(t) => (t?, format!("{} (its gasm.manifest section)", args.wasm)),
+            None => return Ok(None),
+        },
+    };
+    let m = Manifest::parse(&text).map_err(|e| format!("the game's manifest {from}: {e}"))?;
+    eprintln!(
+        "[gasm] manifest: {}{}{}{}",
+        m.name.as_deref().unwrap_or("(no name)"),
+        if m.requires.is_empty() { String::new() } else { format!(", requires {}", m.requires.join(" ")) },
+        if m.hosts.is_empty() { String::new() } else { format!(", hosts {}", m.hosts.join(" ")) },
+        if m.files { ", saves files" } else { "" }
+    );
+    Ok(Some(m))
+}
+
+/// `--info`: the game's manifest and imports, and whether this runner has them.
+fn info(args: &Args, wasm: &[u8]) -> Result<i32, String> {
+    let provided = host::provided();
+    let manifest = load_manifest(args, wasm)?;
+    println!("{}", args.wasm);
+    match &manifest {
+        Some(m) => {
+            println!("  manifest: {}", m.name.as_deref().unwrap_or("(no name)"));
+            println!("    requires: {}", if m.requires.is_empty() { "-".into() } else { m.requires.join(" ") });
+            println!("    hosts:    {}", if m.hosts.is_empty() { "-".into() } else { m.hosts.join(" ") });
+            println!("    files:    {}", if m.files { "saves files for the player" } else { "-" });
+        }
+        None => println!("  manifest: none"),
+    }
+    let mut missing = manifest.as_ref().map(|m| m.missing(&provided)).unwrap_or_default();
+    match wasmtime::Module::new(host::engine(), wasm) {
+        Ok(module) => {
+            let mut modules: Vec<String> = module.imports().map(|i| i.module().to_owned()).collect();
+            modules.sort();
+            modules.dedup();
+            println!("  imports:");
+            for m in modules {
+                let n = module.imports().filter(|i| i.module() == m).count();
+                let unknown: Vec<String> = module.imports().filter(|i| i.module() == m && !provided.contains(&format!("{}.{}", m, i.name()))).map(|i| i.name().to_owned()).collect();
+                println!("    {m:<24} {n} function{}{}", if n == 1 { "" } else { "s" }, if unknown.is_empty() { String::new() } else { format!(" ({} not here: {})", unknown.len(), unknown.iter().take(4).cloned().collect::<Vec<_>>().join(", ")) });
+            }
+        }
+        Err(e) => println!("  imports: (not a module this runner compiles: {e})"),
+    }
+    missing.dedup();
+    if missing.is_empty() {
+        println!("  this runner can run it (gasm-run {})", env!("CARGO_PKG_VERSION"));
+        Ok(0)
+    } else {
+        println!("  this runner lacks {} (gasm-run {})", missing.join(", "), env!("CARGO_PKG_VERSION"));
+        Ok(1)
+    }
 }
 
 /// --keymap FILE, else <data dir>/gasm/keymap.txt if present, else the default.
@@ -412,8 +503,27 @@ fn run(args: Args) -> Result<i32, String> {
         eprintln!("[gasm] compiled {} -> {out} ({} bytes) in {:.0} ms", args.wasm, native.len(), t0.elapsed().as_secs_f64() * 1000.0);
         return Ok(0);
     }
+    if args.info {
+        return info(&args, &wasm);
+    }
+    let manifest = load_manifest(&args, &wasm)?;
     // fail fast on bad paths, before opening a window
-    let (assets, watch_assets) = open_assets(&args)?;
+    let (assets, watch_assets, mod_requests) = open_assets(&args)?;
+    let consent = (args.headless.is_none() && !args.no_ask).then(|| gasm_host::consent::Store::open(&game_id(&args)).shared());
+    if let Some(c) = &consent {
+        // asked before the game starts: the manifest's hosts and saves, and mods that want hosts
+        let allowed = gasm_host::net::NetPolicy::new(args.allow_net, args.allow_hosts.clone());
+        let mut c = c.lock().unwrap();
+        if let Some(m) = &manifest {
+            let hosts: Vec<String> = m.hosts.iter().filter(|h| !(allowed.allowed && allowed.permits(h))).cloned().collect();
+            c.ask_up_front(&hosts, m.files && args.save_dir.is_none() && !args.no_save);
+        }
+        for (file, hosts) in &mod_requests {
+            if !(allowed.allowed && hosts.iter().all(|h| allowed.permits(h))) {
+                _ = c.check_mod(file, hosts);
+            }
+        }
+    }
     let session = Session {
         name: args.wasm.clone(),
         wasm,
@@ -423,7 +533,9 @@ fn run(args: Args) -> Result<i32, String> {
         allow_hosts: args.allow_hosts.clone(),
         fetch: args.fetch.clone(),
         app_id: args.app_id.clone(),
-        consent: (args.headless.is_none() && !args.no_ask).then(|| gasm_host::consent::Store::open(&game_id(&args)).shared()),
+        consent,
+        manifest,
+        mod_requests,
         save: match (&args.save_dir, args.no_save, args.headless) {
             (_, true, _) => gasm_host::files::SaveTarget::Off,
             (Some(d), _, _) => gasm_host::files::SaveTarget::Dir(d.into()),

@@ -1260,3 +1260,29 @@ macro_rules! main_loop {
         }
     };
 }
+
+/// Embed the game's capabilities manifest (the `gasm.manifest` custom section): what it
+/// requires, the hosts it reaches and whether it saves files, which runners check and
+/// ask about once before it starts. Once per game, with a JSON string:
+///
+/// ```ignore
+/// gasm::manifest!(r#"{ "manifest": 1, "name": "My Game", "hosts": ["api.example.org"], "files": true }"#);
+/// ```
+#[macro_export]
+macro_rules! manifest {
+    ($json:expr) => {
+        #[cfg(target_arch = "wasm32")]
+        #[unsafe(link_section = "gasm.manifest")]
+        #[used]
+        static __GASM_MANIFEST: [u8; $json.len()] = {
+            let b = $json.as_bytes();
+            let mut a = [0u8; $json.len()];
+            let mut i = 0;
+            while i < a.len() {
+                a[i] = b[i];
+                i += 1;
+            }
+            a
+        };
+    };
+}

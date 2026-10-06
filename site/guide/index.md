@@ -136,6 +136,10 @@ URL parameters are passed to the game: `?game=sumo.wasm&relay=ws://host:9000&roo
 `integer`, `asyncify`, `nosplash`, `copykey`, `allownet` and `hashframes` are used by the page itself; everything else becomes
 a game parameter.
 
+**Mods for Godot games:** "mods…" picks a folder of resource packs (`.pck`,
+`.zip`), used from the next start, as `gasm-run --mods` does. A mod that wants
+to connect somewhere (a `<name>.json` manifest next to it) is asked about first.
+
 **When a game wants the network:** the player asks before a game connects to a
 host for the first time (allow this time, always, not now, never); "always" and
 "never" are remembered for that game, and "forget answers" in the status line
@@ -272,6 +276,8 @@ gasm-run <game.wasm|game.cwasm> [options]
 --mute                   no audio output
 --no-splash              start without the gasm splash screen
 --copy-key <code>        copy the game's frame to the clipboard on this key (default F2, or none)
+--manifest <file>        the game's capabilities manifest (what it needs; else the one in the .wasm)
+--info                   show the game's manifest and whether this gasm-run can run it, then exit
 --mods <dir>             the game's mods: the folder's resource packs (*.pck, *.zip), in name order
 --no-mods                no mods, even with --mods
 --save-dir <dir>         where files the game saves for you go (default Pictures/<game>/ for
@@ -335,7 +341,9 @@ window or hold Esc).
 ### When a game wants the network or your files
 
 The first time a game wants to connect to a host, or to save a file for you
-(a photo, an export), `gasm-run` pauses it and asks:
+(a photo, an export), `gasm-run` pauses it and asks. A game that lists what it
+needs in its manifest is asked about once, before it starts, and so is a mod
+that wants to connect somewhere:
 
 - **1** allow this time (until the game ends)
 - **2** always allow

@@ -674,6 +674,33 @@ Nothing else changes assets: a native file asset that is modified some other
 way (without `--watch-asset`) has no new version, and what the guest reads is
 undefined.
 
+### Capabilities manifest
+
+A game can say up front what it needs, so runners can check it before it runs
+and ask the player once instead of request by request. The manifest is JSON in
+the module's custom section `gasm.manifest` (Rust: `gasm::manifest!(...)`; C:
+`GASM_MANIFEST(...)` from `gasm_manifest.h`), or given by the launcher (asset
+`gasm.manifest`, or `gasm-run --manifest <file>`; Godot games share one engine
+module, so theirs come that way):
+
+```json
+{ "manifest": 1, "name": "Nowhere in Particular", "requires": ["gasm:gl"],
+  "hosts": ["api.met.no", "*.example.org"], "files": true }
+```
+
+| Field | Meaning |
+|---|---|
+| `manifest` | Format version (1). A runner refuses a newer one, naming the version. |
+| `name` | For people (logs, the runner's questions). |
+| `requires` | Modules (`gasm:gl`) or functions (`gasm:fetch.request`) the game can't run without: a runner that lacks one refuses the game before it starts, saying which (`gasm.has` names). |
+| `hosts` | Hosts it will reach (`*.` for subdomains). The window runner and the player ask about all of them in one question before the game starts; hosts it didn't declare are still asked about when it reaches them. Headless runs allow only what `--allow-net` does. |
+| `files` | It saves files for the player (`gasm:files`): natively asked before the game starts. |
+
+Unknown fields are ignored; a manifest that's present but invalid refuses the
+game with the reason. `gasm-run --info game.wasm` prints the manifest, the
+imports and whether this runner has them. Requirements are checked the same way
+on every runner (`GasmHost.load` throws; `host.manifest` is the parsed manifest).
+
 ### Mods
 
 Mods are assets too, so they need no import: `gasm-run --mods <dir>` (and the
@@ -683,7 +710,13 @@ demand like folder entries (a mod can be hundreds of MB). The game lists
 `mods/` (`asset_count`/`asset_name`) and loads them in name order, which is the
 load order. Files the runner can't read are refused, not fatal: they're logged
 and listed in asset `mods.refused`, one `name<TAB>reason` line each, so the game
-can tell the player. A folder that doesn't exist is no mods; `--no-mods` turns
+can tell the player. A mod can bring a manifest next to it (`roads.pck` and
+`roads.json`, the same format; only `hosts` counts for mods): one that asks for
+hosts is put to the player before the game starts (allow this time, always, not
+now, never), refused if they say no or, in headless runs, unless `--allow-net`
+covers them, and its hosts are allowed for the game when it's allowed (a mod's
+scripts run in the game, so the runner can only decide per mod, before they
+run). A broken manifest refuses its mod. A folder that doesn't exist is no mods; `--no-mods` turns
 mods off even with `--mods` (launchers pass a default folder). Mods run inside
 the game's sandbox and get nothing the game itself wasn't given.
 

@@ -25,6 +25,7 @@ pub mod gles;
 pub mod headless;
 pub mod host;
 pub mod keys;
+pub mod manifest;
 pub mod net;
 pub mod present;
 pub mod script;

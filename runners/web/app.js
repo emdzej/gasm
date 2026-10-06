@@ -4,7 +4,7 @@ import { playSplash } from './gasm-splash.js';
 import {
   GasmHost, STACK_SWITCHING, staticTitle, IdbStorage, MemoryStorage, ProcExit, Resampler, AssetTable, bytesSource,
   directoryHandleEntries, fileListEntries, preloadAssets, DEFAULT_KEYMAP, parseKeymap, keyboardPads,
-  BrowserInput, INPUT_KEYS_RAW, gamepadPads, normalizeCode, SPLASH_W, SPLASH_H,
+  BrowserInput, INPUT_KEYS_RAW, gamepadPads, normalizeCode, SPLASH_W, SPLASH_H, NetPolicy, moduleManifest, parseManifest,
 } from './gasm-host.js';
 import { GasmWorker } from './gasm-worker.js';
 import { WebGpuGfx } from './webgpu-gfx.js';
@@ -32,6 +32,7 @@ const GODOT_GAMES = {
   'godot-ui': { pck: 'godot/ui.pck', label: 'Godot: UI and saves', engine: 'godot-2d.wasm' },
   'godot-audio': { pck: 'godot/audio.pck', label: 'Godot: audio', engine: 'godot-2d.wasm' },
   'godot-net': { pck: 'godot/net.pck', label: 'Godot: multiplayer (relay)', engine: 'godot-2d.wasm' },
+  'godot-mods': { pck: 'godot/mods.pck', label: 'Godot: mods (pick them with "mods...")', engine: 'godot-2d.wasm' },
 };
 for (const [id, g] of Object.entries(GODOT_GAMES)) GAMES[id] = g.label;
 // Games that take a content file from roms/ (or an opened/dropped file) as an asset.
@@ -127,17 +128,21 @@ function saveFile(name, mime, bytes) {
 const CONSENT = 'gasm.consent.';
 const remembered = (g) => { try { return JSON.parse(localStorage.getItem(CONSENT + g) ?? '{}'); } catch { return {}; } };
 let consentQueue = Promise.resolve();
-function askPlayer(subject) {
+// Subjects: "net:<host>", "net:a.org,b.org" (a manifest's hosts, asked at once and
+// remembered for each) and "mod:<file>" (a mod whose manifest wants hosts).
+function askPlayer(subject, detail = '') {
   const g = gameName, r = remembered(g);
-  if (subject in r) return r[subject];
-  const host = subject.replace(/^net:/, '');
+  const each = subject.startsWith('net:') ? subject.slice(4).split(',').map((h) => `net:${h}`) : [subject];
+  if (each.every((s) => s in r)) return each.every((s) => r[s]);
+  const what = subject.startsWith('mod:') ? `wants to load the mod ${subject.slice(4)}${detail ? `, which connects to ${detail}` : ''}`
+    : `wants to connect to ${subject.slice(4).replaceAll(',', ', ')}`;
   const asked = consentQueue.then(() => new Promise((resolve) => {
     const dlg = $('consentdlg');
-    $('consentq').textContent = `${g} wants to connect to ${host}`;
+    $('consentq').textContent = `${g} ${what}`;
     dlg.onclose = () => {
       const a = dlg.returnValue;
-      if (a === 'always' || a === 'never') localStorage.setItem(CONSENT + g, JSON.stringify({ ...remembered(g), [subject]: a === 'always' }));
-      log(`${g}: ${host}: ${{ once: 'allowed this time', always: 'always allowed', never: 'never allowed' }[a] ?? 'not now'}`);
+      if (a === 'always' || a === 'never') localStorage.setItem(CONSENT + g, JSON.stringify({ ...remembered(g), ...Object.fromEntries(each.map((s) => [s, a === 'always'])) }));
+      log(`${g}: ${subject.replace(/^(net|mod):/, '')}: ${{ once: 'allowed this time', always: 'always allowed', never: 'never allowed' }[a] ?? 'not now'}`);
       resolve(a === 'once' || a === 'always');
     };
     dlg.returnValue = '';
@@ -152,11 +157,13 @@ $('forget').onclick = (e) => {
   keys.forEach((k) => localStorage.removeItem(k));
   log(`forgot the remembered answers of ${keys.length} game${keys.length === 1 ? '' : 's'}`);
 };
-/** Hosts allowed up front: ?allownet (all) or ?allownet=a.org,b.org, plus the relay's host. */
+/** Hosts allowed up front: ?allownet (all) or ?allownet=a.org,b.org, plus the relay's host,
+ *  plus what the player allowed for this run before it started (runHosts). */
+let runHosts = [];
 function allowedHosts() {
   const p = new URLSearchParams(location.search);
   if (p.has('allownet') && !p.get('allownet')) return true;
-  const hosts = (p.get('allownet') ?? '').split(',').map((h) => h.trim()).filter(Boolean);
+  const hosts = (p.get('allownet') ?? '').split(',').map((h) => h.trim()).filter(Boolean).concat(runHosts);
   try { if ($('relay').value.trim()) hosts.push(new URL($('relay').value.trim()).hostname); } catch {}
   return hosts.length ? hosts : false;
 }
@@ -512,6 +519,20 @@ async function start({ romBytes } = {}) {
     const usesGl = WebAssembly.Module.imports(module).some((i) => i.module === 'gasm:gl');
     gameName = staticTitle(module) ?? game.split('/').pop().replace(/\.wasm$/, '');
     showTitle(null);
+    // before the game starts: the manifest's hosts (one question) and mods that want hosts
+    runHosts = [];
+    let manifest = null;
+    try {
+      const text = record['gasm.manifest'] ? new TextDecoder().decode(record['gasm.manifest']) : moduleManifest(module);
+      if (text !== null) manifest = parseManifest(text);
+    } catch (e) { splash?.ready(); return log(`the game's manifest: ${e.message}`); }
+    const allowed = allowedHosts();
+    const policy = new NetPolicy(allowed);
+    const unasked = (manifest?.hosts ?? []).filter((h) => !policy.permits(h));
+    if (unasked.length && await askPlayer(`net:${unasked.join(',')}`)) runHosts.push(...unasked);
+    if (stale()) return;
+    if (mods && GODOT_GAMES[game]) await mountMods(record, policy);
+    if (stale()) return;
     // gfx guests go to the worker only if the canvas can be transferred (OffscreenCanvas);
     // the worker then needs WebGPU too, otherwise we fall back to the main thread below.
     const offscreenOk = typeof HTMLCanvasElement !== 'undefined' && 'transferControlToOffscreen' in HTMLCanvasElement.prototype;
@@ -657,6 +678,40 @@ function folderChosen() {
   log(`folder ${folder.name}: ${folder.entries.length} files, ${(bytes / 1048576).toFixed(1)} MB (${$('worker').checked ? 'read on demand in the worker' : 'preloaded on start; enable worker for on-demand reads'})`);
 }
 $('folder').onclick = pickFolder;
+// Mods for Godot games (as gasm-run --mods): a picked folder's *.pck / *.zip, mounted as
+// mods/<name> in name order; one with a manifest (<stem>.json) that wants hosts is the
+// player's choice; refused ones go to asset mods.refused.
+let mods = null;   // [{ name, file, manifest: File | null }]
+$('mods').onclick = () => $('modsinput').click();
+$('modsinput').onchange = (e) => {
+  // the folder's own files (picked files, without a folder, count too)
+  const top = [...e.target.files].filter((f) => !f.webkitRelativePath || f.webkitRelativePath.split('/').length === 2);
+  const byName = new Map(top.map((f) => [f.name, f]));
+  mods = top.filter((f) => !f.name.startsWith('.') && /\.(pck|zip)$/i.test(f.name)).sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
+    .map((f) => ({ name: f.name, file: f, manifest: byName.get(`${f.name.replace(/\.[^.]*$/, '')}.json`) ?? null }));
+  $('mods').textContent = mods.length ? `mods (${mods.length})` : 'mods…';
+  log(`${mods.length} mod${mods.length === 1 ? '' : 's'}: ${mods.map((m) => m.name).join(', ') || 'none'} (used by Godot games from the next start)`);
+};
+async function mountMods(record, policy) {
+  const refused = [];
+  for (const m of mods) {
+    let why = null;
+    if (m.manifest) {
+      try {
+        const man = parseManifest(await m.manifest.text());
+        const open = man.hosts.filter((h) => !policy.permits(h));
+        if (open.length) {
+          if (await askPlayer(`mod:${m.name}`, man.hosts.join(', '))) runHosts.push(...open);
+          else why = `it connects to ${man.hosts.join(', ')} and the player said no`;
+        }
+      } catch (e) { why = `its manifest ${m.manifest.name}: ${e.message}`; }
+    }
+    if (why) { refused.push(`${m.name}\t${why}\n`); log(`mods: refused ${m.name} (${why})`); continue; }
+    record[`mods/${m.name}`] = new Uint8Array(await m.file.arrayBuffer());
+  }
+  if (refused.length) record['mods.refused'] = new TextEncoder().encode(refused.join(''));
+  log(`mods: ${mods.length - refused.length} of ${mods.length} mounted`);
+}
 $('folderinput').onchange = (e) => {
   const entries = fileListEntries(e.target.files);
   const root = e.target.files[0]?.webkitRelativePath.split('/')[0] ?? 'folder';

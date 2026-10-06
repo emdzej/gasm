@@ -237,6 +237,19 @@ impl Assets {
         Ok((mounted, refused))
     }
 
+    /// Refuse a mounted mod (before the game starts): unmounted, and its line added to
+    /// `mods.refused`.
+    pub fn refuse_mod(&mut self, file: &str, why: &str) {
+        self.exact.remove(&format!("mods/{file}"));
+        let mut text = match self.exact.get("mods.refused").map(|e| &e.source) {
+            Some(Source::Memory(b)) => String::from_utf8_lossy(b).into_owned(),
+            _ => String::new(),
+        };
+        text += &format!("{file}\t{why}\n");
+        self.exact.insert("mods.refused".into(), Entry { source: Source::Memory(text.into_bytes()), from_dir: false, version: 0 });
+        self.index();
+    }
+
     /// Add or replace an asset from memory while the game runs (between frames):
     /// it gets a new version. Returns that version.
     pub fn set(&mut self, name: &str, bytes: Vec<u8>) -> u32 {

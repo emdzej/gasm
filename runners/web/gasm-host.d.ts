@@ -334,6 +334,8 @@ export declare class GasmHost {
   showFrame: boolean;
   /** Set by the guest (gasm.set_frame_rate). */
   frameRate: number;
+  /** The game's capabilities manifest once loaded (asset gasm.manifest, else its gasm.manifest section), or null. */
+  manifest: Manifest | null;
   frameIndex: number;
   width: number;
   height: number;
@@ -434,3 +436,12 @@ export declare function validMime(mime: string): boolean;
 export declare class FileSaves {
   constructor(onSave: ((name: string, mime: string, bytes: Uint8Array) => boolean | Promise<boolean>) | null, log: (msg: string) => void);
 }
+
+/** A capabilities manifest (ABI.md, "Capabilities manifest"). */
+export interface Manifest { name: string | null; requires: string[]; hosts: string[]; files: boolean }
+export declare const MANIFEST_SECTION: 'gasm.manifest';
+export declare const MANIFEST_VERSION: number;
+/** Parse a manifest's JSON; throws why it's refused. */
+export declare function parseManifest(text: string): Manifest;
+/** The text of a module's gasm.manifest custom section, or null. */
+export declare function moduleManifest(module: WebAssembly.Module): string | null;

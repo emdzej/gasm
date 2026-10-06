@@ -2,6 +2,7 @@
 // "gasm", "gasm:gfx", "gasm:net" and "gasm:storage" imports and the WASI subset
 // (lib/wasi.js) exactly like runners/native/src/host.rs.
 
+import { MANIFEST_SECTION, moduleManifest, parseManifest } from './manifest.js';
 import { FileSaves } from './files.js';
 import { AssetTable, isAssetProvider, memoryAssets } from './assets.js';
 import { GfxModel, NullGfx, clampRect } from './gfx.js';
@@ -507,6 +508,16 @@ export class GasmHost {
       get: (t, n) => t[n] ?? (() => { throw new Error(`unsupported import ${String(mod)}.${String(n)}`); }),
     });
     const module = wasm instanceof WebAssembly.Module ? wasm : await WebAssembly.compile(wasm);
+    // the capabilities manifest (asset gasm.manifest over the module's section): its
+    // requirements are checked before the guest runs at all
+    this.manifest = null;
+    const given = this.assets.size(MANIFEST_SECTION);
+    const text = given >= 0 ? (() => { const b = new Uint8Array(given); this.assets.readAt(MANIFEST_SECTION, 0, b); return new TextDecoder().decode(b); })() : moduleManifest(module);
+    if (text !== null) {
+      try { this.manifest = parseManifest(text); } catch (e) { throw new Error(`the game's manifest: ${e.message}`); }
+      const missing = this.manifest.requires.filter((r) => !this.provided.has(r));
+      if (missing.length) throw new Error(`this game needs ${missing.join(', ')}, which this runner doesn't have`);
+    }
     const gpuModules = new Set(WebAssembly.Module.imports(module).map((i) => i.module).filter((m) => m === 'gasm:gfx' || m === 'gasm:gl'));
     if (gpuModules.size > 1) throw new Error('a module imports gasm:gfx or gasm:gl, not both');
     this.usesGl = gpuModules.has('gasm:gl');

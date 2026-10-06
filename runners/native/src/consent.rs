@@ -13,7 +13,9 @@ use std::collections::{BTreeMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-/// What a game asks for: `net:<host>` or `save`.
+/// What a game asks for: `net:<host>` (`net:a.org,b.org` for a manifest's hosts,
+/// asked at once and answered for each), `save`, or `mod:<file>` (a mod whose
+/// manifest asks for hosts; allowing it allows them).
 pub type Subject = String;
 
 pub fn net_subject(host: &str) -> Subject {
@@ -42,6 +44,8 @@ pub struct Store {
     questions: VecDeque<Subject>,
     /// headless and tests: unanswered means no
     ask: bool,
+    /// mod file -> the hosts its manifest asks for
+    mod_hosts: BTreeMap<String, Vec<String>>,
 }
 
 /// Shared by the host's gasm:net, gasm:fetch and gasm:files and the window runner.
@@ -61,12 +65,12 @@ impl Store {
                 }
             }
         }
-        Store { file, remembered, session: BTreeMap::new(), questions: VecDeque::new(), ask: true }
+        Store { file, remembered, session: BTreeMap::new(), questions: VecDeque::new(), ask: true, mod_hosts: BTreeMap::new() }
     }
 
     /// A store that never asks: unanswered is no (headless runs).
     pub fn never_ask() -> Store {
-        Store { file: None, remembered: BTreeMap::new(), session: BTreeMap::new(), questions: VecDeque::new(), ask: false }
+        Store { file: None, remembered: BTreeMap::new(), session: BTreeMap::new(), questions: VecDeque::new(), ask: false, mod_hosts: BTreeMap::new() }
     }
 
     pub fn shared(self) -> Consent {
@@ -88,6 +92,58 @@ impl Store {
         None
     }
 
+    /// A manifest's hosts and saves, asked about before the game starts (one question
+    /// for the hosts not answered yet).
+    pub fn ask_up_front(&mut self, hosts: &[String], files: bool) {
+        let open: Vec<&str> = hosts.iter().map(String::as_str).filter(|h| self.answered(&net_subject(h)).is_none()).collect();
+        if !open.is_empty() {
+            self.queue(net_subject(&open.join(",")));
+        }
+        if files {
+            _ = self.check(SAVE);
+        }
+    }
+
+    /// A mod whose manifest asks for hosts: Some(allowed) if answered, else asked
+    /// (before the game starts) and None.
+    pub fn check_mod(&mut self, file: &str, hosts: &[String]) -> Option<bool> {
+        self.mod_hosts.insert(file.to_owned(), hosts.to_vec());
+        let subject = format!("mod:{file}");
+        let a = self.answered(&subject);
+        if a == Some(true) {
+            for h in hosts {
+                self.session.insert(net_subject(h), true);
+            }
+        }
+        if a.is_none() {
+            if !self.ask {
+                return Some(false);
+            }
+            self.queue(subject);
+        }
+        a
+    }
+
+    fn answered(&self, subject: &str) -> Option<bool> {
+        self.session.get(subject).or_else(|| self.remembered.get(subject)).copied()
+    }
+
+    fn queue(&mut self, subject: Subject) {
+        if self.ask && !self.questions.contains(&subject) {
+            self.questions.push_back(subject);
+        }
+    }
+
+    /// Whether questions are waiting (the window runner doesn't start a game meanwhile).
+    pub fn asking(&self) -> bool {
+        !self.questions.is_empty()
+    }
+
+    /// The hosts a mod's manifest asks for (for the question).
+    pub fn mod_hosts(&self, file: &str) -> &[String] {
+        self.mod_hosts.get(file).map_or(&[], Vec::as_slice)
+    }
+
     /// The next question to put to the player.
     pub fn question(&self) -> Option<&Subject> {
         self.questions.front()
@@ -96,9 +152,23 @@ impl Store {
     pub fn answer(&mut self, subject: &str, answer: Answer) {
         self.questions.retain(|q| q != subject);
         let allowed = matches!(answer, Answer::ThisTime | Answer::Always);
-        self.session.insert(subject.to_owned(), allowed);
+        // a manifest's hosts: an answer for each; an allowed mod allows its hosts
+        let mut subjects: Vec<String> = match subject.strip_prefix("net:") {
+            Some(hosts) => hosts.split(',').map(net_subject).collect(),
+            None => vec![subject.to_owned()],
+        };
+        if let (Some(file), true) = (subject.strip_prefix("mod:"), allowed) {
+            for h in self.mod_hosts(file).to_vec() {
+                self.session.insert(net_subject(&h), true);
+            }
+        }
+        for s in subjects.drain(..) {
+            self.session.insert(s.clone(), allowed);
+            if matches!(answer, Answer::Always | Answer::Never) {
+                self.remembered.insert(s, allowed);
+            }
+        }
         if matches!(answer, Answer::Always | Answer::Never) {
-            self.remembered.insert(subject.to_owned(), allowed);
             self.save();
         }
         eprintln!("[gasm] consent: {subject}: {}", match answer {
@@ -139,10 +209,13 @@ pub fn forget(game: &str) -> Result<String, String> {
 
 /// The question for the player, in words: what the game wants, and to what.
 pub fn describe(subject: &str) -> (&'static str, String) {
-    match subject.strip_prefix("net:") {
-        Some(host) => ("wants to connect to", host.to_owned()),
-        None => ("wants to save files for you", "in Pictures or Downloads".to_owned()),
+    if let Some(hosts) = subject.strip_prefix("net:") {
+        return ("wants to connect to", hosts.replace(',', ", "));
     }
+    if let Some(file) = subject.strip_prefix("mod:") {
+        return ("wants to load a mod that connects out", file.to_owned());
+    }
+    ("wants to save files for you", "in Pictures or Downloads".to_owned())
 }
 
 #[cfg(test)]
@@ -151,7 +224,7 @@ mod tests {
 
     #[test]
     fn answers() {
-        let mut s = Store { file: None, remembered: BTreeMap::new(), session: BTreeMap::new(), questions: VecDeque::new(), ask: true };
+        let mut s = Store { file: None, remembered: BTreeMap::new(), session: BTreeMap::new(), questions: VecDeque::new(), ask: true, mod_hosts: BTreeMap::new() };
         assert_eq!(s.check("net:a.org"), None);
         assert_eq!(s.check("net:a.org"), None);
         assert_eq!(s.check("save"), None);
@@ -163,5 +236,20 @@ mod tests {
         assert_eq!((s.check("save"), s.remembered.get("save")), (Some(false), Some(&false)));
         assert_eq!(s.question(), None);
         assert_eq!(Store::never_ask().check("net:b.org"), Some(false));
+    }
+
+    #[test]
+    fn up_front_and_mods() {
+        let mut s = Store::never_ask();
+        s.ask = true;
+        s.ask_up_front(&["a.org".into(), "b.org".into()], false);
+        assert_eq!(s.question().map(String::as_str), Some("net:a.org,b.org"));
+        s.answer("net:a.org,b.org", Answer::ThisTime);
+        assert_eq!((s.check("net:a.org"), s.check("net:b.org")), (Some(true), Some(true)));
+        assert_eq!(s.check_mod("roads.pck", &["c.org".into()]), None);
+        assert_eq!(s.question().map(String::as_str), Some("mod:roads.pck"));
+        s.answer("mod:roads.pck", Answer::ThisTime);
+        assert_eq!((s.check_mod("roads.pck", &["c.org".into()]), s.check("net:c.org")), (Some(true), Some(true)));
+        assert_eq!(Store::never_ask().check_mod("x.pck", &["d.org".into()]), Some(false));
     }
 }

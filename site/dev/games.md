@@ -288,6 +288,26 @@ for i in 0..n {
 [`guests/textured`](https://github.com/emdzej/gasm/blob/main/guests/textured/src/lib.rs)
 uses all of this in about 300 lines.
 
+### What the game needs (the manifest)
+
+Say which hosts the game reaches and what it can't run without, and runners ask
+the player once, before it starts, and refuse it cleanly where a module is
+missing:
+
+```rust
+gasm::manifest!(r#"{ "manifest": 1, "name": "My Game", "requires": ["gasm:gl"], "hosts": ["api.example.org"], "files": true }"#);
+```
+
+In C, once in any source file:
+
+```c
+#include "gasm_manifest.h"
+GASM_MANIFEST({ "manifest": 1, "name": "My Game", "hosts": ["api.example.org"] });
+```
+
+`gasm-run --info game.wasm` shows what a build says and whether a runner can run
+it. The fields are in the [spec](/docs/abi#capabilities-manifest).
+
 ### Clipboard (`gasm:clipboard`)
 
 ```rust

@@ -27,13 +27,13 @@ HTTP requests (`gasm:fetch`,
 the splash screen, OpenGL ES through SDL 3, a guest memory limit, and since
 0.10.0: the clipboard (`gasm:clipboard`, F2 copies the frame), saving files for
 the player (`gasm:files`), player consent for hosts and saves, Godot multiplayer
-(`WebSocketPeer` on `gasm:net`) and a smaller engine for 2D games.
+(`WebSocketPeer` on `gasm:net`) and a smaller engine for 2D games; since 0.11.0
+mods and the capabilities manifest.
 
-1. **Capabilities manifest** ([Runtime and ABI](#runtime-and-abi)): a game
-   declares the hosts and modules it needs, so runners can ask once, up front,
-   and check a game before running it; the base for `.gasm` packages.
-2. **Opening files** ([Runtime and ABI](#runtime-and-abi)): the other half of
+1. **Opening files** ([Runtime and ABI](#runtime-and-abi)): the other half of
    `gasm:files`, a picker run by the runner.
+2. **`.gasm` packages** ([Runtime and ABI](#runtime-and-abi)): one file with the
+   game, its assets and its manifest.
 3. **Godot, the rest** ([Godot](#godot)): Jolt, TLS and `Crypto`, threads when a
    game needs them ([design/threads.md](https://github.com/emdzej/gasm/blob/main/design/threads.md)).
 
@@ -43,7 +43,6 @@ the player (`gasm:files`), player consent for hosts and saves, Godot multiplayer
 |---|---|---|
 | Stack switching beyond JSPI | Browsers without JSPI (and Node 22) still need the Asyncify builds; wasm's stack-switching proposal would cover them too. | waiting on engines |
 | Real wasm threads | Shared memory and atomics, opt-in, for guests that need parallel CPU (physics, job systems, Godot's worker pool). Not deterministic. | proposal; for Godot, a design pass found the gain small (rendering stays on the main thread; physics and loading would gain), so no prototype yet: [design/threads.md](https://github.com/emdzej/gasm/blob/main/design/threads.md) (part B, "Godot: design pass") |
-| Capabilities manifest | Custom section `gasm.manifest` declaring required and optional imports, network hosts and platform extensions (`gasm:ext/*`), so runners can check a game before running it. | not started |
 | `.gasm` packages | One file bundling `game.wasm`, its assets and a manifest. | not started |
 | Opening files (`gasm:files`) | A file picker run by the runner (importing a map, a replay): the game only sees what the player picks. Saving for the player already works (`gasm:files.save`). | not started |
 | Asking before a save | `gasm-run` writes a game's saves to a default folder (or `--save-dir`, or refuses them with `--no-save`); a native save dialog for each would let the player pick the place. | idea |
@@ -123,8 +122,6 @@ Left over:
 | Threads | Godot is built with `threads=no`: its worker pool, threaded loading and the audio thread run on the main thread. Godot's threads on gasm's cooperative scheduler (they would need Asyncify, which Godot's size makes slow), or real wasm threads (part B of design/threads.md). | not started |
 | Jolt physics | Jolt doesn't recognize WASI targets (its platform and SIMD detection); a patch like its Emscripten support. Godot Physics 3D is used meanwhile. | not started |
 | TLS, `Crypto` | mbedtls needs a time source (`mbedtls_ms_time`, `timing.c`) for WASI. | not started |
-| Mods in the browser | `gasm-run --mods` mounts a folder of resource packs; the player could take them from a picked folder (as "open folder..." does for ScummVM) or a list the page allows. | not started |
-| Permissions per mod | A mod's manifest asks for what it needs (a host, its own storage), the runner asks once and remembers, and a mod gets nothing the game wasn't given. Builds on the capabilities manifest. | not started |
 | Godot as a WebSocket server | `WebSocketPeer` and `WebSocketMultiplayerPeer` work as clients on `gasm:net` (a relay room, or a Godot server outside gasm); a game can't host (`create_server`), and ENet and UDP need sockets browsers don't have. | not planned |
 | Complex text | The advanced text server (ICU, HarfBuzz: right-to-left, ligatures) instead of the fallback one; larger. | not started |
 | Touch | Godot's touch events from gasm's pointer on touch screens. | not started |

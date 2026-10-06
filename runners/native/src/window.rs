@@ -342,6 +342,22 @@ impl App {
             sp.frame = if ready { splash::FRAMES } else { sp.frame.max(splash::HOLD) };
         }
         if sp.frame >= splash::FRAMES && ready {
+            // the manifest's hosts and saves, and mods that want hosts: answered before the game starts
+            if let Some(q) = self.consent.as_ref().and_then(|c| c.lock().unwrap().question().cloned()) {
+                if self.asking.as_ref() != Some(&q) {
+                    let (wants, what) = crate::consent::describe(&q);
+                    eprintln!("[gasm] consent: {} {wants} {what}? (1: this time, 2: always, 3: not now, 4: never)", self.default_title);
+                }
+                let img = crate::prompt::image(&self.default_title, &q);
+                let (w, h) = (crate::prompt::W as u32, crate::prompt::H as u32);
+                match &sp.gl {
+                    Some(angle) => angle.show_image(&img, w, h),
+                    None => sp.gfx.present_video(&img, w, h, None),
+                }
+                self.asking = Some(q);
+                return el.set_control_flow(ControlFlow::WaitUntil(Instant::now() + Duration::from_millis(50)));
+            }
+            self.asking = None;
             let sp = self.splash.take().expect("splash");
             return self.start_game(el, sp.module.expect("compiled"), sp.audio, sp.gfx, sp.gl);
         }
@@ -599,11 +615,14 @@ impl ApplicationHandler for App {
         };
         self.window = Some(window);
         let Some(session) = self.session.as_ref() else { return };
-        if self.opts.splash {
+        // questions before the start (manifest, mods) go through the splash's path too, at its end
+        let asking = self.consent.as_ref().is_some_and(|c| c.lock().unwrap().asking());
+        if self.opts.splash || asking {
             // the module compiles while the splash plays; the game starts after both
             let compiling = Some(session.compile_in_background());
             let next = Instant::now();
-            self.splash = Some(Splash { frame: 0, next, compiling, module: None, skip: false, audio, gfx, gl });
+            let frame = if self.opts.splash { 0 } else { splash::FRAMES };
+            self.splash = Some(Splash { frame, next, compiling, module: None, skip: false, audio, gfx, gl });
             el.set_control_flow(ControlFlow::WaitUntil(next));
         } else {
             let module = crate::host::Game::compile(&session.wasm, session.load.allow_precompiled);

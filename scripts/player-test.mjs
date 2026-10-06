@@ -7,7 +7,7 @@
 // gasm:gfx game without WebGPU (headless Chrome on Linux).
 //   node scripts/player-test.mjs     (serves the repo itself; needs build/*.wasm)
 import { spawn } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -24,6 +24,8 @@ const server = spawn('python3', ['-m', 'http.server', String(httpPort), '--bind'
 const chrome = spawn(CHROME, [...args, 'about:blank'], { stdio: 'ignore' });
 let pass = 0, fail = 0;
 const logs = [];
+// Browser.downloadWillBegin: guid -> { name }
+const downloadsSeen = new Map();
 const check = (name, ok, got) => { if (ok) { pass++; console.log(`PASS  ${name}`); } else { fail++; console.log(`FAIL  ${name}: ${got}`); } };
 try {
   let target;
@@ -41,6 +43,7 @@ try {
       const m = JSON.parse(e.data);
       if (m.id && pending.has(m.id)) { pending.get(m.id)(m); pending.delete(m.id); }
       if (m.method === 'Runtime.consoleAPICalled') logs.push(m.params.args.map((a) => a.value ?? a.description).join(' '));
+      if (m.method === 'Browser.downloadWillBegin') downloadsSeen.set(m.params.guid, { name: m.params.suggestedFilename, done: false });
     };
     return { ws, send: (method, params = {}) => new Promise((r) => { const i = ++id; pending.set(i, r); ws.send(JSON.stringify({ id: i, method, params })); }) };
   };
@@ -98,19 +101,30 @@ try {
     const frames = logs.filter((l) => l.includes('pasted ')).length;
     check(`inputtest${mode}: pasted text lasts one frame`, frames === 1, `${frames} frames saw it`);
   }
-  // gasm:files: a save is a download
-  const downloads = join(profile, 'downloads');
-  await b.send('Browser.setDownloadBehavior', { behavior: 'allow', downloadPath: downloads });
+  // gasm:files: a save is a download. Checked in the page (the download's name and
+  // blob, recorded where the player clicks its link) and by Chrome's downloadWillBegin
+  // (Chrome 154 leaves headless downloads unfinished on disk, so files can't be read)
+  await b.send('Browser.setDownloadBehavior', { behavior: 'allow', downloadPath: join(profile, 'downloads'), eventsEnabled: true });
   for (const mode of ['', '&worker']) {
     logs.length = 0;
-    rmSync(downloads, { recursive: true, force: true });
+    downloadsSeen.clear();
     await send('Page.navigate', { url: `${BASE}?game=inputtest.wasm&autostart&nosplash${mode}` });
     await running();
+    await evaluate(`(() => {
+      window.__saved = [];
+      const click = HTMLAnchorElement.prototype.click;
+      HTMLAnchorElement.prototype.click = function () { if (this.download) window.__saved.push({ name: this.download, href: this.href }); return click.call(this); };
+      return true;
+    })()`);
     await send('Input.dispatchKeyEvent', { type: 'keyDown', code: 'KeyS', key: 's', windowsVirtualKeyCode: 83, text: 's' });
     await send('Input.dispatchKeyEvent', { type: 'keyUp', code: 'KeyS', key: 's', windowsVirtualKeyCode: 83 });
     await sleep(1500);
-    const got = existsSync(join(downloads, 'inputtest.txt')) ? readFileSync(join(downloads, 'inputtest.txt'), 'utf8') : `files: ${existsSync(downloads) ? readdirSync(downloads).join(',') : 'none'}`;
-    check(`inputtest${mode}: a save is a download`, got === 'inputtest save 1\n' && logs.some((l) => l.includes('save: saved')), `${JSON.stringify(got)} / ${logs.filter((l) => /save/.test(l)).join(' / ')}`);
+    const got = await evaluate(`(async () => {
+      const s = window.__saved[0];
+      return s ? s.name + ': ' + await (await fetch(s.href)).text() : 'no download';
+    })()`);
+    const began = [...downloadsSeen.values()].some((d) => d.name === 'inputtest.txt');
+    check(`inputtest${mode}: a save is a download`, got === 'inputtest.txt: inputtest save 1\n' && began && logs.some((l) => l.includes('save: saved')), `${JSON.stringify(got)} / began: ${began} / ${logs.filter((l) => /save/.test(l)).join(' / ')}`);
   }
 
   // player consent: fetchtest asks for this server's host; "never" is remembered, "forget
@@ -122,6 +136,8 @@ try {
   await send('Page.navigate', { url: fetchUrl });
   await sleep(3000);
   const asked = await dialogOpen();
+  const question = await evaluate(`document.getElementById('consentq').textContent`);
+  check('manifest: its hosts are asked about at once, before the game starts', /wants to connect to (127\.0\.0\.1, localhost|localhost, 127\.0\.0\.1)$/.test(question ?? '') && !logs.some((l) => l.includes('[fetchtest]')), `${question} / ${logs.filter((l) => l.includes('[fetchtest]')).length} fetchtest lines`);
   await answer('never');
   await sleep(800);
   check('consent: an unasked host opens the question', asked === true, `dialog open: ${asked}`);
@@ -137,6 +153,34 @@ try {
   await answer('once');
   await sleep(1500);
   check('consent: "forget answers" asks again, "this time" allows', again === true && logs.some((l) => /fetchtest\] get: 404/.test(l)), `asked: ${again} / ${logs.filter((l) => /fetchtest\] get/.test(l)).join(' / ')}`);
+
+  // mods in the player: picked packs mount for a Godot game; one whose manifest wants a
+  // host is asked about ("not now": refused, "this time": loaded)
+  if (existsSync(join(ROOT, 'build/godot/modpack.pck'))) {
+    for (const [answerWith, want] of [['no', /refused modpack\.pck|No mods/], ['once', /Modded: the mod replaced/]]) {
+      logs.length = 0;
+      await send('Page.navigate', { url: `${BASE}?game=godot-mods&nosplash` });
+      await running(500);
+      // a folder picker can't be filled through DevTools: hand the page the files as a picked folder would
+      await evaluate(`(async () => {
+        const pck = new File([await (await fetch('../../build/godot/modpack.pck')).arrayBuffer()], 'modpack.pck');
+        const json = new File(['{ "manifest": 1, "name": "modpack", "hosts": ["tiles.example.org"] }'], 'modpack.json');
+        const dt = new DataTransfer();
+        dt.items.add(pck); dt.items.add(json);
+        const input = document.getElementById('modsinput');
+        input.files = dt.files;
+        input.dispatchEvent(new Event('change'));
+        return true;
+      })()`);
+      await evaluate(`document.getElementById('start').click()`);
+      let open = false;
+      for (let i = 0; i < 60 && !open; i++) { await sleep(100); open = await dialogOpen(); }
+      const q = open ? await evaluate(`document.getElementById('consentq').textContent`) : '';
+      if (open) await answer(answerWith);
+      await running(2500);
+      check(`player mods: "${answerWith}" for a mod that wants a host`, /wants to load the mod modpack\.pck, which connects to tiles\.example\.org/.test(q) && logs.some((l) => want.test(l)), `${q || 'no question'} / ${logs.filter((l) => /mods/.test(l)).join(' / ')}`);
+    }
+  } else console.log('SKIP  player mods (make godot)');
 
   // Godot: paste into the ui example's name field (Godot's shortcuts are Ctrl+ on gasm)
   if (existsSync(join(ROOT, 'build/godot/ui.pck'))) {

@@ -279,6 +279,8 @@ pub struct Host {
     pub clipboard: Clipboard,
     /// gasm:files: saves queued for the player (written between frames)
     pub files: crate::files::Files,
+    /// the manifest's `requires`: the game is refused before it starts if one is missing
+    pub requires: Vec<String>,
     pub storage: Storage,
     /// false during catch-up frames: gfx begin_frame returns 0
     pub show_frame: bool,
@@ -336,6 +338,7 @@ impl Host {
             fetch: Default::default(),
             clipboard: Default::default(),
             files: Default::default(),
+            requires: Vec::new(),
             memory_limit: MemoryLimit(Some(DEFAULT_MEMORY_LIMIT)),
             catch_up: false,
             frame_index: 0,
@@ -1021,6 +1024,49 @@ fn add_fetch_imports(linker: &mut Linker<Host>) -> wasmtime::Result<()> {
     Ok(())
 }
 
+/// Every gasm import this runner has.
+fn add_all_imports(linker: &mut Linker<Host>, switching: bool) -> wasmtime::Result<()> {
+    add_gasm_imports(linker)?;
+    if switching {
+        switching::add_yield_async(linker)?;
+    } else {
+        switching::add_yield_sync(linker)?;
+    }
+    add_gfx_imports(linker)?;
+    crate::gl::add_gl_imports(linker)?;
+    add_net_imports(linker)?;
+    add_fetch_imports(linker)?;
+    add_storage_imports(linker)?;
+    add_clipboard_imports(linker)?;
+    add_files_imports(linker)?;
+    Ok(())
+}
+
+/// What `has` reports: the gasm modules and functions linked (not WASI stubs or traps).
+fn provided_by(linker: &Linker<Host>, store: &mut Store<Host>) -> HashSet<String> {
+    let mut provided = HashSet::new();
+    for (m, f, _) in linker.iter(&mut *store) {
+        provided.insert(m.to_owned());
+        provided.insert(format!("{m}.{f}"));
+    }
+    for f in wasi::IMPLEMENTED {
+        provided.insert(format!("{}.{f}", wasi::MODULE));
+    }
+    provided.insert(wasi::MODULE.to_owned());
+    provided
+}
+
+/// What this runner provides (`gasm.has`), without a game (`gasm-run --info`).
+pub fn provided() -> HashSet<String> {
+    let mut linker: Linker<Host> = Linker::new(engine());
+    if add_all_imports(&mut linker, false).is_err() {
+        return HashSet::new();
+    }
+    let host = Host::new(crate::assets::Assets::new(), HashMap::new(), None, crate::gfx::Gfx::null(), Net::new(false), crate::storage::Storage::memory());
+    let mut store = Store::new(engine(), host);
+    provided_by(&linker, &mut store)
+}
+
 fn add_clipboard_imports(linker: &mut Linker<Host>) -> wasmtime::Result<()> {
     const M: &str = "gasm:clipboard";
     linker.func_wrap(M, "set_text", |mut c: Caller<'_, Host>, ptr: u32, len: u32| -> wasmtime::Result<i32> {
@@ -1246,32 +1292,16 @@ impl Game {
         }
         let engine = engine();
         let mut linker: Linker<Host> = Linker::new(engine);
-        add_gasm_imports(&mut linker)?;
-        if switching {
-            switching::add_yield_async(&mut linker)?;
-        } else {
-            switching::add_yield_sync(&mut linker)?;
-        }
-        add_gfx_imports(&mut linker)?;
-        crate::gl::add_gl_imports(&mut linker)?;
-        add_net_imports(&mut linker)?;
-        add_fetch_imports(&mut linker)?;
-        add_storage_imports(&mut linker)?;
-        add_clipboard_imports(&mut linker)?;
-        add_files_imports(&mut linker)?;
+        add_all_imports(&mut linker, switching)?;
         let mut store = Store::new(engine, host);
         store.data_mut().memory_limit = MemoryLimit(opts.memory_limit);
         store.limiter(|h| &mut h.memory_limit);
-        // what `has` reports: the gasm modules and functions above (not WASI stubs or traps)
-        let mut provided = HashSet::new();
-        for (m, f, _) in linker.iter(&mut store) {
-            provided.insert(m.to_owned());
-            provided.insert(format!("{m}.{f}"));
+        let provided = provided_by(&linker, &mut store);
+        // the manifest's requirements, before the guest runs at all
+        let missing: Vec<&String> = store.data().requires.iter().filter(|r| !provided.contains(r.as_str())).collect();
+        if !missing.is_empty() {
+            bail!("this game needs {}, which this runner (gasm-run {}) doesn't have", missing.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", "), env!("CARGO_PKG_VERSION"));
         }
-        for f in wasi::IMPLEMENTED {
-            provided.insert(format!("{}.{f}", wasi::MODULE));
-        }
-        provided.insert(wasi::MODULE.to_owned());
         store.data_mut().provided = provided;
         wasi::add_to_linker(&mut linker, &module)?;
         // Imports this runner doesn't know (e.g. JS glue some Rust crates pull in)

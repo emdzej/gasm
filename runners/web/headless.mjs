@@ -7,7 +7,7 @@
 //        [--storage-id id] [--input script] [--screenshot out.png] [--realtime] [--no-hash]
 //        [--no-stack-switching] [--watch-asset n=p] [--allow-net=hosts]
 //        [--fetch-record dir] [--fetch-replay dir] [--memory-limit MiB] [--app-id text]
-//        [--save-dir dir] [--no-save] [--mods dir] [--no-mods]
+//        [--save-dir dir] [--no-save] [--mods dir] [--no-mods] [--manifest file]
 //
 // The options mean what they mean for gasm-run. --screenshot writes the last
 // video_present frame: there is no GPU here, so gasm:gfx games can't be captured
@@ -16,13 +16,13 @@
 import { closeSync, fstatSync, lstatSync, statSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { deflateSync } from 'node:zlib';
-import { AssetTable, GasmHost, MemoryStorage, ProcExit, bytesSource, staticTitle, validKey } from './gasm-host.js';
+import { AssetTable, GasmHost, MemoryStorage, NetPolicy, ProcExit, bytesSource, parseManifest, staticTitle, validKey } from './gasm-host.js';
 import { InputScript } from './input-script.mjs';
 
 const VERSION = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8')).version;
 
 const USAGE = 'usage: headless.mjs <game.wasm> --headless N [--rom path] [--asset name=path] [--watch-asset name=path] [--asset-dir [prefix=]dir] ' +
-  '[--param k=v] [--allow-net[=hosts]] [--fetch-record dir] [--fetch-replay dir] [--app-id text] [--save-dir dir] [--no-save] [--mods dir] [--no-mods] [--storage-dir dir] [--storage-id id] [--input script] [--screenshot out.png] [--realtime] [--no-hash]';
+  '[--param k=v] [--allow-net[=hosts]] [--fetch-record dir] [--fetch-replay dir] [--app-id text] [--save-dir dir] [--no-save] [--mods dir] [--no-mods] [--manifest file] [--storage-dir dir] [--storage-id id] [--input script] [--screenshot out.png] [--realtime] [--no-hash]';
 const fileStamp = (p) => { try { const s = statSync(p); return `${s.mtimeMs}:${s.size}`; } catch { return null; } };
 const fail = (msg) => { console.error(`error: ${msg}\n\n${USAGE}`); process.exit(2); };
 const argv = process.argv.slice(2);
@@ -68,6 +68,7 @@ for (let i = 0; i < argv.length; i++) {
   else if (a === '--no-save') noSave = true;
   else if (a === '--mods') modsDir = val();
   else if (a === '--no-mods') noMods = true;
+  else if (a === '--manifest') assets['gasm.manifest'] = new Uint8Array(readFileSync(val()));   // as gasm-run --manifest
   else if (a === '--storage-id') storageId = val();
   else if (a === '--app-id') { appId = val(); if (!/^[\x20-\x7e]{1,256}$/.test(appId)) fail('--app-id expects 1 to 256 printable ASCII characters'); }
   else if (a === '-h' || a === '--help') { console.error(USAGE); process.exit(0); }
@@ -148,9 +149,30 @@ else if (modsDir) {
       mounted.push(name);
     } catch (e) { refused.push([name, e.code === 'EACCES' ? 'Permission denied (os error 13)' : e.message]); }
   }
-  if (refused.length) table.add('mods.refused', bytesSource(new TextEncoder().encode(refused.map(([n, w]) => `${n}\t${w}\n`).join(''))));
+  // as gasm-run: what was mounted, the unreadable ones, then what the manifests decide
   console.error(`[gasm] mods: ${mounted.length} from ${modsDir}${mounted.length ? `: ${mounted.join(', ')}` : ''}`);
   for (const [n, w] of refused) console.error(`[gasm] mods: refused ${n} (${w})`);
+  // each mod's manifest (<stem>.json): a mod that wants hosts needs --allow-net to cover
+  // them (headless runs never ask); a broken manifest refuses the mod
+  const policy = new NetPolicy(allowNet);
+  const late = [];
+  for (const name of mounted) {
+    const stem = name.replace(/\.[^.]*$/, '');
+    let text;
+    try { text = readFileSync(join(modsDir, `${stem}.json`), 'utf8'); } catch { continue; }
+    let why = null;
+    try {
+      const m = parseManifest(text);
+      if (!m.hosts.length) continue;
+      if (policy.allowed && m.hosts.every((h) => policy.permits(h))) { late.push(`[gasm] mods: ${name} may connect to ${m.hosts.join(', ')}`); continue; }
+      why = `it connects to ${m.hosts.join(', ')}, which --allow-net doesn't cover`;
+    } catch (e) { why = `its manifest ${stem}.json: ${e.message}`; }
+    late.push(`[gasm] mods: refused ${name} (${why})`);
+    table.remove?.(`mods/${name}`);
+    refused.push([name, why]);
+  }
+  if (refused.length) table.add('mods.refused', bytesSource(new TextEncoder().encode(refused.map(([n, w]) => `${n}\t${w}\n`).join(''))));
+  for (const l of late) console.error(l);
 }
 table.finish();
 

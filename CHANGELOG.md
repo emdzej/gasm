@@ -8,7 +8,23 @@ the package versions (`gasm-sdk`, `gasm-host`, `@emdzej/gasm-host`).
 
 ## Unreleased
 
+ABI:
+- The capabilities manifest (the roadmap item): JSON in the custom section
+  `gasm.manifest` (Rust `gasm::manifest!`, C `GASM_MANIFEST` in
+  `gasm_manifest.h`), or the asset `gasm.manifest` / `gasm-run --manifest`.
+  `requires`: a runner lacking one refuses the game before it starts (both
+  runners); `hosts` and `files`: the window runner and the player ask once,
+  before the game starts. `gasm-run --info` prints it and whether this runner can
+  run the game. `GasmHost.manifest`, `parseManifest`, `moduleManifest`.
+  `fetchtest` has one.
+
 Runners:
+- Mods with permissions: a mod's manifest (`<stem>.json` next to the pack) can ask
+  for hosts; the player is asked before the game starts, and a refused mod isn't
+  mounted (`mods.refused` says why; headless runs need `--allow-net` to cover
+  them). A broken manifest refuses its mod.
+- The player takes mods for Godot games: "mods…" picks a folder of packs, used
+  from the next start, with the same questions. New player game `godot-mods`.
 - Mods (NiP #13): `--mods <dir>` (both runners) mounts the folder's resource packs
   (`*.pck`, `*.zip`) as assets `mods/<name>`, read on demand, in name order;
   unreadable ones are refused, logged and listed in asset `mods.refused`;
