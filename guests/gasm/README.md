@@ -49,7 +49,12 @@ What's in it:
   for [glow](https://github.com/grovesNL/glow) with the gasm fork patched in
   (`[patch.crates-io] glow = { git = "https://github.com/emdzej/gasm" }`), so
   glow-based crates such as egui_glow run unchanged.
-- **`net`:** WebSocket-style messages.
+- **`net`:** WebSocket-style messages; **`fetch`:** HTTP requests made by the
+  runner.
+- **`clipboard`:** copy text, read what the player pastes; **`files`:** save
+  files for the player (pictures, exports).
+- **`manifest!`:** embed the capabilities manifest (requires, hosts, files),
+  which runners check and ask about before the game starts.
 - **`storage`:** per-game saves; `storage::try_set` says why a write failed
   (`storage::Error`: `Key`, `Size`, `Quota`, `Io`).
 - **`main_loop!`:** for games with their own loop (`main_loop!(run)`, or

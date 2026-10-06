@@ -2,7 +2,8 @@
 
 A proof of concept for a portable game runtime: **games are compiled once to
 WebAssembly, and thin per-platform *runners* expose a small, stable binary
-interface** (video, audio, input, assets, GPU, network). The same `.wasm` runs
+interface** (video, audio, input, assets, GPU, network, HTTP, saves, clipboard,
+files for the player). The same `.wasm` runs
 natively (wasmtime + wgpu), in the browser (WebAssembly + WebGPU), and headless
 in Node, with bit-identical game state.
 
@@ -14,6 +15,7 @@ Games in this repo (Rust, C and C++):
 | `nes.wasm` | NES emulator on [tetanes-core](https://crates.io/crates/tetanes-core): 2D video, audio, input, assets | 1.3 MB |
 | `scummvm.wasm` | [ScummVM](https://www.scummvm.org/) with a gasm backend (Asyncify inside the guest, or `scummvm-run.wasm` for runners that switch stacks): the LucasArts SCUMM games (Monkey Island, Day of the Tentacle, Sam & Max, Full Throttle, ...), Humongous games, the freeware Beneath a Steel Sky and Drascula, MP3/Ogg Vorbis/FLAC audio, saves in `gasm:storage` ([guests/scummvm](guests/scummvm/README.md), with its porting status) | 16.1 MB |
 | `doom.wasm` | DOOM ([doomgeneric](https://github.com/ozkl/doomgeneric), C) with OPL music, saves in `gasm:storage`, any IWAD as an asset ([guests/doom](guests/doom/README.md)) | 656 KB |
+| `godot.wasm`, `godot-2d.wasm` | [Godot 4.7](guests/godot/README.md) with a gasm platform: any game exported as a pack (Compatibility renderer), 2D and 3D, GDScript, physics, audio, saves, HTTP, WebSocket multiplayer, mods; `godot-2d.wasm` is the engine without 3D | 32.1 / 26.4 MB |
 | `sdl3-snake.wasm`, `sdl3-woodeneye.wasm` | SDL 3's own demos, source unchanged, on [SDL 3 for gasm](sdk/sdl3/README.md) (SDL as a private platform: video, input, audio, gamepads, files) | 817 KB |
 | `triangle.wasm` | Smallest `gasm:gfx` program (about 50 lines of Rust) | 17 KB |
 | `inputtest.wasm` | Shows every raw input: keyboard (with modifiers), mouse, gamepads and joysticks | 61 KB |
@@ -153,6 +155,9 @@ guests/                      Rust workspace (wasm32-unknown-unknown)
   inputtest/                   raw keyboard, pointer, gamepads (input tester)
   loopdemo/                    a game with its own main loop (gasm::main_loop: Asyncify or stack switching)
   assetcheck/                  test guest for asset providers
+  fetchtest/                   test guest for gasm:fetch (with a capabilities manifest)
+  bricks/                      the website's background: a brick breaker that plays itself
+  godot/                       Godot 4.7: the gasm platform (MIT), engine patch, examples (engine fetched at build)
   parity/                      runs the NES game natively (parity + benchmarks)
   test-pattern/                C guest (wasi-sdk)
 sdk/c/                       C/C++ SDK: CMake toolchain, gasm_loop (own main loop), gasm_vfile (FILE*), examples
@@ -160,8 +165,9 @@ sdk/sdl3/                    SDL 3 for gasm: config + drivers (SDL fetched at bu
 runners/native/              crate gasm-host: library (headless and windowed runners) + gasm-run;
                              wasmtime, wgpu, winit, cpal, gilrs, tungstenite; own WASI subset (src/wasi.rs)
   relay/                       crate gasm-relay: WebSocket room relay
-runners/web/                 @emdzej/gasm-host: gasm-host.js + lib/ (host, WASI, gfx model, assets, input,
-                             net, storage), webgpu-gfx.js, gasm-present.js (2D filters), gasm-worker.js, headless.mjs;
+runners/web/                 @emdzej/gasm-host: gasm-host.js + lib/ (host, WASI, gfx and gl models, assets, input,
+                             net, fetch, storage, files, manifest), webgpu-gfx.js, gasm-present.js (2D filters),
+                             gasm-worker.js, gasm-splash.js, headless.mjs;
                              the player (index.html, app.js)
 tests/golden/                golden hashes for the determinism suite
 scripts/                     toolchain/ROM fetchers (SHA-256 pinned), test suites, packaging, site build
@@ -189,7 +195,8 @@ CHANGELOG.md                 what each release added
 ## Next steps
 
 Everything planned or missing is on the
-[roadmap](site/docs/roadmap.md): threads ([design](design/threads.md)),
-`gasm:gl` ([design](design/gasm-gl.md)), render targets, rollback netplay,
-packages. Implemented designs stay in `design/` as a record
-([presentation](design/presentation.md), [stack switching](design/stack-switching.md)).
+[roadmap](site/docs/roadmap.md): opening files, `.gasm` packages, real threads
+([design](design/threads.md)), render targets, rollback netplay. Implemented
+designs stay in `design/` as a record ([gasm:gl](design/gasm-gl.md),
+[fetch](design/fetch.md), [presentation](design/presentation.md),
+[stack switching](design/stack-switching.md)).

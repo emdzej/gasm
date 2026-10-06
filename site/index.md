@@ -31,7 +31,7 @@ features:
   - title: Bit-exact determinism
     details: The same inputs produce the same frames, sounds and game state on every engine, and CI checks it with hashes. That's the basis for replays, tests and netplay.
   - title: Sandboxed by design
-    details: Games only see their own memory and the ABI. No filesystem, and the runner asks the player before a game reaches a new host or saves a file. Every pointer and handle is checked.
+    details: Games only see their own memory and the ABI. No filesystem, and the runner asks the player before a game (or a mod) reaches a new host or saves a file. Every pointer and handle is checked.
 ---
 
 ## What's inside

@@ -10,6 +10,7 @@ src/gasm_loop.c             (gasm_main + gasm_wait_frame: Asyncify, or gasm_run 
 include/gasm_thread.h       optional: cooperative threads, mutexes, conditions, semaphores, keys
 src/gasm_thread.c           (with gasm_loop.c built with -DGASM_LOOP_THREADS)
 src/gasm_pthread.c          optional: POSIX threads (pthread_*, sem_*) on the same threads
+include/gasm_manifest.h     optional: GASM_MANIFEST({ ... }) embeds the capabilities manifest
 include/gasm_vfile.h        optional: stdio FILE* over assets and gasm:storage
 src/gasm_vfile.c
 include/GLES3/gl3.h         optional: OpenGL ES 3.0 on gasm:gl (also GLES2/gl2.h, gl2ext.h)

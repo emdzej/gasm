@@ -96,6 +96,13 @@ Pages). Keyboard layouts: `DEFAULT_KEYMAP`, `parseKeymap(text)`,
   way as the native runner, for any backend. A `GfxBackend` only executes:
   its methods get the handle as the first argument
   (`createBuffer(handle, size, usage)`). See `gasm-host.d.ts`.
+- Network: `allowNet` (`true` or host names) and `ask(subject)` for the rest
+  (`"net:<host>"`; return a boolean or a promise: the request waits for the
+  player). After `load`, `host.manifest` is the game's capabilities manifest
+  (`parseManifest`, `moduleManifest`); `load` throws if it `requires` something
+  this host lacks.
+- `onCopyText(text)` (gasm:clipboard) and a step's `paste`; `onSaveFile(name,
+  mime, bytes)` (gasm:files: a download, a file, or `false`).
 - The WASI subset (`lib/wasi.js`) matches the native runner's: guest stdout
   goes to `onLog`, and with `virtualTime` the clocks are virtual and
   `random_get` is a fixed sequence.

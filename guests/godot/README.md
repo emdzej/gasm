@@ -29,6 +29,7 @@ cases (the same hashes on wasmtime JIT, AOT and V8) and demos on the website.
 | [`examples/ui`](examples/ui) | Controls (`LineEdit`, `CheckBox`, `HSlider`, `OptionButton`, `ItemList`), text input, saves with `ConfigFile` in `user://` |
 | [`examples/audio`](examples/audio) | `AudioStreamGenerator` synthesis, a WAV built in code, a reverb bus, the spectrum analyzer |
 | [`examples/http`](examples/http) | `HTTPRequest` GETs and a POST on gasm:fetch (against `scripts/fetch-server.mjs`; replayed in the determinism suite) |
+| [`examples/mods`](examples/mods), [`examples/modpack`](examples/modpack) | Mods: the game loads every pack from `--mods <dir>` (`Gasm.get_mods()`, `load_resource_pack`); the mod replaces a settings file and adds a scene |
 | [`examples/net`](examples/net) | Multiplayer: `WebSocketPeer` on gasm:net in a `gasm-relay` room, a square per player (`--allow-net --param relay=ws://host:9000/room`) |
 
 `make godot` builds the engine (`build/godot.wasm`), the smaller engine without
@@ -71,9 +72,13 @@ scenes get random node ids at export).
   on gasm:net (`websocket_peer_gasm.cpp`): binary messages, no servers.
 - **Clipboard:** `DisplayServer.clipboard_set`/`clipboard_get` on
   gasm:clipboard; pasting works while handling Ctrl+V (Ctrl on every system).
-- **Files for the player and launch parameters:** the `Gasm` singleton
+- **Files for the player, launch parameters, mods:** the `Gasm` singleton
   (`platform/gasm/api`): `save_file(bytes, name, mime)` on gasm:files (a picture
-  in Pictures/<game>/, a download in browsers), `get_param(name)`.
+  in Pictures/<game>/, a download in browsers), `get_param(name)`,
+  `get_mods()` / `get_refused_mods()` (resource packs from `--mods`).
+- **The game's manifest:** `godot.wasm` is shared by every game, so a game's
+  capabilities manifest (hosts, saves) comes as asset `gasm.manifest` or
+  `gasm-run --manifest`.
 - **Not available:** threads (Godot is built with `threads=no`; work runs on
   the main thread; see design/threads.md), raw sockets and servers (`ENet`,
   `StreamPeerTCP`, `TCPServer`), TLS in the engine (`Crypto`), complex text

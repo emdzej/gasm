@@ -337,6 +337,19 @@ them, with the runner in between:
 - **Reproducible tests:** headless runs never paste and write saves only with
   `--save-dir`; a save completes by the next frame on every runner.
 
+## What a game needs, and mods
+
+- **The capabilities manifest:** JSON a game embeds (custom section
+  `gasm.manifest`) or its launcher gives: the modules it `requires`, the
+  `hosts` it reaches, whether it saves `files`. A runner without a required
+  module refuses the game before it starts, and the player is asked about the
+  hosts once, up front. `gasm-run --info` prints it.
+- **Mods** are resource packs in a folder (`gasm-run --mods <dir>`, "mods…" in
+  the player), mounted as assets `mods/<name>` and read on demand; a Godot game
+  loads them with `load_resource_pack`. A mod's scripts run inside the game's
+  sandbox. One that wants hosts says so in a manifest next to it and is put to
+  the player before the game starts; a refused mod isn't mounted.
+
 ## Assets and params
 
 Assets are a flat, read-only `name → bytes` map provided at launch. **Params**
@@ -400,7 +413,8 @@ which translates it to C (see [engines](/dev/runners#_1-choose-an-engine)).
   agrees), and the game never learns the path. The clipboard can be read only
   in the frame of the player's paste key press (`gasm:clipboard`).
 - Imports a runner doesn't implement link as traps, so they can't be used to
-  reach anything.
+  reach anything. A game's manifest can require modules instead, so a runner
+  that lacks one refuses it before it runs.
 - Calls are bounded natively: a guest call (init, a frame) that runs longer
   than `--call-timeout` (30 s by default) traps. Network connections (16) and
   their queues are bounded too.

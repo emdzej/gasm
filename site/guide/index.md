@@ -438,8 +438,15 @@ gasm-run godot.wasm --asset game.pck=mygame.pck    # anywhere
 ```
 
 The examples are in `games/godot/` (`hello2d`, `platformer`, `scene3d`, `ui`,
-`audio`). In the browser player, choose **Godot: your game (.pck)** and open or
-drop the file. The first native start compiles the engine (a few seconds);
+`audio`, `http`, `net`, `mods` with `modpack`). 2D games also run on the smaller
+`games/godot-2d.wasm` (the engine without 3D). In the browser player, choose
+**Godot: your game (.pck)** and open or drop the file.
+
+**Mods:** put a game's mods (`.pck` or `.zip` resource packs) in
+`~/Documents/<game>/mods/`, where `run-godot` looks (`<game>`: the pack's name),
+or pass `--mods <folder>`; `--no-mods` turns them off. The game decides how it
+uses them; one that wants to connect somewhere is asked about first. In the
+browser player, **mods…** picks the folder. The first native start compiles the engine (a few seconds);
 `gasm-run godot.wasm --compile godot.cwasm` once, then run `godot.cwasm` with
 `--allow-precompiled`, makes it instant. Making games for it:
 [Godot games on gasm](/dev/godot).

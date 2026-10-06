@@ -51,7 +51,7 @@ property: most tests assert bit-identical hashes.
 make                          # games -> build/*.wasm, native runner + relay (Godot too: its first build
                               # takes ~15 min and an LTO link that needs ~12 GB; `make godot` alone)
 make roms                     # test ROMs, Freedoom, shareware doom1.wad into roms/ (needed by the determinism test)
-scripts/determinism-test.sh   # 55 cases: wasmtime JIT == AOT == V8 == golden hashes, and the Godot
+scripts/determinism-test.sh   # 78 cases: wasmtime JIT == AOT == V8 == golden hashes, and the Godot
                               # examples log no errors on either null GL (must pass)
                               # UPDATE_GOLDEN=1 re-records after a change meant to alter output
 scripts/net-test.sh           # lockstep sumo via gasm-relay, 3 runner pairs + TLS (must pass)
@@ -60,7 +60,8 @@ node scripts/fetch-test.mjs   # gasm:fetch against scripts/fetch-server.mjs: nat
 scripts/gl-native-test.sh     # gasm:gl on ANGLE: gltest hashes == null GL, frame drawn
 node scripts/gl-web-test.mjs  # Chrome: gltest/glowtest on WebGL 2 == golden hashes, no WebGL errors
 node scripts/opfs-test.mjs    # Chrome: OPFS + Worker mode == Node, memory flat
-node scripts/player-test.mjs    # Chrome: copy key (F2) for 2D/gl/gfx, gasm:clipboard paste+copy (Godot too), gasm:files downloads
+node scripts/player-test.mjs    # Chrome: the player: copy key (F2), clipboard (Godot too), downloads, consent,
+                              # the manifest's question, mods (picked, asked about), the splash helper
 make parity                   # NES native Rust build == wasm build
 node scripts/present-test.mjs # Chrome: 2D filters, WebGL 2 == native wgpu == tests/golden/present (skips without a GPU)
                               # UPDATE_GOLDEN=1 re-records the golden images
@@ -212,6 +213,13 @@ from the repo root, then
   hashes the bytes. A WebGL-only error (Chrome's console says `WebGL: …`) means
   the shared model lacks a rule: add it to both models, `scripts/gl-web-test.mjs`
   catches it.
+- **Every runner call in `determinism-test.sh` has a time limit** (`CALL_LIMIT`, 300 s,
+  through wrappers in a temp dir that keep the runners' names): a hang fails and is
+  listed, as CI once stalled on Windows for an hour without a log. Call the runners
+  through `$NATIVE`/`$NODE` in new checks.
+- **Chrome 154 leaves headless downloads unfinished** (an empty `.crdownload`):
+  `player-test.mjs` checks a download in the page (the blob the player links) plus
+  `Browser.downloadWillBegin`, not on disk.
 - **Headless Chrome tests share a debugging port and profile per script:** run
   them one at a time (two `opfs-test.mjs` at once time out). The player's `#log`
   shows only the last line; read guest logs from the console. `?hashframes=N`
