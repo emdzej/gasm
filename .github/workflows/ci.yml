@@ -141,6 +141,8 @@ jobs:
   platforms:
     name: runner tests (${{ matrix.os }})
     needs: test
+    # normally 15-20 min; a hung step (determinism calls have their own limit) fails instead of waiting hours
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:

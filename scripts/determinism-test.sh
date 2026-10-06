@@ -13,9 +13,26 @@ cd "$(dirname "$0")/.."
 GOLDEN=tests/golden/determinism.txt
 UPDATE=${UPDATE_GOLDEN:-}
 NEW_GOLDEN=$(mktemp)
-trap 'rm -f "$NEW_GOLDEN"' EXIT
-NATIVE=runners/native/target/release/gasm-run
-NODE="node runners/web/headless.mjs"
+# Every runner call has a time limit (CALL_LIMIT seconds, default 300): a hang fails
+# its case and is listed at the end instead of stalling the run (CI once stalled on
+# Windows without saying where). The wrappers keep the runners' names for the labels.
+WRAP=$(mktemp -d)
+TIMEOUTS=$WRAP/timeouts
+trap 'rm -rf "$NEW_GOLDEN" "$WRAP"' EXIT
+limit_wrapper() { # <name> <command...>
+  local name=$1; shift
+  { echo '#!/usr/bin/env bash'
+    printf 'perl -e %q %q' 'alarm shift; exec @ARGV or die "$ARGV[0]: $!\n"' "${CALL_LIMIT:-300}"
+    printf ' %q' "$@"; echo ' "$@"; s=$?'
+    printf '[ $s -eq 142 ] && echo "%s $*" >> %q
+' "$name" "$TIMEOUTS"
+    echo 'exit $s'; } > "$WRAP/$name"
+  chmod +x "$WRAP/$name"
+}
+limit_wrapper gasm-run "$PWD/runners/native/target/release/gasm-run"
+limit_wrapper headless.mjs node "$PWD/runners/web/headless.mjs"
+NATIVE=$WRAP/gasm-run
+NODE=$WRAP/headless.mjs
 # run builds (gasm_run, no Asyncify) need JSPI: Node 24+; else they're checked natively only
 NODE_JSPI=""
 for n in node ${NODE24:-} "$HOME"/.nvm/versions/node/v2[4-9]*/bin/node; do
@@ -231,6 +248,11 @@ for runner in "$NATIVE" "$NODE"; do
   rm -rf "$dir"
 done
 
+if [ -s "$TIMEOUTS" ]; then
+  fail=$((fail + 1))
+  echo "FAIL  runner calls over the time limit (${CALL_LIMIT:-300} s):"
+  sed 's/^/  /' "$TIMEOUTS"
+fi
 echo "$pass passed, $fail failed"
 if [ -n "$UPDATE" ] && [ "$fail" -eq 0 ]; then
   mkdir -p "$(dirname "$GOLDEN")"
