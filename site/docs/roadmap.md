@@ -76,6 +76,14 @@ Left over:
 | Content hint | A guest suggests a filter class ("pixel art" or "rendered") so players can pick a better default. One more small ABI addition. | idea |
 | fps counter behind a flag | The native window title shows `— <n> fps` always. | idea |
 
+## Mobile
+
+| Item | What it gives | Status |
+|---|---|---|
+| gasm in mobile browsers | The player on phones and tablets: fullscreen (the Fullscreen API where it exists, an installable page for iOS, which only allows it for video), a layout for portrait and landscape with an orientation lock while playing, audio unlocked by the first tap, and on-screen touch controls (a virtual gamepad mapped to the pads, plus the keys a game asks for). Also checking what mobile browsers lack: WebGPU and JSPI on some (gasm:gl and the Asyncify builds cover them), and the memory a page may use (iOS gives less than the 1 GiB default limit). | not started |
+| Touch in the ABI | Several fingers at once: today the raw pointer is one mouse, so touch screens only drive it with the first finger. Touches as their own input (id, position, pressure, began/moved/ended), in both runners and for the touch controls above; Godot's touch events (see [Godot](#godot)) and SDL's would come from it. | not started |
+| Native runners on Android and iOS | `gasm-run` as an app: wasmtime with wgpu (Vulkan, Metal) and ANGLE for gasm:gl, touch controls on screen, and games picked from the device. iOS allows no runtime code generation, so games there would be compiled ahead of time into the app (or run on wasmtime's interpreter); Android can use the JIT. Game files, saves and mods in the app's storage. | not started |
+
 ## Netplay
 
 | Item | What it gives | Status |
@@ -124,7 +132,7 @@ Left over:
 | TLS, `Crypto` | mbedtls needs a time source (`mbedtls_ms_time`, `timing.c`) for WASI. | not started |
 | Godot as a WebSocket server | `WebSocketPeer` and `WebSocketMultiplayerPeer` work as clients on `gasm:net` (a relay room, or a Godot server outside gasm); a game can't host (`create_server`), and ENet and UDP need sockets browsers don't have. | not planned |
 | Complex text | The advanced text server (ICU, HarfBuzz: right-to-left, ligatures) instead of the fallback one; larger. | not started |
-| Touch | Godot's touch events from gasm's pointer on touch screens. | not started |
+| Touch | Godot's touch events (`InputEventScreenTouch`, drags) from gasm's touches, once the ABI has them ([Mobile](#mobile)). | not started |
 
 ## Testing and tooling
 
