@@ -6,6 +6,16 @@ embedders. The ABI version is still 0: additions keep it (see
 guests can probe for newer imports with `gasm.has`. Versions are the git tags and
 the package versions (`gasm-sdk`, `gasm-host`, `@emdzej/gasm-host`).
 
+## Unreleased
+
+Godot:
+- The examples turn Godot's boot splash off
+  (`application/boot_splash/show_image=false`): gasm's runners show their own
+  while the engine loads, so a game no longer gets two in a row. Godot's MIT
+  license asks only for its notices (shipped in `THIRD-PARTY.txt`), not a logo;
+  the Godot guide says how to turn it off or replace it. The Godot golden hashes
+  moved (their first frames are the game now).
+
 ## 0.12.0 (2026-10-06)
 
 ABI:

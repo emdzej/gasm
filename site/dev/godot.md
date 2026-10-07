@@ -171,7 +171,11 @@ A Godot game on gasm is `godot.wasm` plus its `.pck`:
 - **2D games** can ship the [smaller engine](#a-smaller-engine) instead.
 - **Licenses:** Godot is MIT; ship its `LICENSE.txt` and `COPYRIGHT.txt` (the
   third-party components) with the engine, as the release's `THIRD-PARTY.txt`
-  does.
+  does. That's all MIT asks: no logo or splash on screen.
+- **Splash screens:** gasm's runners show gasm's splash while the engine loads,
+  then Godot shows its boot splash, unless the project turns it off
+  (`application/boot_splash/show_image=false`, *Project Settings > Application >
+  Boot Splash*) or replaces the image with its own. The examples turn it off.
 
 ### A smaller engine
 

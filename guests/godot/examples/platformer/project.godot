@@ -3,6 +3,8 @@
 config_version=5
 
 [application]
+; gasm shows its own splash while loading: no second one from Godot
+boot_splash/show_image=false
 
 config/name="Platformer (Godot on gasm)"
 run/main_scene="res://main.tscn"
