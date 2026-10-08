@@ -8,7 +8,29 @@ the package versions (`gasm-sdk`, `gasm-host`, `@emdzej/gasm-host`).
 
 ## Unreleased
 
+Runners:
+- The window's icon (NiP #16): `--icon <png>`, or the manifest's `"icon"` (a PNG
+  asset), on Windows and Linux (macOS uses the app bundle's); `--app-class
+  <name>` sets the X11 class / Wayland app id so Linux desktops match a
+  `.desktop` entry.
+- A game's id (its saves, remembered answers, default folders) is `--storage-id`,
+  else the `id` of a manifest the launcher gives (`--manifest`, asset
+  `gasm.manifest`), else a Godot pack's file name (`--asset game.pck=mygame.pck`),
+  else the module's file name (NiP #15). Every Godot game no longer shares
+  `gasm/godot/`, and a versioned launcher file keeps its saves. An `id` embedded
+  in the game is ignored (namespaces are the runner's choice). The player keeps
+  an opened Godot pack's saves under its file name too.
+
 Godot:
+- High-level multiplayer through gasm-relay (NiP #7): `Gasm.create_relay_peer(url)`
+  is a `MultiplayerPeer` (RPCs, `MultiplayerSynchronizer`, `MultiplayerSpawner`)
+  with no Godot server: the room's first player serves (peer 1), Godot's server
+  relay connects the clients. New example `relaymp`; `scripts/net-test.sh` runs a
+  native and a Node peer that must get each other's RPCs.
+- `user://` writes that can't be stored now fail where the game sees it: a file
+  that would pass 1 MiB makes `store_buffer()` return `false` at once, a full
+  store or a path too long sets `get_error()`, and the log says which limit
+  (NiP #15). Folders in `user://` work (documented).
 - The examples turn Godot's boot splash off
   (`application/boot_splash/show_image=false`): gasm's runners show their own
   while the engine loads, so a game no longer gets two in a row. Godot's MIT

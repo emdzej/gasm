@@ -40,6 +40,9 @@ options:
   --manifest <file>        the game's capabilities manifest (JSON; else asset gasm.manifest, else the
                            module's gasm.manifest section): what it requires, the hosts it reaches
                            and whether it saves files, asked about once before it starts
+  --icon <png>             the window's icon (Windows, Linux; else the manifest's icon asset; macOS
+                           uses the app bundle's)
+  --app-class <name>       (Linux) the window's X11 class / Wayland app id, to match a .desktop entry
   --info                   print the game's manifest and imports, whether this runner has them, and exit
   --no-ask                 (window) don't ask the player: refuse network hosts and saves the
                            options above didn't allow (headless runs never ask)
@@ -120,6 +123,8 @@ struct Args {
     no_ask: bool,
     manifest: Option<String>,
     info: bool,
+    icon: Option<String>,
+    app_class: Option<String>,
     forget_consent: Option<String>,
     window: (u32, u32),
     present: Present,
@@ -167,6 +172,8 @@ fn parse_args() -> Result<Args, String> {
         no_ask: false,
         manifest: None,
         info: false,
+        icon: None,
+        app_class: None,
         forget_consent: None,
         window: (960, 720),
         present: Present::default(),
@@ -240,6 +247,8 @@ fn parse_args() -> Result<Args, String> {
             "--no-ask" => args.no_ask = true,
             "--manifest" => args.manifest = Some(val("--manifest")?),
             "--info" => args.info = true,
+            "--icon" => args.icon = Some(val("--icon")?),
+            "--app-class" => args.app_class = Some(val("--app-class")?),
             "--forget-consent" => args.forget_consent = Some(val("--forget-consent")?),
             "--app-id" => {
                 let id = val("--app-id")?;
@@ -391,7 +400,14 @@ fn load_manifest(args: &Args, wasm: &[u8]) -> Result<Option<gasm_host::manifest:
             None => return Ok(None),
         },
     };
-    let m = Manifest::parse(&text).map_err(|e| format!("the game's manifest {from}: {e}"))?;
+    let mut m = Manifest::parse(&text).map_err(|e| format!("the game's manifest {from}: {e}"))?;
+    // the id names the game's saves: only the launcher may choose it (a game claiming another's
+    // id would read its saves), so an embedded one doesn't count
+    if from.ends_with("(its gasm.manifest section)") {
+        if let Some(id) = m.id.take() {
+            eprintln!("[gasm] manifest: id {id:?} ignored: only a manifest the launcher gives (--manifest, asset gasm.manifest) names the game's saves");
+        }
+    }
     eprintln!(
         "[gasm] manifest: {}{}{}{}",
         m.name.as_deref().unwrap_or("(no name)"),
@@ -456,15 +472,21 @@ fn load_keymap(args: &Args) -> Result<(gasm_host::keymap::Keymap, String, String
     Ok((map, text, source))
 }
 
-/// The game's id: --storage-id, else the game file's name (sumo.wasm / sumo.cwasm -> "sumo").
-fn game_id(args: &Args) -> String {
-    args.storage_id.clone().unwrap_or_else(|| {
-        std::path::Path::new(&args.wasm).file_stem().map_or("game".into(), |s| s.to_string_lossy().into_owned())
-    })
+/// The game's id (its saves, remembered answers, default folders): --storage-id, else the
+/// manifest's "id", else a Godot pack's file name (--asset game.pck=mygame.pck: one engine
+/// module serves every Godot game), else the game file's name (sumo.wasm -> "sumo").
+fn game_id(args: &Args, manifest: Option<&gasm_host::manifest::Manifest>) -> String {
+    let stem = |p: &str| std::path::Path::new(p).file_stem().map(|s| s.to_string_lossy().into_owned());
+    args.storage_id
+        .clone()
+        .or_else(|| manifest.and_then(|m| m.id.clone()))
+        .or_else(|| args.assets.iter().find(|(n, _)| n.as_str() == "game.pck").and_then(|(_, p)| stem(p)).filter(|s| storage::valid_key(s)))
+        .or_else(|| stem(&args.wasm))
+        .unwrap_or_else(|| "game".into())
 }
 
-fn open_storage(args: &Args) -> Result<Storage, String> {
-    let id = game_id(args);
+fn open_storage(args: &Args, id: &str) -> Result<Storage, String> {
+    let id = id.to_owned();
     if !storage::valid_key(&id) {
         return Err(format!("invalid storage id {id:?} (use [A-Za-z0-9._-])"));
     }
@@ -509,7 +531,8 @@ fn run(args: Args) -> Result<i32, String> {
     let manifest = load_manifest(&args, &wasm)?;
     // fail fast on bad paths, before opening a window
     let (assets, watch_assets, mod_requests) = open_assets(&args)?;
-    let consent = (args.headless.is_none() && !args.no_ask).then(|| gasm_host::consent::Store::open(&game_id(&args)).shared());
+    let id = game_id(&args, manifest.as_ref());
+    let consent = (args.headless.is_none() && !args.no_ask).then(|| gasm_host::consent::Store::open(&id).shared());
     if let Some(c) = &consent {
         // asked before the game starts: the manifest's hosts and saves, and mods that want hosts
         let allowed = gasm_host::net::NetPolicy::new(args.allow_net, args.allow_hosts.clone());
@@ -540,9 +563,9 @@ fn run(args: Args) -> Result<i32, String> {
             (_, true, _) => gasm_host::files::SaveTarget::Off,
             (Some(d), _, _) => gasm_host::files::SaveTarget::Dir(d.into()),
             (None, _, Some(_)) => gasm_host::files::SaveTarget::Discard,
-            (None, _, None) => gasm_host::files::SaveTarget::Defaults { game: game_id(&args) },
+            (None, _, None) => gasm_host::files::SaveTarget::Defaults { game: id.clone() },
         },
-        storage: open_storage(&args)?,
+        storage: open_storage(&args, &id)?,
         load: LoadOptions {
             allow_precompiled: args.allow_precompiled,
             call_timeout: args.call_timeout,
@@ -594,7 +617,30 @@ fn run(args: Args) -> Result<i32, String> {
                     None => return Err(format!("--copy-key: unknown key code {k:?} (use a KeyboardEvent.code name like F2, or none)")),
                 },
             };
-            gasm_host::window::run(session, gasm_host::window::Options { size: args.window, keymap, mute: args.mute, present: args.present, screenshot: args.window_screenshot.clone(), splash: !args.no_splash && args.window_screenshot.is_none(), copy_key })
+            // --icon, else the manifest's "icon" (an asset)
+            let icon_png = match (&args.icon, session.manifest.as_ref().and_then(|m| m.icon.clone())) {
+                (Some(p), _) => Some(std::fs::read(p).map_err(|e| format!("--icon {p}: {e}"))?),
+                (None, Some(name)) => match session.assets.get(&name) {
+                    Some(a) => {
+                        let mut b = vec![0; a.size() as usize];
+                        a.read_at(0, &mut b);
+                        Some(b)
+                    }
+                    None => {
+                        eprintln!("[gasm] icon: the manifest's icon {name:?} is not an asset");
+                        None
+                    }
+                },
+                _ => None,
+            };
+            let icon = icon_png.and_then(|b| match gasm_host::headless::decode_png(&b) {
+                Ok(i) => Some(i),
+                Err(e) => {
+                    eprintln!("[gasm] icon: {e}");
+                    None
+                }
+            });
+            gasm_host::window::run(session, gasm_host::window::Options { size: args.window, keymap, mute: args.mute, present: args.present, screenshot: args.window_screenshot.clone(), splash: !args.no_splash && args.window_screenshot.is_none(), copy_key, icon, app_class: args.app_class.clone() })
         }
         #[cfg(not(feature = "window"))]
         None => Err("this gasm-run was built without the window feature: use --headless".into()),

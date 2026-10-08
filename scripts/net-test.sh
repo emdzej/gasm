@@ -81,6 +81,31 @@ else
   echo "SKIP  godot-websocket (make godot)"
 fi
 
+# Godot's high-level multiplayer (RPCs) through the relay (Gasm.create_relay_peer): the
+# first to join is the server, both get the other's RPCs
+if [ -f build/godot-2d.wasm ] && [ -f build/godot/relaymp.pck ]; then
+  room="m$RANDOM"
+  mpeer() { # <log> <runner command...>
+    local log=$1; shift
+    perl -e "alarm $LIMIT; exec @ARGV" "$@" build/godot-2d.wasm --asset game.pck=build/godot/relaymp.pck --headless 100000000 --realtime \
+      --allow-net --param relay=ws://127.0.0.1:$PORT/$room --param quit_after=120 --input '0-100000000:KEY(ArrowLeft)' --no-hash </dev/null >/dev/null 2>"$log"
+  }
+  mpeer "$TMP/ma.log" "$NATIVE" &
+  ma=$!
+  sleep 0.5
+  mpeer "$TMP/mb.log" node runners/web/headless.mjs &
+  mb=$!
+  wait $ma; wait $mb
+  if grep -q 'first position from peer' "$TMP/ma.log" && grep -q 'first position from peer' "$TMP/mb.log"; then
+    pass=$((pass + 1)); printf 'PASS  %-18s %s\n' "godot-rpc" "native and node get each other's RPCs"
+  else
+    fail=$((fail + 1)); printf 'FAIL  godot-rpc\n'
+    for f in ma mb; do echo "  --- $f"; grep -E 'mp:|ERROR|gasm\]' "$TMP/$f.log" | tail -6 | sed 's/^/    /'; done
+  fi
+else
+  echo "SKIP  godot-rpc (make godot)"
+fi
+
 # Same over TLS (wss://): throwaway CA + relay certificate for localhost. Config
 # files instead of -subj/-addext: portable across OpenSSL, old LibreSSL (macOS)
 # and Git Bash (which rewrites "/CN=..." arguments into Windows paths).

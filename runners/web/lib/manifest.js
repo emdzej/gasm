@@ -22,7 +22,8 @@ export function parseManifest(text) {
   const hosts = strings('hosts').map((h) => h.trim().replace(/\.+$/, '').toLowerCase());
   const bad = hosts.find((h) => !h || /[/: ,]/.test(h));
   if (bad !== undefined) throw new Error(`${JSON.stringify(bad)} is not a host name (api.example.org, *.example.org)`);
-  return { name: typeof v.name === 'string' ? v.name : null, requires: strings('requires'), hosts, files: v.files === true };
+  if (v.id !== undefined && (typeof v.id !== 'string' || !/^[A-Za-z0-9._-]{1,128}$/.test(v.id) || v.id === '.' || v.id === '..')) throw new Error('"id" must be 1 to 128 characters of A-Z a-z 0-9 . _ -');
+  return { name: typeof v.name === 'string' ? v.name : null, id: v.id ?? null, icon: typeof v.icon === 'string' ? v.icon : null, requires: strings('requires'), hosts, files: v.files === true };
 }
 
 /** The text of a compiled module's gasm.manifest section, or null. */

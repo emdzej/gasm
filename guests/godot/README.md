@@ -30,6 +30,7 @@ cases (the same hashes on wasmtime JIT, AOT and V8) and demos on the website.
 | [`examples/audio`](examples/audio) | `AudioStreamGenerator` synthesis, a WAV built in code, a reverb bus, the spectrum analyzer |
 | [`examples/http`](examples/http) | `HTTPRequest` GETs and a POST on gasm:fetch (against `scripts/fetch-server.mjs`; replayed in the determinism suite) |
 | [`examples/mods`](examples/mods), [`examples/modpack`](examples/modpack) | Mods: the game loads every pack from `--mods <dir>` (`Gasm.get_mods()`, `load_resource_pack`); the mod replaces a settings file and adds a scene |
+| [`examples/relaymp`](examples/relaymp) | High-level multiplayer: RPCs through a `gasm-relay` room with `Gasm.create_relay_peer` (the first player serves) |
 | [`examples/net`](examples/net) | Multiplayer: `WebSocketPeer` on gasm:net in a `gasm-relay` room, a square per player (`--allow-net --param relay=ws://host:9000/room`) |
 
 `make godot` builds the engine (`build/godot.wasm`), the smaller engine without

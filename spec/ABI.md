@@ -692,6 +692,8 @@ module, so theirs come that way):
 |---|---|
 | `manifest` | Format version (1). A runner refuses a newer one, naming the version. |
 | `name` | For people (logs, the runner's questions). |
+| `icon` | The window's icon: the name of a PNG asset (native runners on Windows and Linux; `gasm-run --icon <png>` overrides it; macOS takes the app bundle's). |
+| `id` | The game's id: its saves' namespace (and remembered answers, default folders) instead of the module's file name, `[A-Za-z0-9._-]`. Only a manifest the launcher gives counts here: runners choose namespaces, never the guest, so an embedded `id` is ignored (a game naming another's id would read its saves). |
 | `requires` | Modules (`gasm:gl`) or functions (`gasm:fetch.request`) the game can't run without: a runner that lacks one refuses the game before it starts, saying which (`gasm.has` names). |
 | `hosts` | Hosts it will reach (`*.` for subdomains). The window runner and the player ask about all of them in one question before the game starts; hosts it didn't declare are still asked about when it reaches them. Headless runs allow only what `--allow-net` does. |
 | `files` | It saves files for the player (`gasm:files`): natively asked before the game starts. |

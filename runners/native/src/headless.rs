@@ -158,6 +158,22 @@ pub fn run(session: Session, opts: &Options) -> Result<Report, String> {
     })
 }
 
+/// A PNG as RGBA8 (any color type and depth is expanded): (pixels, width, height).
+pub fn decode_png(bytes: &[u8]) -> Result<(Vec<u8>, u32, u32), String> {
+    let mut dec = png::Decoder::new(std::io::Cursor::new(bytes));
+    dec.set_transformations(png::Transformations::EXPAND | png::Transformations::STRIP_16 | png::Transformations::ALPHA);
+    let mut reader = dec.read_info().map_err(|e| format!("not a PNG: {e}"))?;
+    let mut buf = vec![0; reader.output_buffer_size().ok_or("PNG too large")?];
+    let info = reader.next_frame(&mut buf).map_err(|e| format!("PNG: {e}"))?;
+    buf.truncate(info.buffer_size());
+    let rgba = match info.color_type {
+        png::ColorType::Rgba => buf,
+        png::ColorType::GrayscaleAlpha => buf.chunks(2).flat_map(|p| [p[0], p[0], p[0], p[1]]).collect(),
+        other => return Err(format!("PNG color type {other:?} after expansion")),
+    };
+    Ok((rgba, info.width, info.height))
+}
+
 pub fn write_png(path: &str, w: u32, h: u32, rgba: &[u8]) -> Result<(), String> {
     let file = std::fs::File::create(path).map_err(|e| format!("{path}: {e}"))?;
     let mut enc = png::Encoder::new(std::io::BufWriter::new(file), w, h);
@@ -165,4 +181,17 @@ pub fn write_png(path: &str, w: u32, h: u32, rgba: &[u8]) -> Result<(), String> 
     enc.set_depth(png::BitDepth::Eight);
     let mut writer = enc.write_header().map_err(|e| e.to_string())?;
     writer.write_image_data(rgba).map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod png_tests {
+    #[test]
+    fn png_round_trip() {
+        let path = std::env::temp_dir().join(format!("gasm-png-{}.png", std::process::id()));
+        let rgba: Vec<u8> = (0..2 * 3 * 4).map(|i| i as u8 * 9).collect();
+        super::write_png(path.to_str().unwrap(), 2, 3, &rgba).unwrap();
+        let (back, w, h) = super::decode_png(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!((back, w, h), (rgba, 2, 3));
+        let _ = std::fs::remove_file(path);
+    }
 }

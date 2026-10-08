@@ -124,6 +124,7 @@ check godot-audio         godot 150 $GP/audio.pck --input '60-64:KEY(Digit1),90-
 check godot-http          godot 60 $GP/http.pck --fetch-replay tests/fixtures/fetch
 # WebSocketPeer on gasm:net, offline: the connection is refused alike everywhere
 check godot-net           godot 60 $GP/net.pck --input '10-50:KEY(ArrowRight)'
+check godot-relaymp       godot-2d 60 $GP/relaymp.pck --input '10-50:KEY(ArrowLeft)'
 # The engine without 3D (build/godot-2d.wasm) runs the 2D examples (its own hashes:
 # a different build lays memory out differently)
 check godot2d-platformer  godot-2d 420 $GP/platformer.pck --input '30-400:KEY(ArrowRight),60-64:KEY(Space),130-134:KEY(Space),200-204:KEY(Space),270-274:KEY(Space)'
@@ -145,7 +146,7 @@ rm -rf "$MODS"
 # Godot logs an error and carries on (a shader it rejects draws nothing, alike on every
 # runner, so the hashes still agree): the examples must log no errors on either null GL,
 # on the full engine, and the 2D ones on the 2D engine too
-for e in hello2d platformer scene3d ui audio http net mods 2d:hello2d 2d:platformer 2d:ui 2d:audio 2d:http 2d:net 2d:mods; do
+for e in hello2d platformer scene3d ui audio http net mods relaymp 2d:hello2d 2d:platformer 2d:ui 2d:audio 2d:http 2d:net 2d:mods 2d:relaymp; do
   engine=godot; case $e in 2d:*) engine=godot-2d; e=${e#2d:};; esac
   errs=$( { "$NATIVE" build/$engine.wasm $GP/$e.pck --fetch-replay tests/fixtures/fetch --headless 60 2>&1 >/dev/null; $NODE build/$engine.wasm $GP/$e.pck --fetch-replay tests/fixtures/fetch --headless 60 2>&1 >/dev/null; } | grep -E '^(SHADER )?ERROR' | sort -u | head -5)
   name=$engine-$e-log

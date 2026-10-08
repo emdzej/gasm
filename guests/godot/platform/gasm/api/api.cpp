@@ -11,6 +11,9 @@
 //
 // save_file hands the runner a copy for the player (gasm:files): natively in
 // Pictures/<game>/ (images) or Downloads/<game>/, in browsers a download.
+// create_relay_peer(url) is Godot's high-level multiplayer through a gasm-relay room:
+//   multiplayer.multiplayer_peer = gasm.create_relay_peer("ws://host:9000/room")
+// (the room's first player is the server, id 1).
 // get_param(name) is a launch parameter (--param name=value, the page's URL
 // parameters), "" if missing.
 //
@@ -28,6 +31,7 @@
 #include "core/io/file_access.h"
 
 #include "gasm.h"
+#include "relay_peer.h"
 
 class Gasm : public Object {
 	GDCLASS(Gasm, Object);
@@ -40,6 +44,7 @@ protected:
 		ClassDB::bind_method(D_METHOD("get_param", "name"), &Gasm::get_param);
 		ClassDB::bind_method(D_METHOD("get_mods"), &Gasm::get_mods);
 		ClassDB::bind_method(D_METHOD("get_refused_mods"), &Gasm::get_refused_mods);
+		ClassDB::bind_method(D_METHOD("create_relay_peer", "url"), &Gasm::create_relay_peer);
 	}
 
 public:
@@ -53,6 +58,17 @@ public:
 		v.resize(n);
 		gasm_param(name.get_data(), name.length(), (char *)v.ptrw(), n);
 		return String::utf8((const char *)v.ptr(), n);
+	}
+
+	// Godot's high-level multiplayer through a gasm-relay room (relay_peer.h): set it as
+	// multiplayer.multiplayer_peer. null if it can't connect (the runner logs why).
+	Ref<MultiplayerPeer> create_relay_peer(const String &p_url) {
+		Ref<GasmRelayPeer> p;
+		p.instantiate();
+		if (p->connect_to_url(p_url) != OK) {
+			return Ref<MultiplayerPeer>();
+		}
+		return p;
 	}
 
 	// The runner mounts mods as assets mods/<name> (the gasm file layer's /mods/).
@@ -117,6 +133,7 @@ static Gasm *gasm_singleton = nullptr;
 
 void register_gasm_api() {
 	GDREGISTER_ABSTRACT_CLASS(Gasm);
+	GDREGISTER_ABSTRACT_CLASS(GasmRelayPeer);
 	gasm_singleton = memnew(Gasm);
 	Engine::get_singleton()->add_singleton(Engine::Singleton("Gasm", gasm_singleton));
 }

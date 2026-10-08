@@ -32,6 +32,7 @@ const GODOT_GAMES = {
   'godot-ui': { pck: 'godot/ui.pck', label: 'Godot: UI and saves', engine: 'godot-2d.wasm' },
   'godot-audio': { pck: 'godot/audio.pck', label: 'Godot: audio', engine: 'godot-2d.wasm' },
   'godot-net': { pck: 'godot/net.pck', label: 'Godot: multiplayer (relay)', engine: 'godot-2d.wasm' },
+  'godot-relaymp': { pck: 'godot/relaymp.pck', label: 'Godot: RPC multiplayer (relay)', engine: 'godot-2d.wasm' },
   'godot-mods': { pck: 'godot/mods.pck', label: 'Godot: mods (pick them with "mods...")', engine: 'godot-2d.wasm' },
 };
 for (const [id, g] of Object.entries(GODOT_GAMES)) GAMES[id] = g.label;
@@ -474,7 +475,7 @@ function showSplash(stale) {
   return s;
 }
 
-async function start({ romBytes } = {}) {
+async function start({ romBytes, romName = null } = {}) {
   const gen = ++startGen;
   const stale = () => gen !== startGen;   // a newer start() took over
   await stopGame();
@@ -542,7 +543,10 @@ async function start({ romBytes } = {}) {
     let c = freshCanvas();
     c.classList.toggle('gpu', usesGfx || usesGl);
     gpu = null;
-    const namespace = await namespaceFor(game); // saves: one namespace per game
+    // saves: one namespace per game, chosen here, never by the game (a Godot pack you open
+    // is its own game: its file name, as gasm-run does with --asset game.pck=mygame.pck)
+    const packName = game === 'godot.wasm' && romName ? romName.replace(/\.[^.]*$/, '').replace(/[^A-Za-z0-9._-]/g, '_') : '';
+    const namespace = packName || await namespaceFor(game);
     const prefix = url.get('prefix') ?? '';
     if (useWorker) {
       // Lazy sources: the worker reads OPFS / picked files synchronously on demand.
@@ -730,7 +734,7 @@ async function openContent(f) {
   const g = contentGame(f.name);
   if (!g) return log(`${f.name}: expected a ${Object.values(CONTENT).map((c) => c.ext).join(' or ')} file`);
   if ($('game').value !== g) { $('game').value = g; $('game').onchange(); }
-  start({ romBytes: new Uint8Array(await f.arrayBuffer()) });
+  start({ romBytes: new Uint8Array(await f.arrayBuffer()), romName: f.name });
 }
 $('romfile').onchange = (e) => { if (e.target.files[0]) openContent(e.target.files[0]); };
 const stage = $('stage');

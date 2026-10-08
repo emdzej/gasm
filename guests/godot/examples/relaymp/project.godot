@@ -1,0 +1,27 @@
+; Godot on gasm: high-level multiplayer (RPCs) in a gasm-relay room (Gasm.create_relay_peer).
+config_version=5
+
+[application]
+; gasm shows its own splash while loading: no second one from Godot
+boot_splash/show_image=false
+
+config/name="Relay multiplayer (Godot on gasm)"
+run/main_scene="res://main.tscn"
+config/features=PackedStringArray("4.7", "GL Compatibility")
+
+[display]
+
+window/size/viewport_width=640
+window/size/viewport_height=360
+window/stretch/mode="canvas_items"
+window/stretch/aspect="keep"
+
+[rendering]
+
+renderer/rendering_method="gl_compatibility"
+renderer/rendering_method.mobile="gl_compatibility"
+
+[editor]
+
+; text scenes in the pack: binary conversion gives nodes random ids, so exports would differ
+export/convert_text_resources_to_binary=false

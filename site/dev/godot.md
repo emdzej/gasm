@@ -105,11 +105,30 @@ launcher or the page replaces while the game runs (`--watch-asset`,
 (natively in the data directory, in the browser in IndexedDB). Each file is one
 storage key, so:
 
-- a file is at most 1 MiB, all of a game's saves 16 MiB;
+- folders work (`DirAccess.make_dir_recursive_absolute("user://photos/")`,
+  `user://photos/a.jpg`, listing them);
+- a file is at most 1 MiB, all of a game's saves 16 MiB: a write that would
+  pass 1 MiB fails at once (`store_buffer()` returns `false`, `get_error()` is
+  `ERR_OUT_OF_MEMORY`), and a full store fails at `close()` (`get_error()`
+  again), each with an error in the log saying which limit;
 - a path (relative to `user://`, with `/` and other characters encoded) is at
-  most 128 bytes;
+  most 128 bytes (longer ones fail to open with `ERR_FILE_BAD_PATH`);
 - files are written when they are closed (`close()`, or when the `FileAccess`
   goes away).
+
+Pictures the player keeps belong in [files for the player](#saving-files-for-the-player)
+rather than in saves.
+
+**The window's icon:** `gasm-run` doesn't read the pack's `config/icon`; give
+the icon as an asset and name it in the manifest (`--asset icon.png=icon.png`,
+`"icon": "icon.png"`), or pass `--icon icon.png`. On Linux, `--app-class mygame`
+lets the desktop match the window to your `.desktop` entry.
+
+**Whose saves:** every Godot game runs on the same `godot.wasm`, so the saves'
+name comes from the pack: `--asset game.pck=nowhere.pck` keeps them in
+`gasm/nowhere/`. A game's manifest (`--manifest`, asset `gasm.manifest`) can
+name them for good with `"id": "nowhereinparticular"`, so renamed or versioned
+packs keep their saves; `--storage-id` still overrides both.
 
 Headless runs start with empty storage (add `--storage-dir DIR` to keep it). The
 [ui example](https://github.com/emdzej/gasm/blob/main/guests/godot/examples/ui/main.gd)
@@ -220,27 +239,45 @@ does GETs and a POST.
 
 ## Multiplayer
 
-`WebSocketPeer` works as a client on [`gasm:net`](/docs/abi#gasm-net-optional-message-connections):
-`ws://` and `wss://` (the runner checks certificates), binary messages. Players
-meet in a [`gasm-relay`](/guide/#gasm-relay) room, which forwards each player's
-messages to the others; the
+Two ways, both on [`gasm:net`](/docs/abi#gasm-net-optional-message-connections)
+through a [`gasm-relay`](/guide/#gasm-relay) room (natively with `--allow-net`):
+
+**Godot's high-level multiplayer** (RPCs, `MultiplayerSynchronizer`,
+`MultiplayerSpawner`) with no Godot server: the room's first player is the
+server (peer 1), everyone else a client, and Godot's server relay connects the
+clients to each other.
+
+```gdscript
+var peer: MultiplayerPeer = Engine.get_singleton("Gasm").create_relay_peer("ws://relay.example.org:9000/room")
+if peer:
+    multiplayer.multiplayer_peer = peer   # then RPCs as usual: moved.rpc(position)
+```
+
+The [relaymp example](https://github.com/emdzej/gasm/tree/main/guests/godot/examples/relaymp)
+moves a square per player with an `@rpc`. All transfer modes arrive reliably and
+in order (WebSocket underneath); if the server leaves, the clients get
+`server_disconnected` (the next one to join an empty room serves).
+
+**`WebSocketPeer`** for your own messages: `ws://` and `wss://` (the runner
+checks certificates), binary messages, through the relay's protocol, as the
 [net example](https://github.com/emdzej/gasm/tree/main/guests/godot/examples/net)
-moves a square per player that way. `WebSocketMultiplayerPeer` (RPCs,
-`MultiplayerSynchronizer`) works as a client of a Godot server running outside
-gasm.
+does. `WebSocketMultiplayerPeer` also works, as a client of a Godot server
+running outside gasm.
 
 ```sh
 gasm-relay 127.0.0.1:9000 &
-gasm-run build/godot.wasm --asset game.pck=build/godot/net.pck --allow-net --param relay=ws://127.0.0.1:9000/roam
+gasm-run build/godot-2d.wasm --asset game.pck=build/godot/relaymp.pck --allow-net --param relay=ws://127.0.0.1:9000/roam
 ```
 
-- **Permission:** natively `--allow-net` (or `--allow-net=relay.example.org`);
-  in browsers the page's rules apply.
+- **Permission:** natively `--allow-net` (or `--allow-net=relay.example.org`,
+  or the player agrees when asked); in browsers the page's rules apply.
 - **Messages are binary:** text frames arrive as bytes (`was_string_packet()`
   is false); `send_text()` sends the text's bytes. No custom handshake headers
   or subprotocols.
-- **No server:** `accept_stream` and so `create_server` aren't available.
-- Call `poll()` every frame, as on other platforms.
+- **No server inside gasm:** `create_server` isn't available (the relay or the
+  room's first player serves instead).
+- Call `poll()` every frame, as on other platforms (`multiplayer` polls its peer
+  itself).
 
 Launch parameters reach GDScript through the `Gasm` singleton:
 `Engine.get_singleton("Gasm").get_param("relay")`.

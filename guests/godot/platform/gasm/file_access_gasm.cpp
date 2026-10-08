@@ -125,6 +125,7 @@ Error FileAccessGasm::open_internal(const String &p_path, int p_mode_flags) {
 	if (is_user(p_path)) {
 		key = storage_key(p_path);
 		if (key.is_empty()) {
+			ERR_PRINT(vformat("gasm: %s can't be stored: user:// paths are at most 128 bytes once encoded (gasm:storage keys)", p_path));
 			return last_error = ERR_FILE_BAD_PATH;
 		}
 		CharString k = key.utf8();
@@ -222,8 +223,18 @@ Error FileAccessGasm::resize(int64_t p_length) {
 	return OK;
 }
 
+// gasm:storage keeps a value up to 1 MiB (16 MiB per game): a user:// file can't grow
+// past it, and saying so at the write (store_* returns false, get_error() is
+// ERR_OUT_OF_MEMORY) beats a file that silently isn't there after close()
+static const uint64_t STORAGE_MAX_VALUE = 1 << 20;
+
 bool FileAccessGasm::store_buffer(const uint8_t *p_src, uint64_t p_length) {
 	ERR_FAIL_COND_V(!open || !writable || key.is_empty(), false);
+	if (pos + p_length > STORAGE_MAX_VALUE) {
+		last_error = ERR_OUT_OF_MEMORY;
+		ERR_PRINT(vformat("gasm: %s can't be over 1 MiB (gasm:storage keeps files up to 1 MiB, 16 MiB per game)", path));
+		return false;
+	}
 	if (pos + p_length > (uint64_t)data.size()) {
 		data.resize(pos + p_length);
 	}
@@ -239,8 +250,9 @@ void FileAccessGasm::flush() {
 		CharString k = key.utf8();
 		int32_t r = gasm_storage_set(k.ptr(), k.length(), data.ptr(), data.size());
 		if (r != 0) {
-			last_error = ERR_FILE_CANT_WRITE;
-			ERR_PRINT(vformat("gasm: saving %s failed (gasm:storage error %d)", path, r));
+			last_error = r == GASM_STORAGE_ERR_QUOTA || r == GASM_STORAGE_ERR_SIZE ? ERR_OUT_OF_MEMORY : r == GASM_STORAGE_ERR_KEY ? ERR_FILE_BAD_PATH : ERR_FILE_CANT_WRITE;
+			const char *why = r == GASM_STORAGE_ERR_QUOTA ? "the game's saves are full (16 MiB)" : r == GASM_STORAGE_ERR_SIZE ? "over 1 MiB" : r == GASM_STORAGE_ERR_KEY ? "the path is too long for gasm:storage" : "the runner couldn't write it";
+			ERR_PRINT(vformat("gasm: saving %s failed: %s (gasm:storage error %d)", path, why, r));
 		}
 		dirty = false;
 	}

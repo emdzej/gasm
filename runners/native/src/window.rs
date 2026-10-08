@@ -35,6 +35,10 @@ pub struct Options {
     pub splash: bool,
     /// copy the game's frame to the clipboard on this key (`--copy-key`; None: off)
     pub copy_key: Option<KeyCode>,
+    /// the window's icon, RGBA8 (`--icon`, the manifest's "icon"); macOS takes the app's
+    pub icon: Option<(Vec<u8>, u32, u32)>,
+    /// X11 WM_CLASS / Wayland app id (`--app-class`): desktops match it to a .desktop entry
+    pub app_class: Option<String>,
 }
 
 /// The splash screen, shown while the game's module compiles on another thread.
@@ -568,9 +572,21 @@ impl ApplicationHandler for App {
         if self.window.is_some() {
             return;
         }
-        let attrs = Window::default_attributes()
+        let mut attrs = Window::default_attributes()
             .with_title(format!("{} — gasm", self.title))
             .with_inner_size(LogicalSize::new(self.opts.size.0, self.opts.size.1));
+        if let Some((rgba, w, h)) = &self.opts.icon {
+            match winit::window::Icon::from_rgba(rgba.clone(), *w, *h) {
+                Ok(icon) => attrs = attrs.with_window_icon(Some(icon)),
+                Err(e) => eprintln!("[gasm] icon: {e}"),
+            }
+        }
+        #[cfg(all(unix, not(target_os = "macos")))]
+        if let Some(class) = &self.opts.app_class {
+            use winit::platform::{wayland::WindowAttributesExtWayland, x11::WindowAttributesExtX11};
+            attrs = WindowAttributesExtX11::with_name(attrs, class.clone(), class.clone());
+            attrs = WindowAttributesExtWayland::with_name(attrs, class.clone(), class.clone());
+        }
         let window = match el.create_window(attrs) {
             Ok(w) => Arc::new(w),
             Err(e) => return self.stop(el, Err(format!("cannot create window: {e}"))),

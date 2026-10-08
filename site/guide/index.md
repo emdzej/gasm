@@ -276,6 +276,8 @@ gasm-run <game.wasm|game.cwasm> [options]
 --mute                   no audio output
 --no-splash              start without the gasm splash screen
 --copy-key <code>        copy the game's frame to the clipboard on this key (default F2, or none)
+--icon <png>             the window's icon (Windows, Linux; macOS shows the app's)
+--app-class <name>       (Linux) the window's class / app id, matching a .desktop entry with your icon
 --manifest <file>        the game's capabilities manifest (what it needs; else the one in the .wasm)
 --info                   show the game's manifest and whether this gasm-run can run it, then exit
 --mods <dir>             the game's mods: the folder's resource packs (*.pck, *.zip), in name order
@@ -334,7 +336,9 @@ win/loss record; the NES emulator keeps battery-backed cartridge saves
 | Browser | IndexedDB (database `gasm`) for the site you play on |
 | Headless | in memory only (unless `--storage-dir` is given) |
 
-`<game>` is the file name without extension (`sumo`, `nes`). Delete the
+`<game>` is the file name without extension (`sumo`, `nes`); for a Godot game
+the pack's (`--asset game.pck=mygame.pck` → `mygame`), or the `id` in the
+manifest the launcher gives, and `--storage-id` overrides all of them. Delete the
 folder to reset. Games save on change and when you quit normally (close the
 window or hold Esc).
 

@@ -26,6 +26,12 @@ pub const VERSION: u64 = 1;
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Manifest {
     pub name: Option<String>,
+    /// the game's id: its saves' namespace (and consent, default folders) instead of
+    /// the module's file name; `[A-Za-z0-9._-]`, 1 to 128 bytes. Only honoured from a
+    /// manifest the launcher gives (runners choose namespaces, never the guest)
+    pub id: Option<String>,
+    /// the window's icon: the name of a PNG asset (`gasm-run --icon` overrides it)
+    pub icon: Option<String>,
     pub requires: Vec<String>,
     pub hosts: Vec<String>,
     pub files: bool,
@@ -54,8 +60,15 @@ impl Manifest {
         if let Some(h) = hosts.iter().find(|h| h.is_empty() || h.contains(['/', ':', ' ', ','])) {
             return Err(format!("{h:?} is not a host name (api.example.org, *.example.org)"));
         }
+        let id = match o.get("id") {
+            None => None,
+            Some(Value::String(s)) if crate::storage::valid_key(s) => Some(s.clone()),
+            Some(_) => return Err("\"id\" must be 1 to 128 characters of A-Z a-z 0-9 . _ -".into()),
+        };
         Ok(Manifest {
             name: o.get("name").and_then(Value::as_str).map(str::to_owned),
+            id,
+            icon: o.get("icon").and_then(Value::as_str).map(str::to_owned),
             requires: strings("requires")?,
             hosts,
             files: o.get("files").and_then(Value::as_bool).unwrap_or(false),
@@ -113,11 +126,13 @@ mod tests {
     #[test]
     fn parse() {
         let m = Manifest::parse(r#"{"manifest":1,"name":"x","requires":["gasm:gl"],"hosts":["API.met.no."],"files":true,"later":5}"#).unwrap();
-        assert_eq!(m, Manifest { name: Some("x".into()), requires: vec!["gasm:gl".into()], hosts: vec!["api.met.no".into()], files: true });
+        assert_eq!(m, Manifest { name: Some("x".into()), id: None, icon: None, requires: vec!["gasm:gl".into()], hosts: vec!["api.met.no".into()], files: true });
         assert!(Manifest::parse(r#"{"manifest":2}"#).unwrap_err().contains("version 2"));
         assert!(Manifest::parse(r#"{"hosts":[]}"#).is_err());
         assert!(Manifest::parse(r#"{"manifest":1,"hosts":["http://x.org"]}"#).is_err());
         assert!(Manifest::parse("nope").is_err());
+        assert_eq!(Manifest::parse(r#"{"manifest":1,"id":"nip"}"#).unwrap().id.as_deref(), Some("nip"));
+        assert!(Manifest::parse(r#"{"manifest":1,"id":"a/b"}"#).is_err());
     }
 
     #[test]

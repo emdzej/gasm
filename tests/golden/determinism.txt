@@ -18,11 +18,12 @@ eguidemo frames=120 presented=0 size=0x0 video_fnv32=ccbee56f audio_fnv32=811c9d
 fetchtest frames=18 presented=18 size=16x16 video_fnv32=2d05be23 audio_fnv32=811c9dc5 audio_frames=0 
 godot-hello2d frames=150 presented=0 size=0x0 video_fnv32=d9b2105c audio_fnv32=c3f9ea05 audio_frames=110250 
 godot-platformer frames=420 presented=0 size=0x0 video_fnv32=42731395 audio_fnv32=92402345 audio_frames=308700 
-godot-scene3d frames=300 presented=0 size=0x0 video_fnv32=1f56d7b0 audio_fnv32=76260645 audio_frames=220500 
+godot-scene3d frames=300 presented=0 size=0x0 video_fnv32=8433a185 audio_fnv32=76260645 audio_frames=220500 
 godot-ui frames=90 presented=0 size=0x0 video_fnv32=c08cd29d audio_fnv32=03d5db85 audio_frames=66150 
 godot-audio frames=150 presented=0 size=0x0 video_fnv32=f5289dc5 audio_fnv32=f32893e0 audio_frames=110250 
 godot-http frames=60 presented=0 size=0x0 video_fnv32=6b377a12 audio_fnv32=2790cc45 audio_frames=44100 
 godot-net frames=60 presented=0 size=0x0 video_fnv32=4335f810 audio_fnv32=2790cc45 audio_frames=44100 
+godot-relaymp frames=60 presented=0 size=0x0 video_fnv32=a2590c55 audio_fnv32=2790cc45 audio_frames=44100 
 godot2d-platformer frames=420 presented=0 size=0x0 video_fnv32=42731395 audio_fnv32=92402345 audio_frames=308700 
 godot2d-ui frames=90 presented=0 size=0x0 video_fnv32=c08cd29d audio_fnv32=03d5db85 audio_frames=66150 
 godot2d-mods frames=60 presented=0 size=0x0 video_fnv32=4688ffad audio_fnv32=2790cc45 audio_frames=44100 

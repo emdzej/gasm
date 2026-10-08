@@ -438,7 +438,7 @@ export declare class FileSaves {
 }
 
 /** A capabilities manifest (ABI.md, "Capabilities manifest"). */
-export interface Manifest { name: string | null; requires: string[]; hosts: string[]; files: boolean }
+export interface Manifest { name: string | null; id: string | null; icon: string | null; requires: string[]; hosts: string[]; files: boolean }
 export declare const MANIFEST_SECTION: 'gasm.manifest';
 export declare const MANIFEST_VERSION: number;
 /** Parse a manifest's JSON; throws why it's refused. */
