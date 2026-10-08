@@ -1,6 +1,6 @@
 {
   "name": "@emdzej/gasm-host",
-  "version": "0.12.0",
+  "version": "0.13.0",
   "description": "Run gasm games (portable WebAssembly games) in the browser or Node: the gasm ABI host with WebGPU, WebSocket networking, storage and a headless runner",
   "type": "module",
   "exports": {
