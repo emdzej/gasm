@@ -703,6 +703,21 @@ game with the reason. `gasm-run --info game.wasm` prints the manifest, the
 imports and whether this runner has them. Requirements are checked the same way
 on every runner (`GasmHost.load` throws; `host.manifest` is the parsed manifest).
 
+### Real threads (wasi-threads)
+
+A game built for `wasm32-wasip1-threads` (plain pthreads; link with
+`-Wl,--import-memory,--export-memory,--shared-memory,--max-memory=<bytes>`)
+imports a shared memory and `wasi.thread-spawn`, and exports
+`wasi_thread_start`. The native runner runs each thread on an OS thread with its
+own instance of the module, all sharing the memory; `gasm-run --threads <n>`
+caps them (default: the CPU count in a window, **0 in headless runs**, where
+`thread-spawn` fails, so a game that falls back to its main thread gives
+comparable hashes). Worker threads have the WASI subset, `gasm.time_ms`,
+`gasm.log` and `gasm.has`; every other gasm import is the main thread's and does
+nothing on a worker. A trap or exit on any thread ends the game. The JS host
+loads such modules but starts no threads (browsers need cross-origin isolation
+for shared memory at all). Threads make a run nondeterministic.
+
 ### Mods
 
 Mods are assets too, so they need no import: `gasm-run --mods <dir>` (and the

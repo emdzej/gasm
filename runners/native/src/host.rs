@@ -249,7 +249,7 @@ pub fn memory_limit_message(limit: usize) -> String {
 pub const DEFAULT_MEMORY_LIMIT: usize = 1 << 30;
 
 pub struct Host {
-    memory: Option<Memory>,
+    memory: Option<GuestMemory>,
     start: Instant,
     /// Headless runs use frame-derived time so results are reproducible (also
     /// the WASI clocks).
@@ -281,6 +281,8 @@ pub struct Host {
     pub files: crate::files::Files,
     /// the manifest's `requires`: the game is refused before it starts if one is missing
     pub requires: Vec<String>,
+    /// wasi-threads: spawning and the shared memory (None: a module without threads)
+    threads: Option<std::sync::Arc<crate::threads::Threads>>,
     pub storage: Storage,
     /// false during catch-up frames: gfx begin_frame returns 0
     pub show_frame: bool,
@@ -312,6 +314,22 @@ pub struct Host {
 }
 
 impl Host {
+    /// A worker thread's host (threads.rs): compute only, the main host's clock origin.
+    pub(crate) fn worker(threads: std::sync::Arc<crate::threads::Threads>, start: Instant) -> Host {
+        let mut h = Host::new(Assets::new(), HashMap::new(), None, Gfx::null(), Net::new(false), Storage::memory());
+        h.start = start;
+        h.threads = Some(threads);
+        h
+    }
+
+    pub(crate) fn threads(&self) -> Option<&std::sync::Arc<crate::threads::Threads>> {
+        self.threads.as_ref()
+    }
+
+    pub(crate) fn set_memory(&mut self, m: GuestMemory) {
+        self.memory = Some(m);
+    }
+
     pub fn new(
         assets: impl Into<Assets>,
         params: HashMap<String, String>,
@@ -339,6 +357,7 @@ impl Host {
             clipboard: Default::default(),
             files: Default::default(),
             requires: Vec::new(),
+            threads: None,
             memory_limit: MemoryLimit(Some(DEFAULT_MEMORY_LIMIT)),
             catch_up: false,
             frame_index: 0,
@@ -478,8 +497,52 @@ fn copy_if_fits(mem: &mut [u8], dst: u32, cap: u32, src: &[u8]) -> wasmtime::Res
     Ok(src.len() as i32)
 }
 
-pub(crate) fn memory(caller: &Caller<'_, Host>) -> wasmtime::Result<Memory> {
-    caller.data().memory.ok_or_else(|| format_err!("guest memory not yet available"))
+/// The guest's linear memory: its own, or a shared one (wasi-threads: every thread's
+/// instance imports the same). Host functions use it the same way either way.
+#[derive(Clone)]
+pub(crate) enum GuestMemory {
+    Plain(Memory),
+    Shared(wasmtime::SharedMemory),
+}
+
+impl GuestMemory {
+    pub fn data<'a, T: 'static>(&self, store: impl Into<wasmtime::StoreContext<'a, T>>) -> &'a [u8] {
+        match self {
+            GuestMemory::Plain(m) => m.data(store),
+            // SAFETY: shared memory is racy by nature (as in any native threaded program);
+            // the guest synchronizes its threads, and the host only reads/writes the
+            // ranges a call names, as it does for plain memory
+            GuestMemory::Shared(m) => unsafe { std::slice::from_raw_parts(m.data().as_ptr() as *const u8, m.data().len()) },
+        }
+    }
+
+    pub fn data_mut<'a, T: 'static>(&self, store: impl Into<wasmtime::StoreContextMut<'a, T>>) -> &'a mut [u8] {
+        match self {
+            GuestMemory::Plain(m) => m.data_mut(store),
+            // SAFETY: as in data()
+            GuestMemory::Shared(m) => unsafe { std::slice::from_raw_parts_mut(m.data().as_ptr() as *mut u8, m.data().len()) },
+        }
+    }
+
+    pub fn data_and_store_mut<'a, S: wasmtime::AsContextMut + 'a>(&self, store: &'a mut S) -> (&'a mut [u8], &'a mut S::Data)
+    where
+        S::Data: 'static,
+    {
+        match self {
+            GuestMemory::Plain(m) => m.data_and_store_mut(store),
+            GuestMemory::Shared(m) => {
+                // SAFETY: the shared memory isn't the store's, so its bytes and the store's
+                // data don't alias; `store` is borrowed for 'a, which bounds both (as in data())
+                let data = unsafe { std::slice::from_raw_parts_mut(m.data().as_ptr() as *mut u8, m.data().len()) };
+                let host: *mut S::Data = store.as_context_mut().data_mut();
+                (data, unsafe { &mut *host })
+            }
+        }
+    }
+}
+
+pub(crate) fn memory(caller: &Caller<'_, Host>) -> wasmtime::Result<GuestMemory> {
+    caller.data().memory.clone().ok_or_else(|| format_err!("guest memory not yet available"))
 }
 
 fn guest_str(caller: &Caller<'_, Host>, ptr: u32, len: u32) -> wasmtime::Result<String> {
@@ -1186,6 +1249,8 @@ pub fn engine() -> &'static Engine {
 fn new_engine() -> Engine {
     let mut config = Config::new();
     config.epoch_interruption(true);
+    // wasi-threads guests (shared memory); modules without one are unaffected
+    config.shared_memory(true);
     // a gasm_run guest's whole run is on this stack: the default wasm stack limit plus room
     config.async_stack_size(4 << 20);
     let engine = Engine::new(&config).expect("wasmtime engine");
@@ -1220,11 +1285,14 @@ pub struct LoadOptions {
     pub stack_switching: bool,
     /// Largest guest memory in bytes (None: the engine's maximum, 4 GiB for wasm32).
     pub memory_limit: Option<usize>,
+    /// Most worker threads a wasi-threads guest may have at once (0: `thread-spawn` fails,
+    /// as in reproducible runs).
+    pub threads: usize,
 }
 
 impl Default for LoadOptions {
     fn default() -> Self {
-        LoadOptions { allow_precompiled: false, call_timeout: Some(Duration::from_secs(30)), stack_switching: true, memory_limit: Some(DEFAULT_MEMORY_LIMIT) }
+        LoadOptions { allow_precompiled: false, call_timeout: Some(Duration::from_secs(30)), stack_switching: true, memory_limit: Some(DEFAULT_MEMORY_LIMIT), threads: 0 }
     }
 }
 
@@ -1304,9 +1372,29 @@ impl Game {
         }
         store.data_mut().provided = provided;
         wasi::add_to_linker(&mut linker, &module)?;
+        // wasi-threads: a shared memory the module imports (every thread's instance gets
+        // the same one) and thread-spawn
+        let threads = match crate::threads::shared_memory_import(&module) {
+            Some(ty) => {
+                if switching {
+                    bail!("a module with threads (shared memory) can't use gasm_run (stack switching)");
+                }
+                let mem = wasmtime::SharedMemory::new(engine, ty)?;
+                let import = module.imports().find(|i| matches!(i.ty(), wasmtime::ExternType::Memory(_))).expect("memory import");
+                linker.define(&mut store, import.module(), import.name(), mem.clone())?;
+                let t = crate::threads::Threads::new(engine, &module, mem, opts.threads, store.data().start);
+                store.data_mut().threads = Some(t.clone());
+                Some(t)
+            }
+            None => None,
+        };
+        crate::threads::add_to_linker(&mut linker)?;
         // Imports this runner doesn't know (e.g. JS glue some Rust crates pull in)
         // link as traps: harmless unless the guest actually calls them.
         linker.define_unknown_imports_as_traps(&module)?;
+        if let Some(t) = &threads {
+            t.set_linker(linker.clone());
+        }
 
         let deadline = opts.call_timeout.map_or(u64::MAX / 2, |t| (t.as_millis() as u64 * TICKS_PER_SEC).div_ceil(1000).max(1));
         store.epoch_deadline_trap();
@@ -1318,9 +1406,10 @@ impl Game {
         } else {
             linker.instantiate(&mut store, &module)?
         };
-        let memory = instance
-            .get_memory(&mut store, "memory")
-            .ok_or_else(|| format_err!("guest does not export `memory`"))?;
+        let memory = match instance.get_memory(&mut store, "memory") {
+            Some(m) => GuestMemory::Plain(m),
+            None => threads.as_ref().map(|t| GuestMemory::Shared(t.memory().clone())).ok_or_else(|| format_err!("guest does not export `memory`"))?,
+        };
         store.data_mut().memory = Some(memory);
 
         // a call that must not suspend, on either engine
@@ -1395,8 +1484,15 @@ impl Game {
         let Some(run) = self.run.clone() else {
             let store = self.store.as_mut().expect("store");
             store.set_epoch_deadline(self.deadline);
-            let r = self.frame.call(&mut *store, ()).map_err(classify);
+            let mut r = self.frame.call(&mut *store, ()).map_err(classify);
             store.data_mut().frame_index += 1;
+            // a worker thread that trapped or exited ends the game too (wasi-threads)
+            if let (Ok(()), Some(end)) = (&r, store.data().threads.as_ref().and_then(|t| t.ended())) {
+                r = Err(match end {
+                    crate::threads::ThreadEnd::Exit(c) => Stop::Exit(c),
+                    crate::threads::ThreadEnd::Trap(t) => Stop::Trap(t),
+                });
+            }
             self.ended = r.is_err();
             return r;
         };

@@ -168,7 +168,8 @@ export class GasmHost {
   }
   view() { this.views(); return this._dv; }
   str(ptr, len) {
-    try { return UTF8.decode(this.bytes(ptr, len)); } catch (e) {
+    // TextDecoder refuses views of a SharedArrayBuffer (a wasi-threads module's memory): copy
+    try { const b = this.bytes(ptr, len); return UTF8.decode(b.buffer instanceof ArrayBuffer ? b : b.slice()); } catch (e) {
       if (e instanceof RangeError) throw e;
       throw new Error('string argument is not UTF-8');
     }
@@ -489,7 +490,9 @@ export class GasmHost {
 
   // ---- lifecycle -----------------------------------------------------------
   /** Instantiate a module (bytes or a compiled WebAssembly.Module) and run its init. */
-  async load(wasm) {
+  /** Load a module (bytes, or a compiled Module: then pass its `bytes` too for a module
+   *  with threads, whose shared memory's size only the binary says). */
+  async load(wasm, { bytes = null } = {}) {
     this.gl = new GlHost(this, this.glContext);
     this.gl.model.hash = (b) => { if (this.hashing) this.videoHash = fnv32(this.videoHash, b); };
     const known = {
@@ -535,12 +538,24 @@ export class GasmHost {
         await new Promise((r) => { this.resume = r; done?.(); });
       });
     }
-    const imports = new Proxy({ ...known, wasi_snapshot_preview1: this.wasiImports() }, {
-      get: (t, mod) => (mod === 'wasi_snapshot_preview1' ? t[mod] : trapping(mod, t[mod])),
+    // wasi-threads modules import a shared memory: one here (threads don't run in this host:
+    // thread-spawn fails, so the game does its work on the main thread, as headless runs do)
+    const sharedMem = sharedMemoryImport(wasm instanceof WebAssembly.Module ? bytes : wasm);
+    if (!sharedMem && wasm instanceof WebAssembly.Module && WebAssembly.Module.imports(wasm).some((i) => i.kind === 'memory')) {
+      throw new Error('this module imports its memory (a game built with threads): pass load(module, { bytes })');
+    }
+    const extra = {};
+    if (sharedMem) {
+      extra[sharedMem.module] = { [sharedMem.name]: new WebAssembly.Memory({ initial: sharedMem.min, maximum: sharedMem.max, shared: true }) };
+      extra.wasi = { 'thread-spawn': () => -1 };
+    }
+    const imports = new Proxy({ ...known, ...extra, wasi_snapshot_preview1: this.wasiImports() }, {
+      get: (t, mod) => (mod === 'wasi_snapshot_preview1' || (sharedMem && mod === sharedMem.module) ? t[mod] : trapping(mod, t[mod])),
     });
     this.staticTitle = staticTitle(module);
     const instance = await WebAssembly.instantiate(module, imports);
     const ex = instance.exports;
+    if (!(ex.memory instanceof WebAssembly.Memory) && sharedMem) ex.memory = extra[sharedMem.module][sharedMem.name];
     if (!(ex.memory instanceof WebAssembly.Memory)) throw new Error('guest does not export `memory`');
     this.memory = ex.memory;
     try {
@@ -682,3 +697,31 @@ export class GasmHost {
 }
 
 export { AssetTable };
+
+/** A module's shared memory import (wasi-threads), from its binary: { module, name, min, max } in
+ *  pages, or null. (JS can't read an import's limits from a compiled Module.) */
+function sharedMemoryImport(wasm) {
+  if (!wasm) return null;
+  const b = wasm instanceof Uint8Array ? wasm : new Uint8Array(wasm instanceof ArrayBuffer ? wasm : wasm.buffer);
+  let p = 8;
+  const leb = () => { let v = 0, s = 0, x; do { x = b[p++]; v += (x & 0x7f) * 2 ** s; s += 7; } while (x & 0x80); return v; };
+  const name = () => { const n = leb(); const t = new TextDecoder().decode(b.subarray(p, p + n)); p += n; return t; };
+  while (p < b.length) {
+    const id = b[p++], size = leb(), end = p + size;
+    if (id === 2) {
+      for (let n = leb(); n > 0; n--) {
+        const mod = name(), field = name(), kind = b[p++];
+        if (kind === 0) leb();                       // function: type index
+        else if (kind === 1) { p++; const f = b[p++]; leb(); if (f & 1) leb(); }   // table
+        else if (kind === 2) {                       // memory
+          const flags = b[p++], min = leb(), max = flags & 1 ? leb() : undefined;
+          if (flags & 2) return { module: mod, name: field, min, max };
+        } else if (kind === 3) { p += 2; }           // global: type, mutability
+        else if (kind === 4) { p++; leb(); }         // tag
+      }
+      return null;
+    }
+    p = end;
+  }
+  return null;
+}

@@ -597,7 +597,7 @@ async function start({ romBytes, romName = null } = {}) {
       h.text = '';     // the page has a keyboard
       if (stale()) { h.shutdown(); gfx?.device.destroy(); return; }
       host = h;
-      await host.load(module);
+      await host.load(module, { bytes });
     }
     if (stale()) return stopGame();
   } catch (e) {

@@ -55,7 +55,7 @@ $(FLAGS_DIR)/$(1): FORCE
 	@echo '$(2)' | cmp -s - $$@ || echo '$(2)' > $$@
 endef
 
-GUESTS   := $(BUILD)/test-pattern.wasm $(BUILD)/gltest.wasm $(BUILD)/glowtest.wasm $(BUILD)/eguidemo.wasm $(BUILD)/nes.wasm $(BUILD)/sumo.wasm $(BUILD)/triangle.wasm $(BUILD)/textured.wasm $(BUILD)/inputtest.wasm $(BUILD)/loopdemo.wasm $(BUILD)/loopdemo-c.wasm $(BUILD)/threadtest.wasm $(BUILD)/pthreadtest.wasm $(BUILD)/rthreadtest.wasm $(BUILD)/assetcheck.wasm $(BUILD)/fetchtest.wasm $(BUILD)/bricks.wasm $(BUILD)/doom.wasm $(BUILD)/scummvm.wasm \
+GUESTS   := $(BUILD)/test-pattern.wasm $(BUILD)/mttest.wasm $(BUILD)/gltest.wasm $(BUILD)/glowtest.wasm $(BUILD)/eguidemo.wasm $(BUILD)/nes.wasm $(BUILD)/sumo.wasm $(BUILD)/triangle.wasm $(BUILD)/textured.wasm $(BUILD)/inputtest.wasm $(BUILD)/loopdemo.wasm $(BUILD)/loopdemo-c.wasm $(BUILD)/threadtest.wasm $(BUILD)/pthreadtest.wasm $(BUILD)/rthreadtest.wasm $(BUILD)/assetcheck.wasm $(BUILD)/fetchtest.wasm $(BUILD)/bricks.wasm $(BUILD)/doom.wasm $(BUILD)/scummvm.wasm \
   $(BUILD)/sdl3-snake.wasm $(BUILD)/sdl3-woodeneye.wasm $(BUILD)/sdl3-callbacks.wasm $(BUILD)/sdl3-classic.wasm \
   $(BUILD)/sdl3-threads.wasm $(BUILD)/sdl3-gl.wasm $(BUILD)/sdl3-snake-gl.wasm
 # made by the same recipes as the Asyncify builds
@@ -394,6 +394,15 @@ $(BUILD)/test-pattern.wasm: guests/test-pattern/main.c spec/gasm.h $(CLANG) $(WA
 	@mkdir -p $(@D)
 	$(CC) $(TARGET) $(REACTOR) $(OPT) -Ispec $< -o $@.raw -lm
 	$(call wasm_opt)
+
+# Real threads (wasi-threads): plain pthreads on wasm32-wasip1-threads, the memory imported
+# and shared (every thread's instance gets the same one); gasm-run runs them on OS threads
+$(BUILD)/mttest.wasm: guests/mttest/main.c spec/gasm.h $(CLANG) $(WASM_OPT)
+	@mkdir -p $(@D)
+	$(CC) --target=wasm32-wasip1-threads -pthread $(REACTOR) $(OPT) -Ispec $< -o $@.raw \
+	  -Wl,--import-memory,--export-memory,--shared-memory,--max-memory=67108864
+	$(WASM_OPT) $@.raw -O2 --enable-threads --enable-bulk-memory --enable-sign-ext --enable-mutable-globals --enable-nontrapping-float-to-int -o $@
+	@rm -f $@.raw
 
 # One cargo invocation builds all Rust games (stamp file: portable to make 3.81).
 $(BUILD)/.rust-guests: $(RUST_SRC) $(CLANG) | rust-toolchain

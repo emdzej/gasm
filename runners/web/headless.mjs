@@ -226,10 +226,11 @@ const host = new GasmHost({
 host.hashing = !noHash;
 const t0 = performance.now();
 try {
-  const module = await WebAssembly.compile(readFileSync(wasm));
+  const bytes = readFileSync(wasm);
+  const module = await WebAssembly.compile(bytes);
   const builtIn = staticTitle(module);
   if (builtIn) console.error(`[gasm] title: ${builtIn} (gasm.title)`);
-  await host.load(module);
+  await host.load(module, { bytes });
 } catch (e) {
   if (e instanceof ProcExit) process.exit(e.code);   // exited during init
   throw e;

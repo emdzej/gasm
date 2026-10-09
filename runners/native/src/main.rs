@@ -73,6 +73,8 @@ options:
                            (then run the .cwasm with --allow-precompiled)
   --allow-precompiled      accept a .cwasm: native code, so only files you compiled yourself
   --call-timeout <secs>    trap a guest call (init, a frame) that runs longer (default 30, 0 = never)
+  --threads <n>            most worker threads a game built with threads (wasi-threads) may run at
+                           once (default: the CPU count in a window, 0 headless, so runs compare)
   --memory-limit <MiB>     trap when the guest's memory grows past this (default 1024, 0 = 4 GiB)
   --no-stack-switching     call gasm_frame even if the game exports gasm_run (its Asyncify path)
   --gl-lib <dir>           where ANGLE's libEGL/libGLESv2 are, for gasm:gl games (default: next
@@ -125,6 +127,7 @@ struct Args {
     info: bool,
     icon: Option<String>,
     app_class: Option<String>,
+    threads: Option<usize>,
     forget_consent: Option<String>,
     window: (u32, u32),
     present: Present,
@@ -174,6 +177,7 @@ fn parse_args() -> Result<Args, String> {
         info: false,
         icon: None,
         app_class: None,
+        threads: None,
         forget_consent: None,
         window: (960, 720),
         present: Present::default(),
@@ -248,6 +252,7 @@ fn parse_args() -> Result<Args, String> {
             "--manifest" => args.manifest = Some(val("--manifest")?),
             "--info" => args.info = true,
             "--icon" => args.icon = Some(val("--icon")?),
+            "--threads" => args.threads = Some(val("--threads")?.parse().map_err(|_| "--threads expects a number")?),
             "--app-class" => args.app_class = Some(val("--app-class")?),
             "--forget-consent" => args.forget_consent = Some(val("--forget-consent")?),
             "--app-id" => {
@@ -571,6 +576,8 @@ fn run(args: Args) -> Result<i32, String> {
             call_timeout: args.call_timeout,
             stack_switching: args.stack_switching,
             memory_limit: args.memory_limit,
+            // threads aren't deterministic: none in headless runs unless asked for
+            threads: args.threads.unwrap_or(if args.headless.is_some() { 0 } else { std::thread::available_parallelism().map_or(4, |n| n.get()) }),
         },
         gl_lib: args.gl_lib.as_ref().map(std::path::PathBuf::from),
         gl_software: args.gl_software,

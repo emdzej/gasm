@@ -42,7 +42,7 @@ for n in node ${NODE24:-} "$HOME"/.nvm/versions/node/v2[4-9]*/bin/node; do
 done
 [ -n "$NODE_JSPI" ] || echo "note: no Node with JSPI (24+): run builds are checked natively only"
 [ -d roms ] && [ -n "$(ls roms/*.nes 2>/dev/null)" ] && [ -f roms/freedoom2.wad ] && [ -f roms/doom1.wad ] && [ -f roms/bass/sky.dnr ] && [ -d roms/scumm/dott-dos-ni-demo-en ] && [ -f roms/drascula/flac/audio/track28.flac ] || scripts/fetch-roms.sh
-for g in bricks nes godot godot-2d test-pattern gltest glowtest eguidemo fetchtest sumo triangle textured inputtest threadtest pthreadtest rthreadtest sdl3-threads loopdemo loopdemo-run loopdemo-c loopdemo-c-run doom scummvm scummvm-run sdl3-snake sdl3-snake-gl sdl3-gl sdl3-woodeneye sdl3-callbacks sdl3-classic sdl3-classic-run; do "$NATIVE" build/$g.wasm --compile build/$g.cwasm 2>/dev/null; done
+for g in bricks nes godot godot-2d mttest test-pattern gltest glowtest eguidemo fetchtest sumo triangle textured inputtest threadtest pthreadtest rthreadtest sdl3-threads loopdemo loopdemo-run loopdemo-c loopdemo-c-run doom scummvm scummvm-run sdl3-snake sdl3-snake-gl sdl3-gl sdl3-woodeneye sdl3-callbacks sdl3-classic sdl3-classic-run; do "$NATIVE" build/$g.wasm --compile build/$g.cwasm 2>/dev/null; done
 
 pass=0; fail=0
 run() { "$@" 2>/dev/null | grep -E '^(frames|video)' | tr '\n' ' '; }
@@ -129,6 +129,23 @@ check godot-relaymp       godot-2d 60 $GP/relaymp.pck --input '10-50:KEY(ArrowLe
 # a different build lays memory out differently)
 check godot2d-platformer  godot-2d 420 $GP/platformer.pck --input '30-400:KEY(ArrowRight),60-64:KEY(Space),130-134:KEY(Space),200-204:KEY(Space),270-274:KEY(Space)'
 check godot2d-ui          godot-2d 90 $GP/ui.pck --input '20:PTR(200,126),21-22:PTR(200,126,L),23:PTR(200,126),30:"Ada",50:PTR(500,303),51-53:PTR(500,303,L),54:PTR(500,303),70:PTR(190,492),71-72:PTR(190,492,L),73:PTR(190,492)'
+# Real threads (wasi-threads, guests/mttest): headless runs allow none, so every runner
+# does the work on the main thread and the hashes compare; natively with --threads 4 the
+# four pthreads run on OS threads and must give the same sums; a worker that traps ends
+# the run (instead of leaving the main thread waiting for it)
+check mttest              mttest 5
+out=$("$NATIVE" build/mttest.wasm --headless 5 --threads 4 2>&1)
+if grep -q '\[mttest\] 4 threads; sums agree' <<<"$out" && grep -q 'exited with code 0' <<<"$out"; then
+  pass=$((pass + 1)); printf 'PASS  %-22s %s\n' "threads-native" "4 OS threads, same sums"
+else
+  fail=$((fail + 1)); printf 'FAIL  threads-native\n%s\n' "$(tail -4 <<<"$out")"
+fi
+out=$("$NATIVE" build/mttest.wasm --headless 5 --threads 4 --param trap=1 2>&1); code=$?
+if [ "$code" -ne 0 ] && grep -q 'unreachable' <<<"$out"; then
+  pass=$((pass + 1)); printf 'PASS  %-22s %s\n' "threads-trap" "a worker's trap ends the run"
+else
+  fail=$((fail + 1)); printf 'FAIL  threads-trap (exit %s)\n%s\n' "$code" "$(tail -4 <<<"$out")"
+fi
 # Mods (--mods): the mods example with the mod pack in a folder, and without it
 MODS=$(mktemp -d)
 cp build/godot/modpack.pck "$MODS/"

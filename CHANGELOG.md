@@ -8,6 +8,16 @@ the package versions (`gasm-sdk`, `gasm-host`, `@emdzej/gasm-host`).
 
 ## Unreleased
 
+Runners:
+- Real threads natively (wasi-threads; NiP #17, phase 1): a game built for
+  `wasm32-wasip1-threads` (plain pthreads, imported shared memory) runs each
+  thread on an OS thread with its own instance sharing the memory. `--threads
+  <n>` caps them (the CPU count in a window, 0 headless: `thread-spawn` fails, so
+  hashes compare). Worker threads compute (WASI, `gasm.time_ms`, `gasm.log`); a
+  trap on any thread ends the game. The Node runner and the player load such
+  games single-threaded (`GasmHost.load(module, { bytes })`). New test guest
+  `mttest` (4 threads: 3.9 times the speed of one on an M1 Pro).
+
 Godot:
 - The window runner's catch-up frames (it fell behind and runs several in a row,
   showing the last) are skipped by Godot, which steps by real time anyway; their

@@ -1,7 +1,8 @@
 # Threads for guests
 
 Status: **part A implemented** for C, POSIX threads, SDL 3 and Rust (see "As
-built" and "Plan"); part B is a proposal. Two designs that
+built" and "Plan"); **part B in progress**: real threads run natively
+(wasi-threads, "Part B as built" below), a threaded Godot is next. Two designs that
 complement each other:
 **cooperative threads** inside the guest (no ABI change, deterministic), and
 **real wasm threads** as an optional capability later (parallel, not
@@ -306,6 +307,49 @@ it), or when Godot's Compatibility renderer gains threaded command submission.
 Until then the cheaper wins are the ones already taken (cheaper `gasm:gl`
 calls, the smaller 2D engine). The roadmap keeps "Real wasm threads" as a
 proposal.
+
+### Revisited (2026-10-09): loading
+
+Nowhere in Particular hit the trigger the design pass named: loading. In its
+Łódź map (361 tiles) frames go to 35-40 ms while tiles load, because single
+native calls can't be split: a road chunk's zstd `decompress()` (tens of MB),
+`to_vector3_array()`, `add_surface_from_arrays()`, `set_faces()` (50-150 ms a
+tile before they cut their data). Threads would move the CPU work on bytes
+to a `WorkerThreadPool` (whose threads are started once, so no cold start per
+task) and keep the main thread to adding finished nodes. So part B goes ahead,
+natively first, the browser single-threaded; an asynchronous decompress call
+comes as a bonus.
+
+### Part B as built (phase 1: the runner)
+
+- **wasi-threads**, as wasi-libc's `wasm32-wasip1-threads` target emits it: the
+  module imports a shared memory (`-Wl,--import-memory,--shared-memory`) and
+  `wasi.thread-spawn(start_arg) -> tid`, and exports
+  `wasi_thread_start(tid, start_arg)`. Plain pthreads code builds unchanged.
+- **Natively** (`runners/native/src/threads.rs`): each spawned thread is an OS
+  thread with its own store and its own instance of the same module, sharing
+  the memory (`_initialize` runs once, on the main instance). Host functions
+  reach either memory kind through `GuestMemory`. Worker threads get the WASI
+  subset, `gasm.time_ms`, `gasm.log` and `gasm.has`; the other gasm imports
+  belong to the main thread and do nothing on a worker. A trap or `proc_exit` on
+  any thread ends the game: the main thread reports it after the frame, and if
+  it's blocked (joining the dead thread: no timeout interrupts an atomic wait) a
+  watchdog ends the process after 2 s.
+- **How many:** `gasm-run --threads <n>`, by default the CPU count in a window
+  and 0 in headless runs, where `thread-spawn` fails, so code that falls back to
+  the main thread gives comparable hashes. The Node runner and the player load
+  such modules (a shared `WebAssembly.Memory` sized from the binary's import)
+  with `thread-spawn` failing; browsers allow shared memory only on
+  cross-origin isolated pages, so the website keeps the single-threaded builds.
+- **Measured** (`guests/mttest`, Apple M1 Pro): four jobs on one thread 3.1 s,
+  the same four on four threads 0.8 s.
+- wasmtime keeps shared memory behind `Config::shared_memory` and calls threads
+  tier 2 (no security fixes for old releases); modules without a shared memory
+  are unaffected.
+
+Next: phase 2, Godot with `threads=yes` for `wasm32-wasip1-threads` (a third
+engine next to `godot.wasm` and `godot-2d.wasm`), its pool pinned to zero
+threads in headless runs; then the asynchronous decompress call.
 
 ## Later: cheaper switching
 

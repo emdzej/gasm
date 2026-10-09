@@ -354,7 +354,9 @@ export declare class GasmHost {
   /** Why the guest can't be called any more (it trapped or exited), else null. */
   dead: Error | null;
   /** Compile (bytes) or take a compiled module, instantiate, run init. */
-  load(wasm: BufferSource | WebAssembly.Module): Promise<void>;
+  /** A compiled Module of a game built with threads (it imports a shared memory) needs its `bytes`
+   *  too: only the binary says the memory's size. Threads don't run here (thread-spawn fails). */
+  load(wasm: BufferSource | WebAssembly.Module, options?: { bytes?: BufferSource | null }): Promise<void>;
   /** One frame. Throws the guest's trap / ProcExit; after that, throws without calling it. */
   frame(): void;
   /** A catch-up batch: one frame per step, only the last shown; blits 2D frames into a
