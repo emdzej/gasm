@@ -355,6 +355,10 @@ GASM_IMPORT("log") void gasm_log(const char *msg, uint32_t msg_len);
 GASM_IMPORT("has") int32_t gasm_has(const char *name, uint32_t name_len);
 /* Monotonic time in milliseconds (virtual, frame-derived in headless runs). */
 GASM_IMPORT("time_ms") double gasm_time_ms(void);
+/* How many worker threads this run lets the game start at once (wasi-threads:
+ * thread-spawn); 0 when it allows none (headless runs, browsers), so a game
+ * sizes its thread pool from it instead of failing to spawn. */
+GASM_IMPORT("max_threads") uint32_t gasm_max_threads(void);
 /* The player's time zone now: minutes east of UTC, daylight saving included
  * (120 for CEST, -300 for EST). 0 in headless runs. Local time is the WASI
  * realtime clock plus this offset. */

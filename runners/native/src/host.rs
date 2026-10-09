@@ -315,8 +315,8 @@ pub struct Host {
 
 impl Host {
     /// A worker thread's host (threads.rs): compute only, the main host's clock origin.
-    pub(crate) fn worker(threads: std::sync::Arc<crate::threads::Threads>, start: Instant) -> Host {
-        let mut h = Host::new(Assets::new(), HashMap::new(), None, Gfx::null(), Net::new(false), Storage::memory());
+    pub(crate) fn worker(threads: std::sync::Arc<crate::threads::Threads>, start: Instant, assets: Assets) -> Host {
+        let mut h = Host::new(assets, HashMap::new(), None, Gfx::null(), Net::new(false), Storage::memory());
         h.start = start;
         h.threads = Some(threads);
         h
@@ -618,6 +618,10 @@ fn add_gasm_imports(linker: &mut Linker<Host>) -> wasmtime::Result<()> {
     linker.func_wrap("gasm", "time_ms", |caller: Caller<'_, Host>| -> f64 {
         let h = caller.data();
         h.virtual_time_ms.unwrap_or_else(|| h.start.elapsed().as_secs_f64() * 1000.0)
+    })?;
+
+    linker.func_wrap("gasm", "max_threads", |caller: Caller<'_, Host>| -> u32 {
+        caller.data().threads().map_or(0, |t| t.limit() as u32)
     })?;
 
     linker.func_wrap("gasm", "utc_offset_minutes", |caller: Caller<'_, Host>| -> i32 {

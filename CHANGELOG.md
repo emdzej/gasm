@@ -17,8 +17,19 @@ Runners:
   trap on any thread ends the game. The Node runner and the player load such
   games single-threaded (`GasmHost.load(module, { bytes })`). New test guest
   `mttest` (4 threads: 3.9 times the speed of one on an M1 Pro).
+- `gasm.max_threads()`: how many worker threads the run allows (0 headless and in
+  the JS host), so a game sizes its pool instead of failing to spawn. Worker
+  threads read assets too (a copy taken when the thread starts).
 
 Godot:
+- `godot-mt.wasm`, the engine with threads (NiP #17, phase 2): `WorkerThreadPool`
+  and threaded resource loading on OS threads in `gasm-run` (`--threads`; the
+  pool sized from `gasm.max_threads()`), on the calling thread where the runner
+  allows none (headless runs, browsers), with the same hashes as `godot.wasm`.
+  New example `threads` (eight deflate blocks: 318 ms on one thread, 63 ms on
+  eight on an M1 Pro). Engine fixes in `godot.patch`: no DNS resolver thread
+  and no ThorVG thread on gasm, and the pool's calling-thread fallback works in a
+  threaded build (it indexed a pool thread that didn't exist).
 - The window runner's catch-up frames (it fell behind and runs several in a row,
   showing the last) are skipped by Godot, which steps by real time anyway; their
   input is kept for the next frame (NiP #18). Before, a slow frame was followed by

@@ -34,15 +34,16 @@ mods and the capabilities manifest.
    `gasm:files`, a picker run by the runner.
 2. **`.gasm` packages** ([Runtime and ABI](#runtime-and-abi)): one file with the
    game, its assets and its manifest.
-3. **Godot, the rest** ([Godot](#godot)): Jolt, TLS and `Crypto`, threads when a
-   game needs them ([design/threads.md](https://github.com/emdzej/gasm/blob/main/design/threads.md)).
+3. **Godot, the rest** ([Godot](#godot)): Jolt, TLS and `Crypto`, threads in
+   browsers ([design/threads.md](https://github.com/emdzej/gasm/blob/main/design/threads.md)).
 
 ## Runtime and ABI
 
 | Item | What it gives | Status |
 |---|---|---|
 | Stack switching beyond JSPI | Browsers without JSPI (and Node 22) still need the Asyncify builds; wasm's stack-switching proposal would cover them too. | waiting on engines |
-| Real wasm threads | Shared memory and atomics, opt-in, for guests that need parallel CPU (physics, job systems, Godot's worker pool). Not deterministic. | proposal; for Godot, a design pass found the gain small (rendering stays on the main thread; physics and loading would gain), so no prototype yet: [design/threads.md](https://github.com/emdzej/gasm/blob/main/design/threads.md) (part B, "Godot: design pass") |
+| Real threads in browsers | wasi-threads guests (and `godot-mt.wasm`) run on OS threads in `gasm-run`; in browsers they would run on a pool of Web Workers started before the game, on cross-origin isolated pages, with the game in Worker mode. Node first (`gasm-headless --threads`). | designed: [design/threads.md](https://github.com/emdzej/gasm/blob/main/design/threads.md) (part B, "Browsers") |
+| Asynchronous decompression | A runner call that unpacks a compressed block (zstd, deflate) outside the game and hands it over at the next frame: faster loading on every runner, threads or not. | not started |
 | `.gasm` packages | One file bundling `game.wasm`, its assets and a manifest. | not started |
 | Opening files (`gasm:files`) | A file picker run by the runner (importing a map, a replay): the game only sees what the player picks. Saving for the player already works (`gasm:files.save`). | not started |
 | Asking before a save | `gasm-run` writes a game's saves to a default folder (or `--save-dir`, or refuses them with `--no-save`); a native save dialog for each would let the player pick the place. | idea |
@@ -128,7 +129,7 @@ Left over:
 
 | Item | What it gives | Status |
 |---|---|---|
-| Threads | Godot is built with `threads=no`: its worker pool, threaded loading and the audio thread run on the main thread. Godot's threads on gasm's cooperative scheduler (they would need Asyncify, which Godot's size makes slow), or real wasm threads (part B of design/threads.md). | not started |
+| Threads in browsers | `godot-mt.wasm` runs its worker pool and threaded loading on OS threads in `gasm-run`; in the web player it would need real threads in browsers (above) and `gasm:gl` in Worker mode. | designed |
 | Jolt physics | Jolt doesn't recognize WASI targets (its platform and SIMD detection); a patch like its Emscripten support. Godot Physics 3D is used meanwhile. | not started |
 | TLS, `Crypto` | mbedtls needs a time source (`mbedtls_ms_time`, `timing.c`) for WASI. | not started |
 | Godot as a WebSocket server | `WebSocketPeer` and `WebSocketMultiplayerPeer` work as clients on `gasm:net` (a relay room, or a Godot server outside gasm); a game can't host (`create_server`), and ENet and UDP need sockets browsers don't have. | not planned |

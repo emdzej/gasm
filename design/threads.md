@@ -2,7 +2,8 @@
 
 Status: **part A implemented** for C, POSIX threads, SDL 3 and Rust (see "As
 built" and "Plan"); **part B in progress**: real threads run natively
-(wasi-threads, "Part B as built" below), a threaded Godot is next. Two designs that
+(wasi-threads, "Part B as built" below), and so does a threaded Godot
+(`godot-mt.wasm`, phase 2); browsers are next (phase 3, planned below). Two designs that
 complement each other:
 **cooperative threads** inside the guest (no ABI change, deterministic), and
 **real wasm threads** as an optional capability later (parallel, not
@@ -330,7 +331,8 @@ comes as a bonus.
   thread with its own store and its own instance of the same module, sharing
   the memory (`_initialize` runs once, on the main instance). Host functions
   reach either memory kind through `GuestMemory`. Worker threads get the WASI
-  subset, `gasm.time_ms`, `gasm.log` and `gasm.has`; the other gasm imports
+  subset, `gasm.time_ms`, `gasm.log`, `gasm.has` and the assets (for threaded
+  resource loading: a copy of the table, `Assets::for_thread`); the other gasm imports
   belong to the main thread and do nothing on a worker. A trap or `proc_exit` on
   any thread ends the game: the main thread reports it after the frame, and if
   it's blocked (joining the dead thread: no timeout interrupts an atomic wait) a
@@ -347,9 +349,84 @@ comes as a bonus.
   tier 2 (no security fixes for old releases); modules without a shared memory
   are unaffected.
 
-Next: phase 2, Godot with `threads=yes` for `wasm32-wasip1-threads` (a third
-engine next to `godot.wasm` and `godot-2d.wasm`), its pool pinned to zero
-threads in headless runs; then the asynchronous decompress call.
+### Part B as built (phase 2: Godot)
+
+- **`godot-mt.wasm`:** `threads=yes` for `wasm32-wasip1-threads` (`detect.py`:
+  `-pthread`, an imported shared memory with a 4 GiB maximum), a third engine
+  next to `godot.wasm` and `godot-2d.wasm` in its own tree
+  (`tools/godot-src-mt`). Built by `make godot`, shipped in the games zip, not
+  on the website.
+- **The pool's size comes from the runner:** `gasm.max_threads()` (a new
+  import: how many `thread-spawn`s the run allows) is what
+  `OS::get_default_thread_pool_size` answers, and `get_processor_count` at
+  least 1. Godot's `Thread` aborts when a thread can't start (`std::thread`
+  with `-fno-exceptions`), so the engine must never ask for more than that.
+- **Engine threads that aren't the pool's**, both left out on gasm
+  (`godot.patch`): the DNS resolver's (gasm has no DNS: gasm:net and gasm:fetch
+  take host names) and ThorVG's (exported games rasterize SVGs at import time;
+  runtime SVGs could get one thread when `max_threads >= 2`).
+- **No threads allowed** (headless, the JS host): the pool runs tasks on the
+  calling thread. Upstream's fallback for that is broken in threaded builds
+  (`_process_task` indexed the caller's pool thread, which doesn't exist); the
+  patch gives the calling thread a `ThreadData` of its own. The same pack then
+  gives the same hashes as on `godot.wasm` (`godotmt-*` cases).
+- **Workers read assets** (`Assets::for_thread`: a copy of the table with its
+  own open files), so threaded resource loading reads `game.pck` there.
+- **Measured** (`examples/threads`: eight 8 MiB deflate blocks, Apple M1 Pro, in
+  a window): one thread 318 ms; 2 threads 162 ms, 4: 85 ms, 8: 63 ms. Group
+  tasks must be high priority for that: Godot gives low-priority tasks only
+  `max_threads × 0.3` threads (4 → 1, 8 → 2).
+
+Next: browsers (phase 3, below); the asynchronous decompress call (on every
+runner, threads or not).
+
+### Browsers (phase 3, planned)
+
+The same modules, the same rules (workers compute and read assets; a trap ends
+the game; headless runs spawn nothing), on Web Workers:
+
+- **Only on cross-origin isolated pages** (`crossOriginIsolated`: COOP and COEP
+  headers). Elsewhere `thread-spawn` keeps failing and `gasm.max_threads` is 0,
+  as now. GitHub Pages can't set headers, so the website would need a service
+  worker that adds them (`coi-serviceworker`); self-hosted pages set them.
+- **The game runs in Worker mode.** The browser's main thread can't block
+  (`Atomics.wait`, so `memory.atomic.wait32`, throws there), and every mutex
+  in a threaded build may wait. Worker mode moves only transferables today; a
+  threaded game is the one case that sends a shared memory to workers.
+  `gasm:gl` games first need `gasm:gl` in Worker mode (WebGL 2 on a transferred
+  `OffscreenCanvas`, on the roadmap), so threaded Godot depends on it.
+- **A pool started before the game:** worker startup is asynchronous and needs
+  the event loop, which a game thread blocked in `pthread_create` + join
+  doesn't give back. So the runner starts `gasm.max_threads` workers up front;
+  each instantiates the module against the shared memory and parks in
+  `Atomics.wait` on its slot of a small shared control block. `thread-spawn`
+  claims a free slot, writes `tid` and `start_arg`, `Atomics.notify`s, and
+  returns at once (no messages, no cold start); a thread that returns from
+  `wasi_thread_start` parks again. This is Emscripten's `PTHREAD_POOL_SIZE`
+  without the growth.
+- **Imports on a worker:** the WASI subset, time, log and assets, as natively;
+  the other gasm imports are no-ops there. A trap or `proc_exit` in a pool
+  worker is posted to the game's thread, which ends the game after its frame
+  (and the page ends the game's worker if that thread is blocked waiting for
+  the dead one, as the native watchdog does).
+- **Assets on a worker.** Asset providers are functions (`size`, `readAt`),
+  which can't be posted, so each source also describes itself for workers
+  (`share()`): bytes once copied into a `SharedArrayBuffer` that every worker
+  reads; a `Blob`/`File`, read with `FileReaderSync` (workers only); an OPFS
+  file through its own read-only sync access handle; a path in Node (each
+  worker opens the file). Each worker builds its own `AssetTable` from these,
+  so the naming rules stay in one place. Replaced assets (`setAsset`) reach
+  workers only between frames, as on the main thread. Godot's threaded loading
+  reads `game.pck` from pool threads, so this part isn't optional.
+- **Node first:** `gasm-headless --threads <n>` on `worker_threads` (Node's
+  main thread may block, so no Worker mode is needed there), checked with
+  `mttest` against the native runner's sums; then the browser's Worker mode on
+  an isolated test page, then `godot-mt.wasm` once `gasm:gl` runs in workers.
+- **Thread budget inside Godot:** `gasm.max_threads` all go to the
+  WorkerThreadPool. ThorVG (SVG) would start one thread of its own; the
+  threaded build keeps it at 0 (the patch), since exported games rasterize
+  SVGs at import time. If runtime SVGs (`DPITexture`) turn out to matter, give
+  ThorVG one thread when `max_threads >= 2` and the pool the rest.
 
 ## Later: cheaper switching
 

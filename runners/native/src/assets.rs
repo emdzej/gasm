@@ -64,6 +64,27 @@ pub struct Assets {
     last_version: u32,
 }
 
+impl Assets {
+    /// A copy for a worker thread (wasi-threads): the same names and versions, its own
+    /// file handles and cache (files are reopened or duplicated, memory copied). Changes
+    /// made later (`set_asset`, `--watch-asset`) reach threads started after them.
+    pub fn for_thread(&self) -> Assets {
+        let exact = self
+            .exact
+            .iter()
+            .filter_map(|(name, e)| {
+                let source = match &e.source {
+                    Source::Memory(b) => Source::Memory(b.clone()),
+                    Source::File { file, path } => Source::File { file: file.try_clone().ok()?, path: path.clone() },
+                    Source::Lazy { path, len } => Source::Lazy { path: path.clone(), len: *len },
+                };
+                Some((name.clone(), Entry { source, from_dir: e.from_dir, version: e.version }))
+            })
+            .collect();
+        Assets { exact, folded: self.folded.clone(), sorted: self.sorted.clone(), open: RefCell::new(VecDeque::new()), last_version: self.last_version }
+    }
+}
+
 impl From<HashMap<String, Vec<u8>>> for Assets {
     fn from(map: HashMap<String, Vec<u8>>) -> Assets {
         let mut a = Assets::default();

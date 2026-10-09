@@ -46,7 +46,28 @@ void OS_Gasm::finalize() {
 }
 
 bool OS_Gasm::_check_internal_feature_support(const String &p_feature) {
+#ifdef THREADS_ENABLED
+	return p_feature == "gasm" || p_feature == "wasm32";
+#else
 	return p_feature == "gasm" || p_feature == "wasm32" || p_feature == "single_threaded";
+#endif
+}
+
+static int gasm_threads() {
+#ifdef THREADS_ENABLED
+	static const int n = gasm_has_str("gasm.max_threads") == 1 ? (int)gasm_max_threads() : 0;
+	return n;
+#else
+	return 0;
+#endif
+}
+
+int OS_Gasm::get_processor_count() const {
+	return MAX(1, gasm_threads());
+}
+
+int OS_Gasm::get_default_thread_pool_size() const {
+	return gasm_threads();
 }
 
 bool OS_Gasm::main_loop_iterate() {

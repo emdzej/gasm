@@ -37,6 +37,7 @@ jobs:
           path: |
             tools/godot-src
             tools/godot-src-2d
+            tools/godot-src-mt
             tools/godot-editor
             tools/scons
           key: godot-${{ runner.os }}-${{ hashFiles('scripts/fetch-godot.sh', 'guests/godot/godot.patch', 'guests/godot/platform/**', 'sdk/c/src/gasm_gl.c', 'spec/abi.json') }}

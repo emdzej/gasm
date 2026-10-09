@@ -442,8 +442,10 @@ gasm-run godot.wasm --asset game.pck=mygame.pck    # anywhere
 ```
 
 The examples are in `games/godot/` (`hello2d`, `platformer`, `scene3d`, `ui`,
-`audio`, `http`, `net`, `mods` with `modpack`). 2D games also run on the smaller
-`games/godot-2d.wasm` (the engine without 3D). In the browser player, choose
+`audio`, `http`, `net`, `mods` with `modpack`, `relaymp`, `threads`). 2D games also
+run on the smaller `games/godot-2d.wasm` (the engine without 3D), and games that
+use Godot's threads faster on `games/godot-mt.wasm` (worker threads on your CPU's
+cores: `--threads <n>` sets how many). In the browser player, choose
 **Godot: your game (.pck)** and open or drop the file.
 
 **Mods:** put a game's mods (`.pck` or `.zip` resource packs) in

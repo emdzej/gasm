@@ -216,6 +216,43 @@ make godot-custom GODOT_PROFILE=path/to/game.gdbuild [GODOT_CUSTOM_FLAGS="disabl
 builds `build/godot-custom.wasm` with only the classes the game uses
 (SCons options in `GODOT_CUSTOM_FLAGS`, as in the Makefile's `GODOT_2D_FLAGS`).
 
+### Threads
+
+`godot-mt.wasm` is the engine built with threads (`threads=yes`, for
+`wasm32-wasip1-threads`): `WorkerThreadPool`, `Thread` and threaded resource
+loading (`ResourceLoader.load_threaded_request`) run on real OS threads in
+`gasm-run`, as many as `--threads <n>` allows (by default the CPU count). Worker
+threads can read the game's assets, so loading from `game.pck` works there; the
+scene tree stays on the main thread, as in Godot anywhere.
+
+```sh
+gasm-run build/godot-mt.wasm --asset game.pck=build/godot/threads.pck
+```
+
+Where the runner allows no threads (headless runs, the web player, the Node
+runner), `gasm.max_threads()` is 0 and the pool runs every task on the calling
+thread, so the same pack gives the same hashes as on `godot.wasm`. Tasks have to
+be able to run that way: a task that waits for another task never started can't
+finish. Group tasks for work that blocks loading should be high priority
+(`add_group_task(f, n, -1, true)`): Godot gives low-priority tasks only about a
+third of the pool.
+
+The `threads` example unpacks eight 8 MiB deflate blocks on the main thread and
+then as a group task (Apple M1 Pro, in a window):
+
+| `--threads` | main thread | pool |
+|---|---|---|
+| 1 | 318 ms | 318 ms |
+| 2 | 316 ms | 162 ms |
+| 4 | 321 ms | 85 ms |
+| 8 | 316 ms | 63 ms |
+
+The threaded engine is about as large (31.5 MB, 8.1 MB gzipped). Browsers need
+more for threads (a cross-origin isolated page and the game in a worker), so
+the web player keeps `godot.wasm` for now:
+[design/threads.md](https://github.com/emdzej/gasm/blob/main/design/threads.md),
+"Browsers".
+
 ## HTTP
 
 `HTTPRequest` (and `HTTPClient`) work unchanged: the runner makes the requests
@@ -366,7 +403,7 @@ included), not the current frame's time.
 |---|---|
 | Renderer | Compatibility only (2D and 3D, WebGL 2's feature set: no compute shaders) |
 | Scripting | GDScript; no C# (.NET) and no GDExtension (no dynamic libraries) |
-| Threads | the engine is single-threaded (`threads=no`): `Thread` and `WorkerThreadPool` run their work on the main thread |
+| Threads | `godot.wasm` and `godot-2d.wasm` are single-threaded (`threads=no`); `godot-mt.wasm` has real threads in `gasm-run` ([threads](#threads)), none yet in browsers |
 | Physics | Godot Physics 2D and 3D (Jolt doesn't build for WASI yet) |
 | Networking | `HTTPRequest` and `HTTPClient` work, `https://` too (the runner makes the requests: [below](#http)); `WebSocketPeer` as a client ([multiplayer](#multiplayer)); no servers, ENet or raw sockets; no TLS or `Crypto` in the engine |
 | Text | the fallback text server: no right-to-left scripts or ligatures |

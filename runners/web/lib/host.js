@@ -200,6 +200,7 @@ export class GasmHost {
       },
       time_ms: () => (this.virtualTime ? this.vtime : performance.now() - this.t0),
       // minutes east of UTC (getTimezoneOffset is west); headless runs are UTC
+      max_threads: () => 0,   // no threads here (thread-spawn fails)
       utc_offset_minutes: () => (this.virtualTime ? 0 : -new Date().getTimezoneOffset()),
       set_frame_rate: (hz) => { if (Number.isFinite(hz) && hz >= 1 && hz <= 1000) this.frameRate = hz; },
       video_present: (ptr, w, h, stride) => {

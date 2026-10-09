@@ -4,9 +4,10 @@
 //! its own store and its own instance of the same module, sharing the memory; its
 //! `_initialize` doesn't run (the memory is already set up).
 //!
-//! Worker threads compute: the WASI subset, `gasm.time_ms`, `gasm.log` and `gasm.has`
-//! work there; the other gasm imports (video, audio, input, GPU, network, storage,
-//! assets) belong to the main thread and do nothing on a worker. A trap or `proc_exit`
+//! Worker threads compute and read: the WASI subset, `gasm.time_ms`, `gasm.log`,
+//! `gasm.has` and the assets (a copy taken when the thread starts) work there; the other
+//! gasm imports (video, audio, input, GPU, network, storage) belong to the main thread
+//! and do nothing on a worker. A trap or `proc_exit`
 //! on any thread ends the whole game (wasi-threads), seen by the runner after the frame.
 //! Threads aren't deterministic: headless runs allow none unless `--threads` says so
 //! (`thread-spawn` then fails, as when the limit is reached), so hashes stay comparable.
@@ -79,12 +80,18 @@ impl Threads {
         e
     }
 
+    /// Most worker threads at once (gasm.max_threads).
+    pub fn limit(&self) -> usize {
+        self.limit
+    }
+
     pub fn live(&self) -> usize {
         self.live.load(Ordering::Acquire)
     }
 
     /// `wasi.thread-spawn`: a thread id > 0, or a negative number if it can't start.
-    fn spawn(self: &Arc<Self>, start_arg: i32) -> i32 {
+    /// `assets`: the spawning thread's, copied (threaded resource loading reads files).
+    fn spawn(self: &Arc<Self>, start_arg: i32, assets: crate::assets::Assets) -> i32 {
         if self.live.fetch_add(1, Ordering::AcqRel) >= self.limit {
             self.live.fetch_sub(1, Ordering::AcqRel);
             return -1;
@@ -97,7 +104,7 @@ impl Threads {
         }
         let me = self.clone();
         let started = std::thread::Builder::new().name(format!("gasm-thread-{tid}")).spawn(move || {
-            let r = me.run(tid, start_arg);
+            let r = me.run(tid, start_arg, assets);
             if let Err(end) = r {
                 let first = {
                     let mut e = me.end.lock().unwrap();
@@ -141,9 +148,9 @@ impl Threads {
         }
     }
 
-    fn run(self: &Arc<Self>, tid: i32, start_arg: i32) -> Result<(), ThreadEnd> {
+    fn run(self: &Arc<Self>, tid: i32, start_arg: i32, assets: crate::assets::Assets) -> Result<(), ThreadEnd> {
         let linker = self.linker.lock().unwrap().clone().ok_or_else(|| ThreadEnd::Trap("threads: spawned before the game was linked".into()))?;
-        let mut host = Host::worker(self.clone(), self.start);
+        let mut host = Host::worker(self.clone(), self.start, assets);
         host.set_memory(GuestMemory::Shared(self.memory.clone()));
         let mut store = wasmtime::Store::new(&self.engine, host);
         // a worker may run as long as it likes (the main thread's calls have the limit)
@@ -167,7 +174,7 @@ impl Threads {
 pub fn add_to_linker(linker: &mut Linker<Host>) -> wasmtime::Result<()> {
     linker.func_wrap("wasi", "thread-spawn", |caller: Caller<'_, Host>, start_arg: i32| -> i32 {
         match caller.data().threads() {
-            Some(t) => t.spawn(start_arg),
+            Some(t) => t.clone().spawn(start_arg, caller.data().assets.for_thread()),
             None => -1,
         }
     })?;

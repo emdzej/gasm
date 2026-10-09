@@ -61,8 +61,10 @@ public:
 	String get_cache_path() const override { return "/user/cache"; }
 	String get_executable_path() const override { return "/godot.wasm"; }
 	bool is_userfs_persistent() const override { return true; }
-	int get_processor_count() const override { return 1; }
-	int get_default_thread_pool_size() const override { return 1; }
+	// a threaded build (wasi-threads) starts as many workers as the runner allows
+	// (gasm.max_threads: 0 headless, so tasks run on the main thread and hashes compare)
+	int get_processor_count() const override;
+	int get_default_thread_pool_size() const override;
 
 	void mix_audio(double p_frame_rate) { audio_driver.mix_frame(p_frame_rate); }
 

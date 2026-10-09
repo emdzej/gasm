@@ -189,6 +189,9 @@ pub mod abi {
         with(|s| s.now_ms)
     }
     /// Headless semantics: UTC.
+    pub unsafe fn max_threads() -> u32 {
+        0
+    }
     pub unsafe fn utc_offset_minutes() -> i32 {
         0
     }

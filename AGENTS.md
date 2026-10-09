@@ -30,7 +30,7 @@ property: most tests assert bit-identical hashes.
 | `guests/pthreadtest/` | C guest: plain POSIX threads code on the same scheduler (`sdk/c/src/gasm_pthread.c`) |
 | `sdk/c/src/gasm_loop.c`, `sdk/c/include/gasm_loop.h` | loop helper for games with their own main loop (`gasm_main` + `gasm_wait_frame`): exports `gasm_frame` (Asyncify inside the guest) and `gasm_run` (the runner switches stacks); Rust: `gasm::main_loop!`. Used by ScummVM and SDL3 classic `main()`; each builds as `game.wasm` (Asyncify) and `game-run.wasm` (without) |
 | `sdk/sdl3/` | SDL 3 for gasm: SDL as a "private platform" (`SDL_PLATFORM_PRIVATE`), config + drivers (zlib; OpenGL ES on `gasm:gl` in `SDL_gasmopengles.c` for games linked with `lib/gasm_gl.o`). `scripts/fetch-sdl3.sh` puts SDL in `tools/SDL3-src`; `make sdl3` builds `build/sdl3/` (lib, headers, `find_package` config); `scripts/package-sdl3.sh` bundles it |
-| `guests/godot/` | Godot 4.7 for gasm: `platform/gasm` (MIT: OS, display server with input, audio driver, FileAccess on assets/storage, entry points) + `godot.patch` (WebGL paths in `drivers/gles3` also for gasm; `HTTPClientTCP` left out for `http_client_gasm.cpp`, `HTTPClient` on gasm:fetch). Examples: hello2d, platformer, scene3d, ui, audio, http, net (`WebSocketPeer` on gasm:net in a relay room; `websocket_peer_gasm.cpp`), mods + modpack (resource packs from `--mods`; modpack has no main scene), relaymp (Godot's high-level multiplayer through the relay: `GasmRelayPeer` in `platform/gasm/api/relay_peer.cpp`, the room's first player is peer 1). `platform/gasm/api`: the `Gasm` singleton (`save_file`, `get_param`, `get_mods`). `scripts/fetch-godot.sh` puts the engine (MIT) in `tools/godot-src`, SCons in `tools/scons`, the editor in `tools/godot-editor`; `make godot` builds `build/godot.wasm`, `build/godot-2d.wasm` (no 3D, `GODOT_2D_FLAGS`, in `tools/godot-src-2d` kept in step by `scripts/sync-godot-variant.sh`) and exports `examples/*` to `build/godot/*.pck`; `make godot-custom GODOT_PROFILE=x.gdbuild` builds a game's own engine |
+| `guests/godot/` | Godot 4.7 for gasm: `platform/gasm` (MIT: OS, display server with input, audio driver, FileAccess on assets/storage, entry points) + `godot.patch` (WebGL paths in `drivers/gles3` also for gasm; `HTTPClientTCP` left out for `http_client_gasm.cpp`, `HTTPClient` on gasm:fetch). Examples: hello2d, platformer, scene3d, ui, audio, http, net (`WebSocketPeer` on gasm:net in a relay room; `websocket_peer_gasm.cpp`), threads (`WorkerThreadPool`: deflate blocks on the main thread, then as a group task), mods + modpack (resource packs from `--mods`; modpack has no main scene), relaymp (Godot's high-level multiplayer through the relay: `GasmRelayPeer` in `platform/gasm/api/relay_peer.cpp`, the room's first player is peer 1). `platform/gasm/api`: the `Gasm` singleton (`save_file`, `get_param`, `get_mods`). `scripts/fetch-godot.sh` puts the engine (MIT) in `tools/godot-src`, SCons in `tools/scons`, the editor in `tools/godot-editor`; `make godot` builds `build/godot.wasm`, `build/godot-2d.wasm` (no 3D, `GODOT_2D_FLAGS`, in `tools/godot-src-2d` kept in step by `scripts/sync-godot-variant.sh`), `build/godot-mt.wasm` (`threads=yes`, wasi-threads, in `tools/godot-src-mt`) and exports `examples/*` to `build/godot/*.pck`; `make godot-custom GODOT_PROFILE=x.gdbuild` builds a game's own engine |
 | `guests/scummvm/` | ScummVM: gasm backend (MIT, `backend/` -> `backends/platform/gasm`) + `configure.patch` (`wasm32-gasm` host). `scripts/fetch-scummvm.sh` puts ScummVM (GPL-3.0) in `tools/scummvm-src`; `scripts/build-scummvm-libs.sh` builds zlib, libmad, libogg/libvorbis, libFLAC (pinned release tarballs) into `tools/scummvm-libs`; `make scummvm` builds with wasi-sdk and runs `wasm-opt --asyncify` (`scripts/fetch-binaryen.sh`); `scripts/package-scummvm-src.sh` packs exactly the files the build used plus the library sources (verify: a clean `make scummvm` from the tarball is byte-identical) |
 | `guests/doom/` | DOOM: gasm platform layer (MIT) for doomgeneric. `scripts/fetch-doom.sh` puts the GPL-2.0 engine (+ chocolate-doom OPL music) in `tools/doom-src` and applies `engine.patch`; `scripts/package-doom-src.sh` packs the complete source shipped with releases and the site |
 | `runners/native/` | crate `gasm-host` (workspace root; one `target/`): the library has the host (`host.rs`, `switching.rs` stack switching for `gasm_run`, `wasi.rs` WASI subset, `gfx.rs`, `present.rs` 2D filters, `net.rs` (+ `NetPolicy`, the `--allow-net` host list), `fetch.rs` (gasm:fetch, record/replay), `files.rs` (gasm:files), `manifest.rs` (the capabilities manifest), `threads.rs` (wasi-threads: OS threads sharing the memory), `consent.rs` + `prompt.rs` (player consent), `storage.rs`, `assets.rs`) and both runners (`headless.rs`, `window.rs` + `keymap.rs` behind the default `window` feature); `src/main.rs` (`gasm-run`) only parses arguments. `relay/`: crate `gasm-relay` (no runtime deps, not on crates.io); `relay.Dockerfile` |
@@ -52,7 +52,7 @@ property: most tests assert bit-identical hashes.
 make                          # games -> build/*.wasm, native runner + relay (Godot too: its first build
                               # takes ~15 min and an LTO link that needs ~12 GB; `make godot` alone)
 make roms                     # test ROMs, Freedoom, shareware doom1.wad into roms/ (needed by the determinism test)
-scripts/determinism-test.sh   # 78 cases: wasmtime JIT == AOT == V8 == golden hashes, and the Godot
+scripts/determinism-test.sh   # 92 cases: wasmtime JIT == AOT == V8 == golden hashes, and the Godot
                               # examples log no errors on either null GL (must pass)
                               # UPDATE_GOLDEN=1 re-records after a change meant to alter output
 scripts/net-test.sh           # lockstep sumo via gasm-relay, 3 runner pairs + TLS (must pass)
@@ -234,6 +234,13 @@ from the repo root, then
   shows only the last line; read guest logs from the console. `?hashframes=N`
   runs frames without yielding to the event loop, so it can't test gasm:net or
   gasm:fetch (they need real frames: `?autostart`).
+- **Godot with threads (`godot-mt.wasm`) must never start a thread the runner
+  refuses:** `Thread` is `std::thread` with `-fno-exceptions`, so a refused spawn
+  aborts the engine. The pool is sized from `gasm.max_threads()` (0 headless), and
+  engine threads outside the pool are left out on gasm (`godot.patch`: the DNS
+  resolver, ThorVG); the patch also makes the pool's calling-thread fallback work in
+  a threaded build. A new engine thread shows up as "thread constructor failed":
+  find it with `--threads 0`.
 - **A new Godot example needs a new `make` run** (the example list is a wildcard
   evaluated when make starts); commit the `.uid` files the editor writes in
   `build/godot-projects/<example>/` (their absence makes exports differ).
@@ -364,7 +371,8 @@ from the repo root, then
   threads (`--threads` 0), so threaded guests must fall back to their main thread and
   stay comparable. JS: the shared memory's size comes from the binary
   (`sharedMemoryImport`), so `load(module, { bytes })`; `TextDecoder` and friends
-  refuse shared views (copy first).
+  refuse shared views (copy first). Workers get assets (`Assets::for_thread`) but no
+  other main-thread import. `gasm.max_threads` is the limit: guests size pools from it.
 - **clipboard and files:** pasted text is offered only to the frame that carries
   the paste key press (natively the window runner reads the system clipboard on
   Ctrl/Cmd+V; in the player the page's `paste` event, passed as a step's `paste`,

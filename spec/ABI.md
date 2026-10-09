@@ -150,6 +150,7 @@ All pointers are `i32` offsets into guest memory. Strings are UTF-8 `(ptr, len)`
 | `log` | `(ptr, len)` | Log a line. |
 | `has` | `(name_ptr, name_len) -> i32` | `1` if the runner provides an import module (`"gasm:gfx"`) or a function in one (`"gasm.asset_size64"`, `"gasm:gfx.destroy"`, `"wasi_snapshot_preview1.random_get"`), else `0`. Probe optional features before calling them: a missing import traps. |
 | `time_ms` | `() -> f64` | Monotonic ms. Headless runs use virtual time: the start of the frame on a clock that advances `1000 / frame_rate` per frame, at the rate in effect at that frame's start (so changing the rate never moves time backwards). The value is fixed for the whole frame. |
+| `max_threads` | `() -> u32` | How many worker threads (wasi-threads, `thread-spawn`) this run lets the game have at once; `0` when it allows none (headless runs unless `--threads` says otherwise, the JS host). A game sizes its thread pool from it instead of failing to spawn. Probe `has("gasm.max_threads")` first (the SDK wrapper `gasm::max_threads` answers 0 without it). |
 | `utc_offset_minutes` | `() -> i32` | The player's time zone now: minutes east of UTC, daylight saving included (`120` for CEST, `-300` for EST, `330` for India). Local time is the WASI realtime clock plus this. Headless runs answer `0` (UTC, like their clocks). Probe `has("gasm.utc_offset_minutes")` first (the SDK wrapper `gasm::utc_offset_minutes` does and answers 0 without it). |
 | `set_frame_rate` | `(hz: f64)` | 1–1000 Hz, otherwise ignored. |
 | `video_present` | `(ptr, w, h, stride)` | RGBA8 pixels (byte order R,G,B,A), `stride` bytes per row, `w,h ≤ 4096`. The data is copied before the call returns. The runner letterboxes it into its output. Ignored for display when the guest renders with `gasm:gfx` in the same frame. |
@@ -713,10 +714,12 @@ own instance of the module, all sharing the memory; `gasm-run --threads <n>`
 caps them (default: the CPU count in a window, **0 in headless runs**, where
 `thread-spawn` fails, so a game that falls back to its main thread gives
 comparable hashes). Worker threads have the WASI subset, `gasm.time_ms`,
-`gasm.log` and `gasm.has`; every other gasm import is the main thread's and does
+`gasm.log`, `gasm.has` and the assets (a copy of the asset table taken when the
+thread starts); every other gasm import is the main thread's and does
 nothing on a worker. A trap or exit on any thread ends the game. The JS host
 loads such modules but starts no threads (browsers need cross-origin isolation
-for shared memory at all). Threads make a run nondeterministic.
+for shared memory at all). Threads make a run nondeterministic. `gasm.max_threads`
+says how many the run allows, so a pool can be sized before spawning.
 
 ### Mods
 

@@ -45,6 +45,12 @@ pub fn time_ms() -> f64 {
 
 /// The player's time zone now: minutes east of UTC, daylight saving included
 /// (120 for CEST). 0 in headless runs, and on older runners without it.
+/// How many worker threads this run allows at once (wasi-threads guests size their pool
+/// from it; 0 in headless runs and browsers).
+pub fn max_threads() -> u32 {
+    if has("gasm.max_threads") { unsafe { sys::max_threads() } } else { 0 }
+}
+
 pub fn utc_offset_minutes() -> i32 {
     if has("gasm.utc_offset_minutes") { unsafe { sys::utc_offset_minutes() } } else { 0 }
 }

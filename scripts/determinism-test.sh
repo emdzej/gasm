@@ -42,7 +42,7 @@ for n in node ${NODE24:-} "$HOME"/.nvm/versions/node/v2[4-9]*/bin/node; do
 done
 [ -n "$NODE_JSPI" ] || echo "note: no Node with JSPI (24+): run builds are checked natively only"
 [ -d roms ] && [ -n "$(ls roms/*.nes 2>/dev/null)" ] && [ -f roms/freedoom2.wad ] && [ -f roms/doom1.wad ] && [ -f roms/bass/sky.dnr ] && [ -d roms/scumm/dott-dos-ni-demo-en ] && [ -f roms/drascula/flac/audio/track28.flac ] || scripts/fetch-roms.sh
-for g in bricks nes godot godot-2d mttest test-pattern gltest glowtest eguidemo fetchtest sumo triangle textured inputtest threadtest pthreadtest rthreadtest sdl3-threads loopdemo loopdemo-run loopdemo-c loopdemo-c-run doom scummvm scummvm-run sdl3-snake sdl3-snake-gl sdl3-gl sdl3-woodeneye sdl3-callbacks sdl3-classic sdl3-classic-run; do "$NATIVE" build/$g.wasm --compile build/$g.cwasm 2>/dev/null; done
+for g in bricks nes godot godot-2d godot-mt mttest test-pattern gltest glowtest eguidemo fetchtest sumo triangle textured inputtest threadtest pthreadtest rthreadtest sdl3-threads loopdemo loopdemo-run loopdemo-c loopdemo-c-run doom scummvm scummvm-run sdl3-snake sdl3-snake-gl sdl3-gl sdl3-woodeneye sdl3-callbacks sdl3-classic sdl3-classic-run; do "$NATIVE" build/$g.wasm --compile build/$g.cwasm 2>/dev/null; done
 
 pass=0; fail=0
 run() { "$@" 2>/dev/null | grep -E '^(frames|video)' | tr '\n' ' '; }
@@ -125,6 +125,11 @@ check godot-http          godot 60 $GP/http.pck --fetch-replay tests/fixtures/fe
 # WebSocketPeer on gasm:net, offline: the connection is refused alike everywhere
 check godot-net           godot 60 $GP/net.pck --input '10-50:KEY(ArrowRight)'
 check godot-relaymp       godot-2d 60 $GP/relaymp.pck --input '10-50:KEY(ArrowLeft)'
+# WorkerThreadPool (examples/threads): on the threaded engine (godot-mt.wasm) headless runs
+# allow no threads, so the pool runs its tasks on the main thread, as godot.wasm does
+check godot-threads       godot 30 $GP/threads.pck
+check godotmt-threads     godot-mt 30 $GP/threads.pck
+check godotmt-hello2d     godot-mt 150 $GP/hello2d.pck --input '60-100:KEY(ArrowRight),100-115:KEY(ArrowUp)'
 # The engine without 3D (build/godot-2d.wasm) runs the 2D examples (its own hashes:
 # a different build lays memory out differently)
 check godot2d-platformer  godot-2d 420 $GP/platformer.pck --input '30-400:KEY(ArrowRight),60-64:KEY(Space),130-134:KEY(Space),200-204:KEY(Space),270-274:KEY(Space)'
@@ -146,6 +151,13 @@ if [ "$code" -ne 0 ] && grep -q 'unreachable' <<<"$out"; then
 else
   fail=$((fail + 1)); printf 'FAIL  threads-trap (exit %s)\n%s\n' "$code" "$(tail -4 <<<"$out")"
 fi
+# ...and Godot's pool on 4 OS threads (not hashed: the order tasks finish in varies)
+out=$("$NATIVE" build/godot-mt.wasm $GP/threads.pck --headless 5 --threads 4 --no-hash 2>&1)
+if grep -q 'threads: 4 processors; results agree' <<<"$out" && ! grep -qE '^(SCRIPT )?ERROR' <<<"$out"; then
+  pass=$((pass + 1)); printf 'PASS  %-22s %s\n' "godotmt-threads-native" "WorkerThreadPool on 4 OS threads"
+else
+  fail=$((fail + 1)); printf 'FAIL  godotmt-threads-native\n%s\n' "$(tail -4 <<<"$out")"
+fi
 # Mods (--mods): the mods example with the mod pack in a folder, and without it
 MODS=$(mktemp -d)
 cp build/godot/modpack.pck "$MODS/"
@@ -163,8 +175,8 @@ rm -rf "$MODS"
 # Godot logs an error and carries on (a shader it rejects draws nothing, alike on every
 # runner, so the hashes still agree): the examples must log no errors on either null GL,
 # on the full engine, and the 2D ones on the 2D engine too
-for e in hello2d platformer scene3d ui audio http net mods relaymp 2d:hello2d 2d:platformer 2d:ui 2d:audio 2d:http 2d:net 2d:mods 2d:relaymp; do
-  engine=godot; case $e in 2d:*) engine=godot-2d; e=${e#2d:};; esac
+for e in hello2d platformer scene3d ui audio http net mods relaymp threads mt:threads mt:hello2d mt:scene3d 2d:hello2d 2d:platformer 2d:ui 2d:audio 2d:http 2d:net 2d:mods 2d:relaymp; do
+  engine=godot; case $e in 2d:*) engine=godot-2d; e=${e#2d:};; mt:*) engine=godot-mt; e=${e#mt:};; esac
   errs=$( { "$NATIVE" build/$engine.wasm $GP/$e.pck --fetch-replay tests/fixtures/fetch --headless 60 2>&1 >/dev/null; $NODE build/$engine.wasm $GP/$e.pck --fetch-replay tests/fixtures/fetch --headless 60 2>&1 >/dev/null; } | grep -E '^(SHADER )?ERROR' | sort -u | head -5)
   name=$engine-$e-log
   if [ -z "$errs" ]; then

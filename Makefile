@@ -61,7 +61,7 @@ GUESTS   := $(BUILD)/test-pattern.wasm $(BUILD)/mttest.wasm $(BUILD)/gltest.wasm
 # made by the same recipes as the Asyncify builds
 RUN_BUILDS := $(BUILD)/loopdemo-run.wasm $(BUILD)/loopdemo-c-run.wasm $(BUILD)/sdl3-classic-run.wasm $(BUILD)/scummvm-run.wasm
 
-.PHONY: all guests native test web relay roms parity clean rust-toolchain doom scummvm sdl3 godot godot-2d godot-custom FORCE
+.PHONY: all guests native test web relay roms parity clean rust-toolchain doom scummvm sdl3 godot godot-2d godot-mt godot-custom FORCE
 all: guests native
 
 guests: $(GUESTS)
@@ -160,8 +160,8 @@ GODOT_JOBS ?= $(shell getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)
 GODOT_FEATURES := --enable-exception-handling --enable-reference-types --enable-bulk-memory \
   --enable-nontrapping-float-to-int --enable-sign-ext --enable-mutable-globals --enable-multivalue
 
-godot: $(BUILD)/godot.wasm $(BUILD)/godot-2d.wasm $(GODOT_PCKS)
-guests: $(BUILD)/godot.wasm $(BUILD)/godot-2d.wasm $(GODOT_PCKS)
+godot: $(BUILD)/godot.wasm $(BUILD)/godot-2d.wasm $(BUILD)/godot-mt.wasm $(GODOT_PCKS)
+guests: $(BUILD)/godot.wasm $(BUILD)/godot-2d.wasm $(BUILD)/godot-mt.wasm $(GODOT_PCKS)
 godot-2d: $(BUILD)/godot-2d.wasm
 
 $(GODOT_SRC)/.gasm-fetch: scripts/fetch-godot.sh scripts/lib.sh guests/godot/godot.patch
@@ -188,6 +188,17 @@ $(BUILD)/godot-2d.wasm: $(BUILD)/godot.wasm scripts/sync-godot-variant.sh $(call
 	cd tools/godot-src-2d && GASM_ROOT=$(CURDIR) WASI_SDK=$(WASI_SDK) PYTHONPATH=$(CURDIR)/tools/scons \
 	  python3 -c "import SCons.Script.Main as m; m.main()" platform=gasm target=template_release lto=full $(GODOT_2D_FLAGS) -j$(GODOT_JOBS)
 	$(WASM_OPT) tools/godot-src-2d/bin/godot.gasm.template_release.wasm32.nothreads.wasm -Oz $(GODOT_FEATURES) -o $@
+
+# Godot with real threads (wasi-threads), natively: WorkerThreadPool and threaded
+# resource loading on OS threads (design/threads.md, part B). Browsers keep godot.wasm.
+GODOT_MT_FLAGS := threads=yes
+$(eval $(call flag_rule,godot-mt,$(GODOT_MT_FLAGS)))
+godot-mt: $(BUILD)/godot-mt.wasm
+$(BUILD)/godot-mt.wasm: $(BUILD)/godot.wasm scripts/sync-godot-variant.sh $(call flags,godot-mt)
+	scripts/sync-godot-variant.sh tools/godot-src-mt
+	cd tools/godot-src-mt && GASM_ROOT=$(CURDIR) WASI_SDK=$(WASI_SDK) PYTHONPATH=$(CURDIR)/tools/scons \
+	  python3 -c "import SCons.Script.Main as m; m.main()" platform=gasm target=template_release lto=full $(GODOT_MT_FLAGS) -j$(GODOT_JOBS)
+	$(WASM_OPT) tools/godot-src-mt/bin/godot.gasm.template_release.wasm32.wasm -Oz $(GODOT_FEATURES) --enable-threads -o $@
 
 # A game's own engine from a Godot build profile (the editor's Project > Tools >
 # Engine Compilation Configuration Editor: "Detect from Project", then save a .gdbuild):

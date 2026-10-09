@@ -89,11 +89,16 @@ def configure(env):
     env["LIBSUFFIXES"] = ["$LIBSUFFIX"]
     env["ENV"] = os.environ
 
-    target = ["--target=wasm32-wasip1"]
+    # threads=yes: real threads (wasi-threads): the runner runs each pthread on an OS
+    # thread, all sharing one imported memory (godot-mt.wasm)
+    target = ["--target=wasm32-wasip1-threads", "-pthread"] if env["threads"] else ["--target=wasm32-wasip1"]
     # setjmp/longjmp (libpng, FreeType) on wasm exceptions, which every gasm runner has
     sjlj = ["-mllvm", "-wasm-enable-sjlj", "-mllvm", "-wasm-use-legacy-eh=false"]
     env.Append(CCFLAGS=target + sjlj + ["-fno-exceptions", "-D_WASI_EMULATED_SIGNAL", "-D_WASI_EMULATED_PROCESS_CLOCKS", "-D_WASI_EMULATED_MMAN"])
     env.Append(LINKFLAGS=target + ["-mexec-model=reactor", "-Wl,-z,stack-size=8388608", "-Wl,--export-if-defined=gasm_title"])
+    if env["threads"]:
+        # the memory every thread's instance shares: imported, with a declared maximum (4 GiB)
+        env.Append(LINKFLAGS=["-Wl,--import-memory,--export-memory,--shared-memory,--max-memory=4294967296"])
     env.Append(LIBS=["setjmp", "wasi-emulated-signal", "wasi-emulated-process-clocks", "wasi-emulated-mman"])
 
     if env["lto"] == "auto":

@@ -80,8 +80,11 @@ scenes get random node ids at export).
 - **The game's manifest:** `godot.wasm` is shared by every game, so a game's
   capabilities manifest (hosts, saves) comes as asset `gasm.manifest` or
   `gasm-run --manifest`.
-- **Not available:** threads (Godot is built with `threads=no`; work runs on
-  the main thread; see design/threads.md), raw sockets and servers (`ENet`,
+- **Threads:** `godot.wasm` is built with `threads=no` (work runs on the main
+  thread); `godot-mt.wasm` (`threads=yes`, `make godot`) runs `WorkerThreadPool`
+  and threaded loading on OS threads in `gasm-run` (`--threads`), and on the
+  calling thread where the runner allows none (headless, browsers).
+- **Not available:** raw sockets and servers (`ENet`,
   `StreamPeerTCP`, `TCPServer`), TLS in the engine (`Crypto`), complex text
   shaping (the fallback text server: no right-to-left or ligatures), several
   windows.
@@ -99,7 +102,7 @@ The platform (MIT, like Godot):
 
 | File | What |
 |---|---|
-| `detect.py` | wasi-sdk, `wasm32-wasip1` reactor, `threads=no`, LTO, setjmp on wasm exceptions, modules off that need what gasm doesn't have |
+| `detect.py` | wasi-sdk, `wasm32-wasip1` reactor (`wasm32-wasip1-threads` with an imported shared memory for `threads=yes`), LTO, setjmp on wasm exceptions, modules off that need what gasm doesn't have |
 | `gasm_main.cpp` | the exports: `gasm_init` runs `Main::setup`/`start` with `--main-pack`, `gasm_frame` one `Main::iteration()` |
 | `os_gasm.*` | `OS`: time, entropy, paths, no processes |
 | `display_server_gasm.*` | one window on `gasm:gl`; keys, text, pointer and gamepads as Godot input events |
