@@ -220,6 +220,11 @@ export interface GasmHostOptions {
   /** Largest guest memory in bytes (default DEFAULT_MEMORY_LIMIT, 1 GiB; 0: no limit). A guest that
    *  grows past it traps (checked after each call: browsers can't refuse the growth itself). */
   memoryLimit?: number;
+  /** Worker threads a game built with threads (wasi-threads, a shared memory import) may run at
+   *  once (gasm.max_threads). They start with the game, as Workers sharing its memory; they need
+   *  SharedArrayBuffer: Node, or a cross-origin isolated page with the game in Worker mode (the
+   *  browser's main thread can't wait). Default 0: thread-spawn fails, as in headless runs. */
+  threads?: number;
   /** gasm:fetch's User-Agent where the platform lets it be set (Node: `gasm-headless --app-id`).
    *  Leave it unset in pages: the browser identifies them, and a custom User-Agent needs a CORS preflight. */
   userAgent?: string | null;
@@ -394,7 +399,13 @@ export interface GasmAssetProvider {
 }
 /** UTF-8 byte order (= code point order) for sort(). */
 export declare function byCodePoint(a: string, b: string): number;
-export interface AssetSource { size(): number; readAt(offset: number, dst: Uint8Array): number }
+export interface AssetSource {
+  size(): number;
+  readAt(offset: number, dst: Uint8Array): number;
+  /** How a thread's worker reads the same bytes (structured-cloneable); without it, worker threads don't see the asset. */
+  share?(): { kind: 'bytes'; bytes: Uint8Array } | { kind: 'blob'; blob: Blob } | { kind: 'file'; path: string; size: number }
+    | { kind: 'opfs'; handle: FileSystemFileHandle; size: number };
+}
 /** Asset table with gasm's naming rules: exact names win; folder entries also match case-insensitively (ASCII). */
 export declare class AssetTable implements GasmAssetProvider {
   constructor(log?: (message: string) => void);

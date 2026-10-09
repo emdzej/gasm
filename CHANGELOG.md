@@ -17,15 +17,26 @@ Runners:
   trap on any thread ends the game. The Node runner and the player load such
   games single-threaded (`GasmHost.load(module, { bytes })`). New test guest
   `mttest` (4 threads: 3.9 times the speed of one on an M1 Pro).
+- Real threads in the JS host (NiP #17, phase 3): the same wasi-threads games on a
+  pool of Workers started with the game (`threads: n`; `gasm-headless --threads`),
+  in Node and on cross-origin isolated pages in Worker mode. The player gives them
+  threads there (and says why not elsewhere); the website's player isolates itself
+  with a service worker (`isolate-sw.js`), since GitHub Pages can't send the headers.
+  `scripts/serve-isolated.mjs` serves the repo isolated for development.
+- `gasm:gl` games in Worker mode: WebGL 2 on a transferred canvas (`glCanvas`); the
+  copy key works there too.
 - `gasm.max_threads()`: how many worker threads the run allows (0 headless and in
   the JS host), so a game sizes its pool instead of failing to spawn. Worker
   threads read assets too (a copy taken when the thread starts).
 
 Godot:
-- `godot-mt.wasm`, the engine with threads (NiP #17, phase 2): `WorkerThreadPool`
-  and threaded resource loading on OS threads in `gasm-run` (`--threads`; the
-  pool sized from `gasm.max_threads()`), on the calling thread where the runner
-  allows none (headless runs, browsers), with the same hashes as `godot.wasm`.
+- `godot-mt.wasm`, the engine with threads (NiP #17): `WorkerThreadPool` and
+  threaded resource loading on OS threads in `gasm-run` (`--threads`; the pool
+  sized from `gasm.max_threads()`) and on Workers in the web player (isolated
+  pages: the website's is), on the calling thread where the runner allows none
+  (headless runs), with the same hashes as `godot.wasm`. The player's new
+  "Godot: worker threads" example uses it (eight deflate blocks: 303 ms on one
+  thread, 51 ms on eight workers in Chrome).
   New example `threads` (eight deflate blocks: 318 ms on one thread, 63 ms on
   eight on an M1 Pro). Engine fixes in `godot.patch`: no DNS resolver thread
   and no ThorVG thread on gasm, and the pool's calling-thread fallback works in a

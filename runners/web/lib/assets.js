@@ -15,13 +15,21 @@ export const isAssetProvider = (a) => a && typeof a.size === 'function' && typeo
 const asciiLower = (s) => s.replace(/[A-Z]/g, (c) => c.toLowerCase());
 const hidden = (segments) => segments.some((seg) => seg.startsWith('.'));
 
-/** An asset source: { size() -> number, readAt(offset, dst) -> bytes copied }. */
+/** An asset source: { size() -> number, readAt(offset, dst) -> bytes copied, share?() }.
+ *  share() describes the source for a thread's worker (lib/threads.js): a structured-
+ *  cloneable { kind: 'bytes' | 'blob' | 'file', ... }; sources without it aren't seen there. */
 export const bytesSource = (u8) => ({
   size: () => u8.length,
   readAt: (offset, dst) => {
     const n = Math.max(0, Math.min(dst.length, u8.length - offset));
     if (n > 0) dst.set(u8.subarray(offset, offset + n));
     return n;
+  },
+  // bytes every thread reads: moved once into a SharedArrayBuffer, which this source
+  // then reads too (so the original copy can go)
+  share: () => {
+    if (!(u8.buffer instanceof SharedArrayBuffer)) { const s = new Uint8Array(new SharedArrayBuffer(u8.length)); s.set(u8); u8 = s; }
+    return { kind: 'bytes', bytes: u8 };
   },
 });
 
@@ -53,6 +61,28 @@ export class AssetTable {
   merge(table, { fromDir = true } = {}) {
     for (const [name, e] of table.exact) this.add(name, e.source, { fromDir: fromDir || e.fromDir });
     return this.finish();
+  }
+  /** The table for threads' workers (lib/threads.js): every entry whose source can
+   *  describe itself (share()); the others are left out (and counted). */
+  share() {
+    const entries = [];
+    let left = 0;
+    for (const [name, e] of this.exact) {
+      const d = e.source.share?.();
+      if (d) entries.push([name, d, e.fromDir, e.version]); else left++;
+    }
+    return { entries, lastVersion: this.lastVersion, left };
+  }
+  /** A worker's table from share(): `source(description)` makes each source (null: left out). */
+  static fromShared({ entries, lastVersion }, source) {
+    const t = new AssetTable();
+    for (const [name, d, fromDir, version] of entries) {
+      const s = source(d);
+      if (s) t.exact.set(name, { source: s, fromDir, version });
+    }
+    t.lastVersion = lastVersion;
+    t.index();
+    return t;
   }
   /** Build the case-insensitive index; warns about names that differ only in case. */
   finish() {
@@ -178,6 +208,7 @@ export function fileAssets(entries, { prefix = '', log } = {}) {
         if (n > 0) dst.set(new Uint8Array(reader.readAsArrayBuffer(file.slice(offset, offset + n))));
         return n;
       },
+      share: () => ({ kind: 'blob', blob: file }),
     }, { fromDir: true });
   }
   return t.finish();
@@ -200,11 +231,13 @@ export async function opfsAssets(dir, { prefix = '', log } = {}) {
   }
   const t = new AssetTable(log);
   await walkHandles(handle, async (path, h) => {
-    const access = await h.createSyncAccessHandle();
+    // read-only handles (Chrome 121+) can be open more than once: thread workers open their own
+    const access = await h.createSyncAccessHandle({ mode: 'read-only' });
     const size0 = access.getSize();
     t.add(joinName(prefix, path), {
       size: () => { try { return access.getSize(); } catch { return size0; } },
       readAt: (offset, dst) => (dst.length ? access.read(dst, { at: offset }) : 0),
+      share: () => ({ kind: 'opfs', handle: h, size: size0 }),
     }, { fromDir: true });
   });
   return t.finish();

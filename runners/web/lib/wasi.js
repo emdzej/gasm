@@ -46,7 +46,7 @@ export function wasiImports(host) {
       let total = 0;
       for (let i = 0; i < iovsLen; i++) {
         const ptr = dv.getUint32(iovs + i * 8, true), len = dv.getUint32(iovs + i * 8 + 4, true);
-        stdio[fd] += LOSSY.decode(host.bytes(ptr, len), { stream: true });
+        stdio[fd] += LOSSY.decode(host.bytes(ptr, len).slice(), { stream: true });   // a copy: decoders refuse shared memory
         total += len;
       }
       let nl;
@@ -80,7 +80,11 @@ export function wasiImports(host) {
     random_get: (ptr, len) => {
       const buf = host.bytes(ptr, len);
       if (host.random) host.random.fill(buf);
-      else for (let i = 0; i < buf.length; i += 65536) crypto.getRandomValues(buf.subarray(i, i + 65536));
+      else if (buf.buffer instanceof ArrayBuffer) for (let i = 0; i < buf.length; i += 65536) crypto.getRandomValues(buf.subarray(i, i + 65536));
+      else {   // shared memory (a game with threads): getRandomValues refuses it, so through a copy
+        const tmp = new Uint8Array(Math.min(buf.length, 65536));
+        for (let i = 0; i < buf.length; i += tmp.length) { const n = Math.min(tmp.length, buf.length - i); crypto.getRandomValues(tmp.subarray(0, n)); buf.set(tmp.subarray(0, n), i); }
+      }
       return SUCCESS;
     },
     args_sizes_get: (a, b) => { const dv = host.view(); dv.setUint32(a, 0, true); dv.setUint32(b, 0, true); return SUCCESS; },

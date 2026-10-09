@@ -31,6 +31,7 @@ import {
   AssetTable, GasmHost, IdbStorage, MemoryStorage, ProcExit, bytesSource, fileAssets, opfsAssets,
 } from './gasm-host.js';
 import { WebGpuGfx } from './webgpu-gfx.js';
+import { END_EXIT, threadEnd } from './lib/threads.js';
 
 const inWorker = typeof WorkerGlobalScope !== 'undefined' && globalThis instanceof WorkerGlobalScope;
 
@@ -38,9 +39,9 @@ const inWorker = typeof WorkerGlobalScope !== 'undefined' && globalThis instance
 
 export class GasmWorker {
   static async start({
-    wasm, assets = [], params = {}, storage = null, allowNet = false, keyboard = false, memoryLimit = undefined,
+    wasm, assets = [], params = {}, storage = null, allowNet = false, keyboard = false, memoryLimit = undefined, threads = 0, bytes: moduleBytes = null,
     hashing = false, virtualTime = false, onLog = console.log, onAudio = () => {}, onTitle = () => {}, onCopyText = () => {}, onSaveFile = () => true, ask = null,
-    canvas = null, size = null, url = null,
+    canvas = null, glCanvas = null, size = null, url = null,
   }) {
     // written out literally so bundlers (Vite, webpack) find and emit the worker
     const worker = url
@@ -54,9 +55,9 @@ export class GasmWorker {
     // a compiled Module is shared with the worker (no copy, no second compile); bytes are transferred
     const module = wasm instanceof WebAssembly.Module;
     const bytes = module || wasm instanceof ArrayBuffer ? wasm : wasm.buffer.slice(wasm.byteOffset, wasm.byteOffset + wasm.byteLength);
-    const transfer = [...(module ? [] : [bytes]), ...(canvas ? [canvas] : [])];
+    const transfer = [...(module ? [] : [bytes]), ...(canvas ? [canvas] : []), ...(glCanvas ? [glCanvas] : [])];
     const ready = w.next('ready');
-    w.worker.postMessage({ type: 'init', wasm: bytes, assets, params, storage, allowNet, keyboard, hashing, virtualTime, canvas, size, memoryLimit, ask: !!ask }, transfer);
+    w.worker.postMessage({ type: 'init', wasm: bytes, bytes: moduleBytes, assets, params, storage, allowNet, keyboard, hashing, virtualTime, canvas, glCanvas, size, memoryLimit, threads, ask: !!ask }, transfer);
     try {
       const r = await ready;
       w.frameRate = r.frameRate;
@@ -88,6 +89,7 @@ export class GasmWorker {
     if (m.type === 'log') return this.onLog(m.msg);
     if (m.type === 'error') return this.fail(new Error(m.message));
     if (m.type === 'exit') return this.fail(new ProcExit(m.code));
+    if (m.type === 'threads') return this.watchThreads(m.ctrl);
     // player consent: the worker's guest wants a host; the page asks
     if (m.type === 'consent') {
       Promise.resolve().then(() => this.ask?.(m.subject)).then((v) => !!v, () => false)
@@ -115,6 +117,28 @@ export class GasmWorker {
     this.resolve(m.type, m);
   }
 
+  /**
+   * A game with threads: a thread that trapped or exited ends the game, which the worker
+   * reports after its frame. If the game's thread is blocked waiting for the dead one
+   * (no timeout ends an atomic wait), the worker never answers: end it after 2 s.
+   */
+  watchThreads(ctrl) {
+    let seen = 0, answered = 0;
+    const before = this.message.bind(this);
+    this.message = (m) => { if (m.type === 'done' || m.type === 'ready') answered = Date.now(); before(m); };
+    this.watchdog = setInterval(() => {
+      if (this.failed || this.terminated) { clearInterval(this.watchdog); return; }
+      if (Atomics.load(ctrl, 1) <= 0) return;   // END_KIND: no thread ended
+      seen ||= Date.now();
+      if (answered > seen || Date.now() - seen < 2000) return;
+      clearInterval(this.watchdog);
+      const end = threadEnd(ctrl);
+      this.terminated = true;
+      this.worker.terminate();
+      this.fail(end.kind === END_EXIT ? new ProcExit(end.code) : new Error(end.message));
+    }, 250);
+  }
+
   next(type) { return new Promise((resolve, reject) => this.waiters.push({ type, resolve, reject })); }
   resolve(type, m) {
     const i = this.waiters.findIndex((w) => w.type === type);
@@ -131,11 +155,11 @@ export class GasmWorker {
    * with { frame?, stats, frameIndex }. Rejects with ProcExit when the guest exits;
    * after an exit or a trap every call rejects (the guest isn't called again).
    */
-  frames(steps, show = true, { size = null } = {}) {
+  frames(steps, show = true, { size = null, copy = false } = {}) {
     if (this.failed) return Promise.reject(this.failed);
     const done = this.next('done');
     const norm = steps.map((s) => (Array.isArray(s) ? { pads: s } : s));
-    this.worker.postMessage({ type: 'frames', steps: norm, show, size });
+    this.worker.postMessage({ type: 'frames', steps: norm, show, size, copy });
     return done;
   }
 
@@ -180,7 +204,7 @@ async function buildAssets(specs, log) {
 }
 
 if (inWorker) {
-  let host = null, gfx = null, keyboard = false, audio = [], copied = null, saves = [], onConsent = () => {};
+  let host = null, gfx = null, glCanvas = null, keyboard = false, audio = [], copied = null, saves = [], onConsent = () => {};
   const post = (m, transfer = []) => globalThis.postMessage(m, transfer);
   const log = (msg) => post({ type: 'log', msg });
   const stats = () => ({
@@ -201,6 +225,15 @@ if (inWorker) {
           gfx = await WebGpuGfx.create(m.canvas, log);
           if (m.size) gfx.setSize(...m.size);
         }
+        // gasm:gl: WebGL 2 on the page's canvas, transferred; the default framebuffer
+        // follows the display size the page sends with each batch
+        let gl = null;
+        if (m.glCanvas) {
+          glCanvas = m.glCanvas;
+          gl = glCanvas.getContext('webgl2', { alpha: false, antialias: false, depth: true, stencil: true });
+          if (!gl) throw new Error('this game needs WebGL 2 (gasm:gl)');
+          if (m.size) [glCanvas.width, glCanvas.height] = m.size;
+        }
         // the worker reads storage on its own connection; closed by host.shutdown()
         keyboard = m.keyboard;
         const asked = new Map();
@@ -209,13 +242,14 @@ if (inWorker) {
         const ask = m.ask ? (subject) => new Promise((resolve) => { const id = nextAsk++; asked.set(id, resolve); post({ type: 'consent', id, subject }); }) : null;
         host = new GasmHost({
           assets, params: m.params, storage, allowNet: m.allowNet, virtualTime: m.virtualTime, onLog: log, ask,
-          ...(m.memoryLimit !== undefined ? { memoryLimit: m.memoryLimit } : {}),
-          onAudio: (samples, rate, channels) => audio.push({ samples, rate, channels }), ...(gfx ? { gfx } : {}),
+          ...(m.memoryLimit !== undefined ? { memoryLimit: m.memoryLimit } : {}), threads: m.threads ?? 0,
+          onAudio: (samples, rate, channels) => audio.push({ samples, rate, channels }), ...(gfx ? { gfx } : {}), ...(gl ? { gl } : {}),
           onCopyText: (t) => { copied = t; },
           onSaveFile: (name, mime, bytes) => { saves.push({ name, mime, bytes }); return true; },
         });
         host.hashing = m.hashing;
-        await host.load(m.wasm);
+        host.onThreads = (ctrl) => post({ type: 'threads', ctrl });
+        await host.load(m.wasm, { bytes: m.bytes });
         post({ type: 'ready', frameRate: host.frameRate, title: host.title, switching: host.switching });
       } catch (err) {
         post(err instanceof ProcExit ? { type: 'exit', code: err.code } : { type: 'error', message: err.message });
@@ -223,12 +257,15 @@ if (inWorker) {
     } else if (m.type === 'frames') {
       let exit = null, error = null, video = false;
       if (gfx && m.size) gfx.setSize(...m.size);
+      if (glCanvas && m.size && (glCanvas.width !== m.size[0] || glCanvas.height !== m.size[1])) [glCanvas.width, glCanvas.height] = m.size;
       const steps = m.steps.map((s) => ({ ...s, text: keyboard ? (s.text ?? '') : null }));
       // a gfx canvas belongs to WebGPU here: runFrames blits 2D frames into it
       // gasm_run guests (stack switching) resume asynchronously
       try { ({ video } = await host.runFramesAsync(steps, m.show)); } catch (err) {
         if (err instanceof ProcExit) exit = err.code; else error = err.message;
       }
+      // the copy key: the GL frame just drawn (taken now, before the canvas presents it)
+      const png = m.copy && glCanvas ? await glCanvas.convertToBlob({ type: 'image/png' }).catch(() => null) : null;
       // Send the latest 2D frame only if a new one was presented (transfer, no copy on arrival).
       let frame = null;
       if (!gfx && video) frame = { rgba: host.rgba.slice(), width: host.width, height: host.height, aspect: host.aspect };
@@ -236,7 +273,7 @@ if (inWorker) {
       const text = copied; copied = null;
       const files = saves; saves = [];
       const transfer = [...(frame ? [frame.rgba.buffer] : []), ...out.map((a) => a.samples.buffer), ...files.map((f) => f.bytes.buffer)];
-      post({ type: 'done', frame, audio: out, stats: stats(), frameIndex: host.frameIndex, frameRate: host.frameRate, inputMode: host.inputMode, title: host.title, copied: text, saves: files, exit, error }, transfer);
+      post({ type: 'done', frame, png, audio: out, stats: stats(), frameIndex: host.frameIndex, frameRate: host.frameRate, inputMode: host.inputMode, title: host.title, copied: text, saves: files, exit, error }, transfer);
     } else if (m.type === 'setAsset') {
       host?.setAsset(m.name, m.bytes);
     } else if (m.type === 'removeAsset') {

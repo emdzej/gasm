@@ -36,6 +36,10 @@ export declare class GasmWorker {
     allowNet?: boolean | string[];
     /** GasmHost's memoryLimit, in the worker. */
     memoryLimit?: number;
+    /** GasmHost's threads, in the worker (needs a cross-origin isolated page). */
+    threads?: number;
+    /** The module's bytes when `wasm` is a compiled Module of a game built with threads (see GasmHost.load). */
+    bytes?: Uint8Array | ArrayBuffer | null;
     /** The page forwards typed text (FrameStep.text); false: text_input returns -1. */
     keyboard?: boolean;
     /** gasm:gfx: an OffscreenCanvas from transferControlToOffscreen(), and its display size in device pixels. */

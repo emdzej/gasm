@@ -717,8 +717,9 @@ comparable hashes). Worker threads have the WASI subset, `gasm.time_ms`,
 `gasm.log`, `gasm.has` and the assets (a copy of the asset table taken when the
 thread starts); every other gasm import is the main thread's and does
 nothing on a worker. A trap or exit on any thread ends the game. The JS host
-loads such modules but starts no threads (browsers need cross-origin isolation
-for shared memory at all). Threads make a run nondeterministic. `gasm.max_threads`
+does the same on Web Workers (`threads: n`, `gasm-headless --threads`): in Node,
+and in browsers on cross-origin isolated pages with the game in Worker mode;
+elsewhere it starts none. Threads make a run nondeterministic. `gasm.max_threads`
 says how many the run allows, so a pool can be sized before spawning.
 
 ### Mods

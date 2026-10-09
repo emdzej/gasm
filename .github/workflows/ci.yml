@@ -113,6 +113,9 @@ jobs:
       - name: gasm:gl in Chrome (WebGL 2 hashes == golden, no WebGL errors)
         run: CHROME=$(command -v google-chrome || command -v chromium) node scripts/gl-web-test.mjs
 
+      - name: Real threads in Chrome (a worker pool on a cross-origin isolated page)
+        run: CHROME=$(command -v google-chrome || command -v chromium) node scripts/threads-web-test.mjs
+
       - name: The player in Chrome (copy key, gasm:clipboard, gasm:files downloads)
         run: CHROME=$(command -v google-chrome || command -v chromium) node scripts/player-test.mjs
 

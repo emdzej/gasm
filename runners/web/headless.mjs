@@ -7,7 +7,7 @@
 //        [--storage-id id] [--input script] [--screenshot out.png] [--realtime] [--no-hash]
 //        [--no-stack-switching] [--watch-asset n=p] [--allow-net=hosts]
 //        [--fetch-record dir] [--fetch-replay dir] [--memory-limit MiB] [--app-id text]
-//        [--save-dir dir] [--no-save] [--mods dir] [--no-mods] [--manifest file]
+//        [--save-dir dir] [--no-save] [--mods dir] [--no-mods] [--manifest file] [--threads n]
 //
 // The options mean what they mean for gasm-run. --screenshot writes the last
 // video_present frame: there is no GPU here, so gasm:gfx games can't be captured
@@ -22,12 +22,13 @@ import { InputScript } from './input-script.mjs';
 const VERSION = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8')).version;
 
 const USAGE = 'usage: headless.mjs <game.wasm> --headless N [--rom path] [--asset name=path] [--watch-asset name=path] [--asset-dir [prefix=]dir] ' +
-  '[--param k=v] [--allow-net[=hosts]] [--fetch-record dir] [--fetch-replay dir] [--app-id text] [--save-dir dir] [--no-save] [--mods dir] [--no-mods] [--manifest file] [--storage-dir dir] [--storage-id id] [--input script] [--screenshot out.png] [--realtime] [--no-hash]';
+  '[--param k=v] [--allow-net[=hosts]] [--fetch-record dir] [--fetch-replay dir] [--app-id text] [--save-dir dir] [--no-save] [--mods dir] [--no-mods] [--manifest file] [--storage-dir dir] [--storage-id id] [--input script] [--screenshot out.png] [--realtime] [--no-hash] [--threads n]';
 const fileStamp = (p) => { try { const s = statSync(p); return `${s.mtimeMs}:${s.size}`; } catch { return null; } };
 const fail = (msg) => { console.error(`error: ${msg}\n\n${USAGE}`); process.exit(2); };
 const argv = process.argv.slice(2);
 let wasm, frames = 600, screenshot, noHash = false, allowNet = false, realtime = false, storageDir = null, storageId = null;
 let stackSwitching = true, fetchRecord = null, fetchReplay = null, memoryLimit, appId = null, saveDir = null, noSave = false, modsDir = null, noMods = false;
+let threads = 0;   // worker threads a wasi-threads game may have (0, as gasm-run --headless)
 // --input: see input-script.mjs (same syntax as gasm-run --input)
 let script = new InputScript();
 const assets = {}, params = {}, assetDirs = [], watches = [];
@@ -59,6 +60,7 @@ for (let i = 0; i < argv.length; i++) {
     if (!allowNet.length) fail('--allow-net= expects host names');
   }
   else if (a === '--fetch-record') fetchRecord = val();
+  else if (a === '--threads') { threads = Number(val()); if (!Number.isInteger(threads) || threads < 0 || threads > 256) fail('--threads expects 0 to 256'); }
   else if (a === '--memory-limit') { const mib = Number(val()); if (!Number.isInteger(mib) || mib < 0) fail('--memory-limit expects MiB'); memoryLimit = mib * 1048576; }
   else if (a === '--fetch-replay') fetchReplay = val();
   else if (a === '--realtime') realtime = true;
@@ -115,6 +117,7 @@ for (const [prefix, dir] of assetDirs) {
             } catch (e) { console.error(`[gasm-node] assets: ${e.message}`); }
             return done;
           },
+          share: () => ({ kind: 'file', path, size }),
         }, { fromDir: true });
         if (added) n++;
       }
@@ -145,6 +148,7 @@ else if (modsDir) {
           while (done < dst.length) { const k = readSync(fd, dst, done, dst.length - done, offset + done); if (!k) break; done += k; }
           return done;
         },
+        share: () => ({ kind: 'file', path, size }),
       }, { fromDir: true });
       mounted.push(name);
     } catch (e) { refused.push([name, e.code === 'EACCES' ? 'Permission denied (os error 13)' : e.message]); }
@@ -221,7 +225,7 @@ const host = new GasmHost({
   assets: table, params, allowNet, storage, virtualTime: true, onLog: (m) => console.error(m), stackSwitching,
   fetchReplay: replay, fetchRecord: record, onSaveFile: saveFile, userAgent: [appId, `gasm-headless/${VERSION}`].filter(Boolean).join(' '), ...(memoryLimit !== undefined ? { memoryLimit } : {}),
   onTitle: (t) => console.error(`[gasm] title: ${t ?? '(default)'}`),
-  getPad: (p) => (p !== 0 ? 0 : script.pad(host.frameIndex)),
+  getPad: (p) => (p !== 0 ? 0 : script.pad(host.frameIndex)), threads,
 });
 host.hashing = !noHash;
 const t0 = performance.now();

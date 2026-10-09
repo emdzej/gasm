@@ -17,7 +17,8 @@ The suggested order, from the most benefit for the least risk:
 
 Done recently: stack switching (`gasm_run`,
 [design/stack-switching.md](https://github.com/emdzej/gasm/blob/main/design/stack-switching.md)),
-cooperative threads in C, POSIX, SDL 3 and Rust
+cooperative threads in C, POSIX, SDL 3 and Rust, and real threads
+(wasi-threads) natively and in browsers, Godot's worker pool included
 ([design/threads.md](https://github.com/emdzej/gasm/blob/main/design/threads.md)),
 `gasm:gl` on every runner
 ([design/gasm-gl.md](https://github.com/emdzej/gasm/blob/main/design/gasm-gl.md)),
@@ -34,15 +35,13 @@ mods and the capabilities manifest.
    `gasm:files`, a picker run by the runner.
 2. **`.gasm` packages** ([Runtime and ABI](#runtime-and-abi)): one file with the
    game, its assets and its manifest.
-3. **Godot, the rest** ([Godot](#godot)): Jolt, TLS and `Crypto`, threads in
-   browsers ([design/threads.md](https://github.com/emdzej/gasm/blob/main/design/threads.md)).
+3. **Godot, the rest** ([Godot](#godot)): Jolt, TLS and `Crypto`.
 
 ## Runtime and ABI
 
 | Item | What it gives | Status |
 |---|---|---|
 | Stack switching beyond JSPI | Browsers without JSPI (and Node 22) still need the Asyncify builds; wasm's stack-switching proposal would cover them too. | waiting on engines |
-| Real threads in browsers | wasi-threads guests (and `godot-mt.wasm`) run on OS threads in `gasm-run`; in browsers they would run on a pool of Web Workers started before the game, on cross-origin isolated pages, with the game in Worker mode. Node first (`gasm-headless --threads`). | designed: [design/threads.md](https://github.com/emdzej/gasm/blob/main/design/threads.md) (part B, "Browsers") |
 | Asynchronous decompression | A runner call that unpacks a compressed block (zstd, deflate) outside the game and hands it over at the next frame: faster loading on every runner, threads or not. | not started |
 | `.gasm` packages | One file bundling `game.wasm`, its assets and a manifest. | not started |
 | Opening files (`gasm:files`) | A file picker run by the runner (importing a map, a replay): the game only sees what the player picks. Saving for the player already works (`gasm:files.save`). | not started |
@@ -57,7 +56,6 @@ mods and the capabilities manifest.
 | `gasm:gl` on SwiftShader on macOS | `--gl-software` needs a Vulkan loader there (Electron doesn't ship one); Metal is always available, so it only matters for tests. | not planned |
 | ANGLE built from source | The libraries come from Electron 43, the last release that ships them as separate files; a newer ANGLE means building it (depot_tools) or another distribution. | when needed |
 | Copying `gasm:gfx` frames natively | `gasm-run`'s copy key (F2) copies 2D and `gasm:gl` frames; WebGPU games draw straight to the window's surface, which can't be read back yet (the web player copies them). | not started |
-| `gasm:gl` in Worker mode | WebGL 2 on a transferred `OffscreenCanvas`; `gasm:gl` games run on the main thread for now. | not started |
 | glow upstream | Rust GL code runs on a fork of glow (`sdk/glow`: its native backend on wasm32), used through `[patch.crates-io]`. Upstream support (a loader-based backend on `wasm32-unknown-unknown`) would make the patch unnecessary. | idea |
 | A display scale | Guests only see drawable pixels, so UI code guesses a scale (the egui demo uses the drawable height). A `gasm.display_scale()` import would give the real one. | idea |
 | `gasm:gfx` render targets | Render-to-texture. | not started |
@@ -129,7 +127,6 @@ Left over:
 
 | Item | What it gives | Status |
 |---|---|---|
-| Threads in browsers | `godot-mt.wasm` runs its worker pool and threaded loading on OS threads in `gasm-run`; in the web player it would need real threads in browsers (above) and `gasm:gl` in Worker mode. | designed |
 | Jolt physics | Jolt doesn't recognize WASI targets (its platform and SIMD detection); a patch like its Emscripten support. Godot Physics 3D is used meanwhile. | not started |
 | TLS, `Crypto` | mbedtls needs a time source (`mbedtls_ms_time`, `timing.c`) for WASI. | not started |
 | Godot as a WebSocket server | `WebSocketPeer` and `WebSocketMultiplayerPeer` work as clients on `gasm:net` (a relay room, or a Godot server outside gasm); a game can't host (`create_server`), and ENet and UDP need sockets browsers don't have. | not planned |

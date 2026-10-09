@@ -80,8 +80,29 @@ const r = await w.frames([[pads0, pads1, 0, 0]]);   // r.frame: { rgba, width, h
 `wasm` is the module's bytes or a compiled `WebAssembly.Module`.
 
 No `SharedArrayBuffer` and no COOP/COEP headers are needed (works on GitHub
-Pages). Keyboard layouts: `DEFAULT_KEYMAP`, `parseKeymap(text)`,
+Pages), except for threads (below). `gasm:gl` games go to the worker with a
+canvas from `transferControlToOffscreen()` (`glCanvas`, plus the display `size`
+with each batch). Keyboard layouts: `DEFAULT_KEYMAP`, `parseKeymap(text)`,
 `keyboardPads(bindings, heldCodes, gamepadCount)`.
+
+## Threads
+
+Games built with threads (wasi-threads: `wasm32-wasip1-threads`, an imported
+shared memory) get worker threads with `threads: n` (`GasmHost`, `GasmWorker`,
+`gasm-headless --threads n`): a pool of Workers, started with the game, sharing
+its memory, as many as `gasm.max_threads()` reports. Each is parked until the
+game spawns a thread, so spawning is immediate. They need `SharedArrayBuffer`:
+Node, or a cross-origin isolated page (`Cross-Origin-Opener-Policy:
+same-origin`, `Cross-Origin-Embedder-Policy: require-corp`) with the game in
+Worker mode (the page's own thread can't wait). Pass the module's `bytes` with a
+compiled Module (`load(module, { bytes })`, `GasmWorker.start({ wasm, bytes })`):
+the shared memory's size is only in the binary. Worker threads read assets whose
+source can describe itself (`share()`: in-memory bytes, picked files, OPFS,
+files in Node); a trap on any thread ends the game. Elsewhere `thread-spawn`
+fails and the game does its work on one thread.
+
+For hosts that can't send the headers (GitHub Pages), `isolate-sw.js` is a
+service worker that adds them; the player registers it through `isolate.js`.
 
 ## Host API notes
 

@@ -195,8 +195,8 @@ CHANGELOG.md                 what each release added
 ## Next steps
 
 Everything planned or missing is on the
-[roadmap](site/docs/roadmap.md): opening files, `.gasm` packages, real threads
-([design](design/threads.md)), render targets, rollback netplay. Implemented
+[roadmap](site/docs/roadmap.md): opening files, `.gasm` packages, asynchronous
+decompression, render targets, rollback netplay. Implemented
 designs stay in `design/` as a record ([gasm:gl](design/gasm-gl.md),
 [fetch](design/fetch.md), [presentation](design/presentation.md),
 [stack switching](design/stack-switching.md)).

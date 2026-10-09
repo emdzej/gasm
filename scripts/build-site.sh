@@ -10,18 +10,19 @@ rm -rf "$PLAY"
 mkdir -p "$PLAY/build"
 scripts/vendor-web.sh >/dev/null   # csfs for the OPFS import page
 cp runners/web/index.html runners/web/app.js runners/web/gasm-host.js runners/web/webgpu-gfx.js runners/web/gasm-present.js \
-   runners/web/gasm-worker.js runners/web/gasm-splash.js runners/web/opfs.html runners/web/opfs.js runners/web/testdata.js "$PLAY/"
+   runners/web/gasm-worker.js runners/web/gasm-splash.js runners/web/opfs.html runners/web/opfs.js runners/web/testdata.js \
+   runners/web/isolate.js runners/web/isolate-sw.js "$PLAY/"
 cp -R runners/web/lib runners/web/vendor "$PLAY/"
 for g in sumo triangle textured inputtest nes doom scummvm scummvm-run test-pattern gltest glowtest eguidemo assetcheck sdl3-snake sdl3-woodeneye sdl3-callbacks sdl3-classic sdl3-classic-run sdl3-threads sdl3-gl sdl3-snake-gl bricks; do
   [ -f "build/$g.wasm" ] || { echo "missing build/$g.wasm; run 'make guests' first" >&2; exit 1; }
   cp "build/$g.wasm" "$PLAY/build/"
 done
 # Godot: the engine and the example projects' packs
-for e in godot godot-2d; do
+for e in godot godot-2d godot-mt; do
   [ -f build/$e.wasm ] || { echo "missing build/$e.wasm; run 'make godot' first" >&2; exit 1; }
 done
 mkdir -p "$PLAY/build/godot"
-cp build/godot.wasm build/godot-2d.wasm "$PLAY/build/"
+cp build/godot.wasm build/godot-2d.wasm build/godot-mt.wasm "$PLAY/build/"
 cp build/godot/*.pck "$PLAY/build/godot/"
 # The DOOM demo's default WAD: shareware episode 1 (freely distributable).
 [ -f roms/doom1.wad ] || scripts/fetch-roms.sh doom1 >/dev/null
@@ -36,7 +37,8 @@ cp "$(scripts/package-scummvm-src.sh "$(git rev-parse --short HEAD 2>/dev/null |
 # doom.wasm is GPL-2.0: its complete source is served next to it.
 cp "$(scripts/package-doom-src.sh "$(git rev-parse --short HEAD 2>/dev/null || echo site)")" "$PLAY/build/doom-src.tar.gz"
 # On the site, games live next to the page (./build/), not at the repo root.
-sed -i.bak 's|<meta name="gasm-root" content="../../">|<meta name="gasm-root" content="./">|' "$PLAY/index.html"
+# ...and the page isolates itself (isolate.js: Pages can't send COOP/COEP), for threads.
+perl -pi.bak -e 's|<meta name="gasm-root" content="../../">|<meta name="gasm-root" content="./">\n<meta name="gasm-isolate" content="">|' "$PLAY/index.html"
 rm -f "$PLAY/index.html.bak"
 
 cd site

@@ -13,7 +13,7 @@ const [url, out, secs = '5', actions = ''] = process.argv.slice(2);
 const CHROME = process.env.CHROME ?? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const port = 9333;
 const chrome = spawn(CHROME, ['--headless=new', `--remote-debugging-port=${port}`, '--user-data-dir=/tmp/gasm-chrome',
-  '--autoplay-policy=no-user-gesture-required', '--window-size=900,760', 'about:blank'], { stdio: 'ignore' });
+  '--autoplay-policy=no-user-gesture-required', '--window-size=900,760', ...(process.env.CI ? ['--no-sandbox'] : []), 'about:blank'], { stdio: 'ignore' });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 try {
   let target;

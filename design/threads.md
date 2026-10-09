@@ -3,7 +3,8 @@
 Status: **part A implemented** for C, POSIX threads, SDL 3 and Rust (see "As
 built" and "Plan"); **part B in progress**: real threads run natively
 (wasi-threads, "Part B as built" below), and so does a threaded Godot
-(`godot-mt.wasm`, phase 2); browsers are next (phase 3, planned below). Two designs that
+(`godot-mt.wasm`, phase 2), and both in browsers (phase 3, "Browsers" below);
+the asynchronous decompress call is left. Two designs that
 complement each other:
 **cooperative threads** inside the guest (no ABI change, deterministic), and
 **real wasm threads** as an optional capability later (parallel, not
@@ -380,7 +381,7 @@ comes as a bonus.
 Next: browsers (phase 3, below); the asynchronous decompress call (on every
 runner, threads or not).
 
-### Browsers (phase 3, planned)
+### Browsers (phase 3, built)
 
 The same modules, the same rules (workers compute and read assets; a trap ends
 the game; headless runs spawn nothing), on Web Workers:
@@ -422,6 +423,20 @@ the game; headless runs spawn nothing), on Web Workers:
   main thread may block, so no Worker mode is needed there), checked with
   `mttest` against the native runner's sums; then the browser's Worker mode on
   an isolated test page, then `godot-mt.wasm` once `gasm:gl` runs in workers.
+- **As built:** `runners/web/lib/threads.js` (pool, control block, spawn) and
+  `lib/thread-worker.js` (one script for Node's `worker_threads` and browser
+  Workers: a `GasmHost` of its own for WASI and assets, the other gasm imports
+  no-ops). The pool starts after the main instance (whose start function
+  initializes the shared memory) and before `_initialize`. The page watches the
+  control block in Worker mode and ends the game's worker if a thread ended and
+  the worker hasn't answered for 2 s. `gasm:gl` runs in Worker mode on a
+  transferred canvas. The website's player isolates itself with a service
+  worker (`isolate-sw.js`, scope `/play/`). Assets replaced while the game runs
+  (`setAsset`) aren't seen by thread workers (their table is the one at start).
+  Measured (Apple M1 Pro, Chrome): `mttest` 3.5 s on one thread, 1.1 s on four
+  workers; the Godot `threads` example 303 ms on the main thread, 51 ms on
+  eight workers. Browser APIs that refuse shared views get copies
+  (`TextDecoder`, `getRandomValues`); WebGL takes them.
 - **Thread budget inside Godot:** `gasm.max_threads` all go to the
   WorkerThreadPool. ThorVG (SVG) would start one thread of its own; the
   threaded build keeps it at 0 (the patch), since exported games rasterize

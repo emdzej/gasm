@@ -860,7 +860,7 @@ export class GlHost {
   get_uniformiv(p, loc, dst, count) { return this.getUniform(p, loc, dst, count, 'i32'); }
   get_uniformuiv(p, loc, dst, count) { return this.getUniform(p, loc, dst, count, 'i32'); }
   transform_feedback_varyings(p, ptr, len, count, mode) {
-    const names = new TextDecoder().decode(this.host.bytes(ptr, len)).split('\0').slice(0, count);
+    const names = new TextDecoder().decode(this.host.bytes(ptr, len).slice()).split('\0').slice(0, count);
     if (names.length < count) throw new Error('gasm:gl: transform_feedback_varyings: fewer names than count');
     if (this.model.valid('program', p, false)) this.ctx?.transformFeedbackVaryings(this.obj('program', p), names, mode);
   }

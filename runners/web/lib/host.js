@@ -12,6 +12,7 @@ import { Consent, FetchRequests } from './fetch.js';
 import { NetConnections } from './net.js';
 import { MemoryStorage, StorageError, STORAGE_ERR_IO } from './storage.js';
 import { ProcExit, Splitmix, WASI_IMPLEMENTED, wasiImports } from './wasi.js';
+import { END_EXIT, ThreadPool, threadsAvailable } from './threads.js';
 
 export const ABI_VERSION = 0;
 
@@ -83,7 +84,7 @@ export class GasmHost {
   constructor({ assets = {}, params = {}, gfx = new NullGfx(), storage = new MemoryStorage(), allowNet = false,
                 onPresent = () => {}, onAudio = () => {}, onLog = console.log, onTitle = () => {}, onCopyText = () => {}, onSaveFile = () => true,
                 getPad = () => 0, virtualTime = false, stackSwitching = STACK_SWITCHING, gl = null,
-                fetchReplay = null, fetchRecord = null, memoryLimit = DEFAULT_MEMORY_LIMIT, userAgent = null, ask = null } = {}) {
+                fetchReplay = null, fetchRecord = null, memoryLimit = DEFAULT_MEMORY_LIMIT, userAgent = null, ask = null, threads = 0 } = {}) {
     // GasmAssetProvider ({ size(name), readAt(name, offset, dst), names() }), or a plain
     // { name: Uint8Array } record (wrapped as an in-memory provider).
     this.assets = isAssetProvider(assets) ? assets : memoryAssets(assets);
@@ -151,6 +152,10 @@ export class GasmHost {
     this.dead = null;                // why the guest can't be called any more (trapped, exited)
     this.memoryLimit = memoryLimit;  // bytes (0: no limit); checked after each guest call
     this.provided = new Set();       // what `has` reports
+    // wasi-threads guests: at most this many worker threads (0: thread-spawn fails, as in
+    // headless runs); they need shared memory, so Node or a cross-origin isolated page
+    this.threads = threads;
+    this.pool = null;                // ThreadPool, after load() (lib/threads.js)
     this.t0 = performance.now();
   }
 
@@ -190,7 +195,7 @@ export class GasmHost {
       return this.assets.readAt(name, offset, this.bytes(dst, n));
     };
     return {
-      log: (ptr, len) => this.onLog(`[guest] ${LOSSY.decode(this.bytes(ptr, len))}`),
+      log: (ptr, len) => this.onLog(`[guest] ${LOSSY.decode(this.bytes(ptr, len).slice())}`),   // slice: decoders refuse shared memory
       has: (ptr, len) => (this.provided.has(this.str(ptr, len)) ? 1 : 0),
       // replaced by a suspending import for gasm_run guests (load)
       yield_frame: () => { throw new Error('gasm.yield_frame: only inside gasm_run'); },
@@ -200,7 +205,7 @@ export class GasmHost {
       },
       time_ms: () => (this.virtualTime ? this.vtime : performance.now() - this.t0),
       // minutes east of UTC (getTimezoneOffset is west); headless runs are UTC
-      max_threads: () => 0,   // no threads here (thread-spawn fails)
+      max_threads: () => this.pool?.size ?? 0,
       utc_offset_minutes: () => (this.virtualTime ? 0 : -new Date().getTimezoneOffset()),
       set_frame_rate: (hz) => { if (Number.isFinite(hz) && hz >= 1 && hz <= 1000) this.frameRate = hz; },
       video_present: (ptr, w, h, stride) => {
@@ -539,8 +544,9 @@ export class GasmHost {
         await new Promise((r) => { this.resume = r; done?.(); });
       });
     }
-    // wasi-threads modules import a shared memory: one here (threads don't run in this host:
-    // thread-spawn fails, so the game does its work on the main thread, as headless runs do)
+    // wasi-threads modules import a shared memory: one here, and with `threads` a pool of
+    // workers sharing it (lib/threads.js); without, thread-spawn fails and the game does its
+    // work on its own thread, as headless runs do
     const sharedMem = sharedMemoryImport(wasm instanceof WebAssembly.Module ? bytes : wasm);
     if (!sharedMem && wasm instanceof WebAssembly.Module && WebAssembly.Module.imports(wasm).some((i) => i.kind === 'memory')) {
       throw new Error('this module imports its memory (a game built with threads): pass load(module, { bytes })');
@@ -548,7 +554,8 @@ export class GasmHost {
     const extra = {};
     if (sharedMem) {
       extra[sharedMem.module] = { [sharedMem.name]: new WebAssembly.Memory({ initial: sharedMem.min, maximum: sharedMem.max, shared: true }) };
-      extra.wasi = { 'thread-spawn': () => -1 };
+      extra.wasi = { 'thread-spawn': (arg) => (this.pool ? this.pool.spawn(arg) : -1) };
+      if (this.switching) throw new Error("a module with threads (shared memory) can't use gasm_run (stack switching)");
     }
     const imports = new Proxy({ ...known, ...extra, wasi_snapshot_preview1: this.wasiImports() }, {
       get: (t, mod) => (mod === 'wasi_snapshot_preview1' || (sharedMem && mod === sharedMem.module) ? t[mod] : trapping(mod, t[mod])),
@@ -559,18 +566,41 @@ export class GasmHost {
     if (!(ex.memory instanceof WebAssembly.Memory) && sharedMem) ex.memory = extra[sharedMem.module][sharedMem.name];
     if (!(ex.memory instanceof WebAssembly.Memory)) throw new Error('guest does not export `memory`');
     this.memory = ex.memory;
+    if (sharedMem && this.threads > 0) {
+      // started after the main instance (it initialized the memory) and before any of
+      // the game's code, which may spawn threads from its first constructor
+      if (!threadsAvailable()) this.onLog('[gasm] threads: none here (shared memory needs a cross-origin isolated page)');
+      else {
+        const assets = this.assets.share?.() ?? null;
+        if (!assets) this.onLog('[gasm] threads: this asset provider has no share(): worker threads see no assets');
+        else if (assets.left) this.onLog(`[gasm] threads: ${assets.left} assets can't be read on worker threads`);
+        this.pool = await ThreadPool.start({
+          module, memory: this.memory, size: this.threads, assets, onLog: (m) => this.onLog(m),
+          init: { memoryImport: { module: sharedMem.module, name: sharedMem.name }, provided: [...this.provided], epoch: performance.timeOrigin + this.t0 },
+        });
+        this.onThreads?.(this.pool.ctrl);   // Worker mode: the page watches for a thread's end
+      }
+    }
     try {
       if (ex._initialize) ex._initialize();
       const version = ex.gasm_abi_version();
       if (version !== ABI_VERSION) throw new Error(`guest targets gasm ABI v${version}, runner implements v${ABI_VERSION}`);
       const rc = ex.gasm_init();
       this.checkMemory();
+      this.checkThreads();
       if (rc !== 0) throw new Error(`gasm_init failed with code ${rc}`);
     } catch (e) {
       this.dead = e;
+      this.pool?.terminate();
       throw e;
     }
     this.exports = ex;
+  }
+
+  /** A worker thread that trapped or exited ends the game too (wasi-threads). */
+  checkThreads() {
+    const end = this.pool?.ended();
+    if (end) throw end.kind === END_EXIT ? new ProcExit(end.code) : new WebAssembly.RuntimeError(end.message);
   }
 
   /** The guest's memory grew past memoryLimit: a trap (browsers can't refuse the growth
@@ -591,8 +621,10 @@ export class GasmHost {
       this.gfx.checkErrors?.();
       this.exports.gasm_frame();
       this.checkMemory();
+      this.checkThreads();
     } catch (e) {
       this.dead = e;
+      this.pool?.terminate();
       throw e;
     } finally {
       this.frameIndex++; // a frame that exits or traps still counts (as in the other runners)
@@ -625,6 +657,7 @@ export class GasmHost {
       this.checkMemory();
     } catch (e) {
       this.dead = e;
+      this.pool?.terminate();
       throw e;
     } finally {
       this.frameIndex++;
@@ -684,6 +717,7 @@ export class GasmHost {
     this.dead = new Error('exited');
     const f = this.exports.gasm_exit;
     if (f) { try { f(); } catch (e) { if (!(e instanceof ProcExit)) this.onLog(`[gasm] gasm_exit trapped: ${e.message}`); } }
+    this.pool?.terminate();
   }
 
   /** exit(), then close network connections (flushing them) and the storage. */

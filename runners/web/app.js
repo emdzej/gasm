@@ -9,6 +9,10 @@ import {
 import { GasmWorker } from './gasm-worker.js';
 import { WebGpuGfx } from './webgpu-gfx.js';
 import { FILTERS, GlPresenter } from './gasm-present.js';
+import { isolate } from './isolate.js';
+
+// threads need a cross-origin isolated page: on the website a service worker makes it one
+await isolate();
 
 // Where build/*.wasm and roms/ live, relative to this page: the repo root in
 // development (`make web`), the page's own directory on the website.
@@ -34,7 +38,10 @@ const GODOT_GAMES = {
   'godot-net': { pck: 'godot/net.pck', label: 'Godot: multiplayer (relay)', engine: 'godot-2d.wasm' },
   'godot-relaymp': { pck: 'godot/relaymp.pck', label: 'Godot: RPC multiplayer (relay)', engine: 'godot-2d.wasm' },
   'godot-mods': { pck: 'godot/mods.pck', label: 'Godot: mods (pick them with "mods...")', engine: 'godot-2d.wasm' },
+  // the engine with threads where the page can have them (cross-origin isolated), else one thread
+  'godot-threads': { pck: 'godot/threads.pck', label: 'Godot: worker threads', engine: 'godot-2d.wasm', threaded: 'godot-mt.wasm' },
 };
+const godotEngine = (g) => (g.threaded && globalThis.crossOriginIsolated ? g.threaded : g.engine);
 for (const [id, g] of Object.entries(GODOT_GAMES)) GAMES[id] = g.label;
 // Games that take a content file from roms/ (or an opened/dropped file) as an asset.
 // `known` is offered even without a roms/ directory listing (the website has none).
@@ -189,7 +196,10 @@ function copyFrame() {
     const c = gpu.gl?.canvas ?? canvas;
     png = new Promise((resolve, reject) => c.toBlob((b) => (b ? resolve(b) : reject(new Error('empty canvas'))), 'image/png'));
   } else return log('copy: nothing to copy (yet)');
-  // still within the key press's user activation, which the clipboard requires
+  copyPng(png);
+}
+// still within the key press's user activation, which the clipboard requires
+function copyPng(png) {
   navigator.clipboard.write([new ClipboardItem({ 'image/png': png })])
     .then(() => log('copied the frame to the clipboard'), (e) => log(`copy: ${e.message}`));
 }
@@ -277,6 +287,7 @@ async function initAudio() {
 // Two runtimes behind one loop: main thread (default; required for gasm:gfx) and
 // Worker mode (gasm-worker.js; lazy OPFS / File assets, guest off the main thread).
 let host = null, worker = null, gpu = null, inflight = false, running = false, rafId = 0;
+let workerGl = false;   // a gasm:gl game in Worker mode: its canvas belongs to the worker
 let startGen = 0;     // start() calls; an older one still loading gives up
 let frame2d = null;   // the latest 2D frame, drawn once per tick
 // The canvas' display size in device pixels (Worker mode: the OffscreenCanvas can't measure itself).
@@ -382,12 +393,14 @@ function tick(now) {
       inflight = true;
       acc -= due * period;
       const w = worker;
-      w.frames(batch(due), true, { size: canvasSize() }).then((r) => {
+      // the copy key with the GL canvas in the worker: it takes the frame after drawing it
+      w.frames(batch(due), true, { size: canvasSize(), copy: copyPending && workerGl }).then((r) => {
         if (w !== worker) return;      // a newer game started meanwhile
         inflight = false;
         fpsN += due;
         if (r.frame) { present(r.frame.rgba, r.frame.width, r.frame.height, r.frame.aspect); draw2d(); }
-        if (copyPending) copyFrame();
+        if (copyPending && !workerGl) copyFrame();
+        else if (copyPending && r.png) { copyPending = false; copyPng(r.png); }
         rawInput.setMode(w.inputMode);
       }, stopped);
     }
@@ -511,7 +524,7 @@ async function start({ romBytes, romName = null } = {}) {
   if (fg && params.args === undefined) params.args = folder || url.has('opfs') ? fg.folderArgs : fg.args;
   if ($('relay').value.trim()) { params.relay = $('relay').value.trim(); params.room = $('room').value.trim() || 'sumo'; }
   try {
-    const bytes = godot ? await fetchBytes(new URL(`build/${godot.engine}`, ROOT))
+    const bytes = godot ? await fetchBytes(new URL(`build/${godotEngine(godot)}`, ROOT))
       : game.includes('/') ? await fetchBytes(new URL(game, location.href)) : await fetchGame(game);
     // compiled once: the imports tell where it can run, the same Module is instantiated
     const module = await WebAssembly.compile(bytes);
@@ -537,7 +550,14 @@ async function start({ romBytes, romName = null } = {}) {
     // gfx guests go to the worker only if the canvas can be transferred (OffscreenCanvas);
     // the worker then needs WebGPU too, otherwise we fall back to the main thread below.
     const offscreenOk = typeof HTMLCanvasElement !== 'undefined' && 'transferControlToOffscreen' in HTMLCanvasElement.prototype;
-    let useWorker = ($('worker').checked || url.has('opfs')) && (!usesGfx || offscreenOk) && !usesGl;
+    // games built with threads (wasi-threads: they import a shared memory) get worker threads
+    // on cross-origin isolated pages, from Worker mode (the page's own thread can't wait);
+    // elsewhere thread-spawn fails and they do their work on one thread
+    const threaded = WebAssembly.Module.imports(module).some((i) => i.kind === 'memory');
+    const threads = threaded && globalThis.crossOriginIsolated && hashFrames === 0 ? Math.min(navigator.hardwareConcurrency || 4, 16) : 0;
+    if (threaded && !threads) log(globalThis.crossOriginIsolated ? 'threads: none while hashing (reproducible runs)' : 'threads: none on this page (it isn\'t cross-origin isolated)');
+    let useWorker = ($('worker').checked || url.has('opfs') || threads > 0) && (!(usesGfx || usesGl) || offscreenOk);
+    workerGl = false;
     await splash?.ready();   // the game gets a canvas of its own once the splash is over
     if (stale()) return;
     let c = freshCanvas();
@@ -554,7 +574,7 @@ async function start({ romBytes, romName = null } = {}) {
       if (url.has('opfs')) specs.push({ kind: 'opfs', dir: url.get('opfs'), prefix });
       if (folder) specs.push({ kind: 'files', entries: folder.entries, prefix });
       const start = (canvasOpt) => GasmWorker.start({
-        wasm: module, assets: specs, params, storage: namespace, allowNet: allowedHosts(), ask: askPlayer, keyboard: true,
+        wasm: module, bytes: threaded ? bytes : null, threads, assets: specs, params, storage: namespace, allowNet: allowedHosts(), ask: askPlayer, keyboard: true,
         hashing: hashFrames > 0, virtualTime: hashFrames > 0, onLog: log, onAudio, onTitle: showTitle, onCopyText: copyText, onSaveFile: saveFile, ...canvasOpt,
       });
       if (usesGfx) {
@@ -567,13 +587,15 @@ async function start({ romBytes, romName = null } = {}) {
           useWorker = false;
           c = freshCanvas(); c.classList.add('gpu');
         }
+      } else if (usesGl) {
+        worker = await start({ glCanvas: c.transferControlToOffscreen(), size: canvasSize() });
+        workerGl = true;
       } else {
         worker = await start({});
       }
     }
     if (!useWorker) {
-      if (usesGfx && $('worker').checked && !offscreenOk) log('gasm:gfx games run on the main thread here (no OffscreenCanvas)');
-      if (usesGl && $('worker').checked) log('gasm:gl games run on the main thread');
+      if ((usesGfx || usesGl) && $('worker').checked && !offscreenOk) log('GPU games run on the main thread here (no OffscreenCanvas)');
       let assets = record;
       if (folder) {  // main thread: preload the folder into memory, with progress
         const t = new AssetTable(log);

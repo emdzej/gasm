@@ -82,8 +82,9 @@ scenes get random node ids at export).
   `gasm-run --manifest`.
 - **Threads:** `godot.wasm` is built with `threads=no` (work runs on the main
   thread); `godot-mt.wasm` (`threads=yes`, `make godot`) runs `WorkerThreadPool`
-  and threaded loading on OS threads in `gasm-run` (`--threads`), and on the
-  calling thread where the runner allows none (headless, browsers).
+  and threaded loading on OS threads in `gasm-run` (`--threads`) and on Workers
+  on cross-origin isolated pages, and on the calling thread where the runner
+  allows none (headless runs).
 - **Not available:** raw sockets and servers (`ENet`,
   `StreamPeerTCP`, `TCPServer`), TLS in the engine (`Crypto`), complex text
   shaping (the fallback text server: no right-to-left or ligatures), several

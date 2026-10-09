@@ -158,6 +158,25 @@ if grep -q 'threads: 4 processors; results agree' <<<"$out" && ! grep -qE '^(SCR
 else
   fail=$((fail + 1)); printf 'FAIL  godotmt-threads-native\n%s\n' "$(tail -4 <<<"$out")"
 fi
+# The same on Node's workers (runners/web/lib/threads.js: a pool started before the game)
+out=$($NODE build/mttest.wasm --headless 5 --threads 4 2>&1)
+if grep -q '\[mttest\] 4 threads; sums agree' <<<"$out" && grep -q 'exited with code 0' <<<"$out"; then
+  pass=$((pass + 1)); printf 'PASS  %-22s %s\n' "threads-node" "4 workers, same sums"
+else
+  fail=$((fail + 1)); printf 'FAIL  threads-node\n%s\n' "$(tail -4 <<<"$out")"
+fi
+out=$($NODE build/mttest.wasm --headless 5 --threads 4 --param trap=1 2>&1); code=$?
+if [ "$code" -ne 0 ] && grep -q 'unreachable' <<<"$out"; then
+  pass=$((pass + 1)); printf 'PASS  %-22s %s\n' "threads-trap-node" "a worker's trap ends the run"
+else
+  fail=$((fail + 1)); printf 'FAIL  threads-trap-node (exit %s)\n%s\n' "$code" "$(tail -4 <<<"$out")"
+fi
+out=$($NODE build/godot-mt.wasm $GP/threads.pck --headless 5 --threads 4 --no-hash 2>&1)
+if grep -q 'threads: 4 processors; results agree' <<<"$out" && ! grep -qE '^(SCRIPT )?ERROR' <<<"$out"; then
+  pass=$((pass + 1)); printf 'PASS  %-22s %s\n' "godotmt-threads-node" "WorkerThreadPool on 4 workers"
+else
+  fail=$((fail + 1)); printf 'FAIL  godotmt-threads-node\n%s\n' "$(tail -4 <<<"$out")"
+fi
 # Mods (--mods): the mods example with the mod pack in a folder, and without it
 MODS=$(mktemp -d)
 cp build/godot/modpack.pck "$MODS/"
