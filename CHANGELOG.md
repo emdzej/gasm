@@ -6,7 +6,7 @@ embedders. The ABI version is still 0: additions keep it (see
 guests can probe for newer imports with `gasm.has`. Versions are the git tags and
 the package versions (`gasm-sdk`, `gasm-host`, `@emdzej/gasm-host`).
 
-## Unreleased
+## 0.14.0 (2026-10-10)
 
 Runners:
 - Real threads natively (wasi-threads; NiP #17, phase 1): a game built for
