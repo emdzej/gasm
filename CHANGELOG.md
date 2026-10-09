@@ -6,6 +6,16 @@ embedders. The ABI version is still 0: additions keep it (see
 guests can probe for newer imports with `gasm.has`. Versions are the git tags and
 the package versions (`gasm-sdk`, `gasm-host`, `@emdzej/gasm-host`).
 
+## Unreleased
+
+Godot:
+- The window runner's catch-up frames (it fell behind and runs several in a row,
+  showing the last) are skipped by Godot, which steps by real time anyway; their
+  input is kept for the next frame (NiP #18). Before, a slow frame was followed by
+  up to three more frames of work at once with deltas near 0, so the hitch got
+  worse and the frame rate hid it. `Time.get_ticks_usec()` was right all along
+  (µs, monotonic). Headless runs never catch up, so hashes don't change.
+
 ## 0.13.0 (2026-10-08)
 
 Runners:

@@ -31,6 +31,11 @@ class DisplayServerGasm : public DisplayServerHeadless {
 	static Vector<String> get_rendering_drivers_func();
 
 	void process_keys();
+public:
+	// the window runner's catch-up frames (gasm:gl frame_shown 0): skipped, input kept
+	bool is_catch_up_frame() const;
+	void queue_input();
+private:
 	// Shift, Ctrl, Alt, Meta (left and right) as of the key event being processed: the
 	// frame's key state is as of its end, when a quick Ctrl+V may have released Ctrl
 	uint8_t modifiers = 0;

@@ -345,6 +345,22 @@ void DisplayServerGasm::process_joypads() {
 	}
 }
 
+bool DisplayServerGasm::is_catch_up_frame() const {
+#ifdef GLES3_ENABLED
+	if (gl) {
+		return gasm_gl_frame_shown() == 0;
+	}
+#endif
+	return false;
+}
+
+void DisplayServerGasm::queue_input() {
+	// parsed into Input's buffer; the next process_events() flushes it
+	process_keys();
+	process_pointer();
+	process_joypads();
+}
+
 void DisplayServerGasm::process_events() {
 	Size2i size = window_get_size();
 	if (size != last_size && size.x > 0 && size.y > 0) {

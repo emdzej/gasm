@@ -350,6 +350,16 @@ mode) can't go in `godot.wasm`, which every game shares: give it as an asset,
 `--asset gasm.manifest=mygame.json` (or `gasm-run --manifest mygame.json`), and
 ship it with the pack.
 
+## Profiling
+
+`Time.get_ticks_usec()` is wall time in µs, monotonic, the same clock the
+frame delta comes from (virtual in headless runs). When a frame takes longer
+than the frame rate allows, the window runner would normally run catch-up frames
+back to back; Godot skips those (it steps by real time anyway), so a slow frame
+shows as one long delta and a lower frame rate. Godot's `TIME_PROCESS` monitor
+is the slowest frame of the last second (updated once a second, drawing
+included), not the current frame's time.
+
 ## Limits
 
 | | |

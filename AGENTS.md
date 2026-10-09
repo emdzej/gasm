@@ -77,6 +77,14 @@ gigabytes behind (the `gasm-linux-work` and `gasm-linux-cargo` volumes, the
 `container volume ls`, `container image ls`) before you finish. Leave other
 projects' containers and volumes alone.
 
+**Clear big build outputs once work is done.** After the suites pass and the work is
+committed and pushed, `cargo clean` in `runners/native` (its `target/` is 1.2 GB after
+one `make`, more with test and debug builds) and `guests` (470 MB) gives the disk
+back; the maintainers clear them periodically anyway, so expect them missing at the
+start of a session (`make` rebuilds them; `build/` too). Keep `tools/` (fetched
+toolchains, and the Godot trees' objects, ~0.85 GB each, that keep Godot's rebuilds
+incremental).
+
 Before claiming a change works, run the determinism and network suites. For
 runner or ABI changes, also check the browser: `python3 -m http.server 8765`
 from the repo root, then

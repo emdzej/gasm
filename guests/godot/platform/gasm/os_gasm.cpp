@@ -50,6 +50,15 @@ bool OS_Gasm::_check_internal_feature_support(const String &p_feature) {
 }
 
 bool OS_Gasm::main_loop_iterate() {
+	DisplayServerGasm *ds = DisplayServerGasm::get_singleton_gasm();
+	// A catch-up frame (the window runner fell behind and runs several in a row, showing
+	// only the last): Godot steps by real time anyway, so iterating would only add work
+	// right after a slow frame and give the next ones a delta near 0 (and a frame rate
+	// that hides the hitch). Keep the frame's input for the next iteration instead.
+	if (ds && ds->is_catch_up_frame()) {
+		ds->queue_input();
+		return false;
+	}
 	DisplayServer::get_singleton()->process_events();
 	return Main::iteration();
 }
