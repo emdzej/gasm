@@ -241,7 +241,12 @@ from the repo root, then
   engine threads outside the pool are left out on gasm (`godot.patch`: the DNS
   resolver, ThorVG); the patch also makes the pool's calling-thread fallback work in
   a threaded build. A new engine thread shows up as "thread constructor failed":
-  find it with `--threads 0`.
+  find it with `--threads 0`. With no pool threads `get_thread_count()` still says
+  1 (as without threads): callers split group tasks by it, and 0 made the scene
+  culler cull nothing in scenes over 1000 instances.
+- **Godot uploads RGB8, L8 and LA8 textures as RGBA8** (`texture_storage.cpp` in
+  `godot.patch`, a converted copy): ANGLE emulates them on Metal/D3D and an upload
+  stalled 10-60 ms in a busy frame (fonts' glyph caches are LA8).
 - **A new Godot example needs a new `make` run** (the example list is a wildcard
   evaluated when make starts); commit the `.uid` files the editor writes in
   `build/godot-projects/<example>/` (their absence makes exports differ).

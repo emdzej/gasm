@@ -6,6 +6,19 @@ embedders. The ABI version is still 0: additions keep it (see
 guests can probe for newer imports with `gasm.has`. Versions are the git tags and
 the package versions (`gasm-sdk`, `gasm-host`, `@emdzej/gasm-host`).
 
+## Unreleased
+
+Godot:
+- `godot-mt.wasm` headless draws big scenes again (NiP #20): with no pool threads
+  `WorkerThreadPool::get_thread_count()` said 0, so the scene culler's threaded path
+  (over 1000 instances) ran a group task of 0 elements and culled, so drew, nothing.
+  It says at least 1 on gasm now, as in `godot.wasm`.
+- Textures in RGB8, L8 and LA8 (fonts' glyph caches, WebP pictures without alpha)
+  go up as RGBA8 (NiP #19): ANGLE emulates those formats on Metal and D3D, and an
+  upload took 10-60 ms in a busy frame (a 500 x 500 RGBA8 one takes 0.3 ms).
+  Measured in a window, NiP's Łódź, 25 s driving: frames over 33 ms 85 -> 10, mean
+  43.7 -> 55.3 fps. Godot's golden hashes change (the uploads hash as RGBA8).
+
 ## 0.14.0 (2026-10-10)
 
 Runners:

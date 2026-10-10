@@ -41,8 +41,8 @@ diff --color -ruN a/core/io/ip.cpp b/core/io/ip.cpp
  	memdelete(resolver);
  }
 diff --color -ruN a/core/object/worker_thread_pool.cpp b/core/object/worker_thread_pool.cpp
---- a/core/object/worker_thread_pool.cpp	2026-10-09 21:54:20
-+++ b/core/object/worker_thread_pool.cpp	2026-10-09 21:54:20
+--- a/core/object/worker_thread_pool.cpp	2026-10-10 18:44:21
++++ b/core/object/worker_thread_pool.cpp	2026-10-10 18:44:31
 @@ -56,8 +56,17 @@
  
  void WorkerThreadPool::_process_task(Task *p_task) {
@@ -74,6 +74,34 @@ diff --color -ruN a/core/object/worker_thread_pool.cpp b/core/object/worker_thre
  			low_priority_threads_used--;
  
  			if (_try_promote_low_priority_task()) {
+@@ -362,7 +376,11 @@
+ #ifdef THREADS_ENABLED
+ 	if (p_pump_task) {
+ 		pump_task_count++;
++#ifdef GASM_ENABLED
++		int thread_count = threads.size(); // (get_thread_count() is at least 1 on gasm)
++#else
+ 		int thread_count = get_thread_count();
++#endif
+ 		if (pump_task_count >= thread_count) {
+ 			print_verbose(vformat("A greater number of dedicated threads were requested (%d) than threads available (%d). Please increase the number of available worker task threads. Recovering this session by spawning more worker task threads.", pump_task_count + 1, thread_count)); // +1 because we want to keep a Thread without any pump tasks free.
+ 
+diff --color -ruN a/core/object/worker_thread_pool.h b/core/object/worker_thread_pool.h
+--- a/core/object/worker_thread_pool.h	2026-10-10 18:44:21
++++ b/core/object/worker_thread_pool.h	2026-10-10 18:44:31
+@@ -268,7 +268,11 @@
+ 	void wait_for_group_task_completion(GroupID p_group);
+ 
+ 	_FORCE_INLINE_ int get_thread_count() const {
+-#ifdef THREADS_ENABLED
++#if defined(THREADS_ENABLED) && defined(GASM_ENABLED)
++		// gasm: with no pool threads (headless) tasks run on the calling thread, as one: callers
++		// split work by this (the scene culler's group task had 0 elements and culled nothing)
++		return MAX(1u, threads.size());
++#elif defined(THREADS_ENABLED)
+ 		return threads.size();
+ #else
+ 		return 1;
 diff --color -ruN a/drivers/gles3/rasterizer_canvas_gles3.cpp b/drivers/gles3/rasterizer_canvas_gles3.cpp
 --- a/drivers/gles3/rasterizer_canvas_gles3.cpp	2026-10-04 13:50:14
 +++ b/drivers/gles3/rasterizer_canvas_gles3.cpp	2026-10-04 13:50:14
@@ -236,9 +264,87 @@ diff --color -ruN a/drivers/gles3/storage/render_scene_buffers_gles3.cpp b/drive
  			// We are going to render directly into our render target textures,
  			// these can change from frame to frame as we cycle through swapchains,
 diff --color -ruN a/drivers/gles3/storage/texture_storage.cpp b/drivers/gles3/storage/texture_storage.cpp
---- a/drivers/gles3/storage/texture_storage.cpp	2026-10-04 13:50:14
-+++ b/drivers/gles3/storage/texture_storage.cpp	2026-10-04 13:50:14
-@@ -894,7 +894,7 @@
+--- a/drivers/gles3/storage/texture_storage.cpp	2026-10-10 19:00:37
++++ b/drivers/gles3/storage/texture_storage.cpp	2026-10-10 19:00:56
+@@ -455,6 +455,14 @@
+ 
+ 	switch (p_format) {
+ 		case Image::FORMAT_L8: {
++#ifdef GASM_ENABLED
++			// gasm: as RGBA8 (converted on upload, _get_gl_image_and_format): ANGLE emulates
++			// luminance on Metal and D3D, and an upload there took 10-60 ms in a busy frame
++			r_real_format = Image::FORMAT_RGBA8;
++			r_gl_internal_format = GL_RGBA8;
++			r_gl_format = GL_RGBA;
++			r_gl_type = GL_UNSIGNED_BYTE;
++#else
+ 			if (RasterizerUtilGLES3::is_gles_over_gl()) {
+ 				r_gl_internal_format = GL_R8;
+ 				r_gl_format = GL_RED;
+@@ -464,8 +472,17 @@
+ 				r_gl_format = GL_LUMINANCE;
+ 				r_gl_type = GL_UNSIGNED_BYTE;
+ 			}
++#endif
+ 		} break;
+ 		case Image::FORMAT_LA8: {
++#ifdef GASM_ENABLED
++			// gasm: as RGBA8 (converted on upload, _get_gl_image_and_format): ANGLE emulates
++			// luminance-alpha (fonts' glyph caches) on Metal and D3D, and an upload there took 10-60 ms in a busy frame
++			r_real_format = Image::FORMAT_RGBA8;
++			r_gl_internal_format = GL_RGBA8;
++			r_gl_format = GL_RGBA;
++			r_gl_type = GL_UNSIGNED_BYTE;
++#else
+ 			if (RasterizerUtilGLES3::is_gles_over_gl()) {
+ 				r_gl_internal_format = GL_RG8;
+ 				r_gl_format = GL_RG;
+@@ -475,6 +492,7 @@
+ 				r_gl_format = GL_LUMINANCE_ALPHA;
+ 				r_gl_type = GL_UNSIGNED_BYTE;
+ 			}
++#endif
+ 		} break;
+ 		case Image::FORMAT_R8: {
+ 			r_gl_internal_format = GL_R8;
+@@ -487,9 +505,18 @@
+ 			r_gl_type = GL_UNSIGNED_BYTE;
+ 		} break;
+ 		case Image::FORMAT_RGB8: {
++#ifdef GASM_ENABLED
++			// gasm: as RGBA8 (converted on upload, _get_gl_image_and_format): ANGLE emulates
++			// RGB8 on Metal and D3D, and an upload there took 10-60 ms in a busy frame
++			r_real_format = Image::FORMAT_RGBA8;
++			r_gl_internal_format = GL_RGBA8;
++			r_gl_format = GL_RGBA;
++			r_gl_type = GL_UNSIGNED_BYTE;
++#else
+ 			r_gl_internal_format = GL_RGB8;
+ 			r_gl_format = GL_RGB;
+ 			r_gl_type = GL_UNSIGNED_BYTE;
++#endif
+ 		} break;
+ 		case Image::FORMAT_RGBA8: {
+ 			r_gl_internal_format = GL_RGBA8;
+@@ -730,6 +757,17 @@
+ 		Error err = _get_gl_uncompressed_format(p_image, p_format, r_real_format, r_gl_format, r_gl_internal_format, r_gl_type);
+ 		ERR_FAIL_COND_V_MSG(err != OK, Ref<Image>(), vformat("The image format %d is not supported by the Compatibility renderer.", p_format));
+ 
++#ifdef GASM_ENABLED
++		if (r_real_format == Image::FORMAT_RGBA8 && p_format != Image::FORMAT_RGBA8) {
++			// (a copy: the caller's image keeps its format)
++			if (p_image.is_null()) {
++				return p_image;
++			}
++			Ref<Image> rgba = p_image->duplicate();
++			rgba->convert(Image::FORMAT_RGBA8);
++			return rgba;
++		}
++#endif
+ 		if (p_format != r_real_format) {
+ 			WARN_PRINT(vformat("Image format %s not supported by hardware, converting to %s.", Image::get_format_name(p_format), Image::get_format_name(r_real_format)));
+ 		}
+@@ -894,7 +932,7 @@
  			}
  		} break;
  		case Image::FORMAT_ETC2_RA_AS_RG: {
@@ -247,7 +353,7 @@ diff --color -ruN a/drivers/gles3/storage/texture_storage.cpp b/drivers/gles3/st
  			if (config->etc2_supported) {
  				r_gl_internal_format = _EXT_COMPRESSED_RGBA8_ETC2_EAC;
  				r_gl_format = GL_RGBA;
-@@ -908,7 +908,7 @@
+@@ -908,7 +946,7 @@
  			decompress_ra_to_rg = true;
  		} break;
  		case Image::FORMAT_DXT5_RA_AS_RG: {
@@ -256,7 +362,19 @@ diff --color -ruN a/drivers/gles3/storage/texture_storage.cpp b/drivers/gles3/st
  			if (config->s3tc_supported) {
  				r_gl_internal_format = _EXT_COMPRESSED_RGBA_S3TC_DXT5_EXT;
  				r_gl_format = GL_RGBA;
-@@ -2173,7 +2173,7 @@
+@@ -979,6 +1017,11 @@
+ 
+ 			Error err = _get_gl_uncompressed_format(image, image->get_format(), r_real_format, r_gl_format, r_gl_internal_format, r_gl_type);
+ 			ERR_FAIL_COND_V_MSG(err != OK, Ref<Image>(), vformat("The image format %d is not supported by the Compatibility renderer.", image->get_format()));
++#ifdef GASM_ENABLED
++			if (r_real_format != image->get_format()) {
++				image->convert(r_real_format); // (RGB8 and the like as RGBA8: a copy already)
++			}
++#endif
+ 
+ 			r_real_format = image->get_format();
+ 			r_compressed = false;
+@@ -2173,7 +2216,7 @@
  }
  
  void TextureStorage::_texture_set_swizzle(GLES3::Texture *p_texture, Image::Format p_real_format) {

@@ -69,8 +69,12 @@ with `gasm:gl` it isn't needed.
 - Natively it runs on ANGLE in the same WebGL compatibility mode Chrome uses,
   so validation is the same in the browser and natively; `gasm-run` loads
   ANGLE only for these games.
-- Browser games run on the main thread (no Worker mode yet).
+- Browser games run on the main thread, or in Worker mode on a transferred canvas.
 - Queries and fences report results from the next frame on, everywhere.
+- Upload textures as RGBA8 (or R8, RG8), not RGB8, `GL_LUMINANCE` or
+  `GL_LUMINANCE_ALPHA`: ANGLE emulates those on Metal and Direct3D (natively and
+  in Chrome), and one upload can take tens of milliseconds in a busy frame
+  (Godot on gasm converts them for you).
 
 Examples: [gltest](https://github.com/emdzej/gasm/blob/main/guests/gltest/main.c),
 and Godot 4.7, whose Compatibility renderer runs on it
