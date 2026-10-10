@@ -6,7 +6,7 @@ embedders. The ABI version is still 0: additions keep it (see
 guests can probe for newer imports with `gasm.has`. Versions are the git tags and
 the package versions (`gasm-sdk`, `gasm-host`, `@emdzej/gasm-host`).
 
-## Unreleased
+## 0.15.0 (2026-10-10)
 
 Godot:
 - `godot-mt.wasm` headless draws big scenes again (NiP #20): with no pool threads
