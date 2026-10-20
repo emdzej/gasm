@@ -1,7 +1,7 @@
 # gasm:media: audio streams played by the runner
 
-Status: **phase 1 implemented** (native: `gasm-run`, the Rust SDK; see the CHANGELOG);
-phases 2 (browsers) and 3 (Godot) to come.
+Status: **phases 1 and 3 implemented** (native: `gasm-run`, the Rust SDK; Godot's
+`Gasm` singleton; see the CHANGELOG); phase 2 (browsers) to come.
 
 ## Summary
 

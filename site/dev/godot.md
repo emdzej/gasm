@@ -279,6 +279,46 @@ does GETs and a POST.
 - `get_response_body_length()` is -1 (the length is known at the end), and
   there's no blocking mode or `StreamPeer`, as on Godot's web platform.
 
+## Audio streams (internet radio)
+
+Godot can't play a stream that keeps arriving (its MP3 and Ogg players need the
+whole file), so gasm plays it for the game:
+[`gasm:media`](/docs/abi#gasm-media-optional-audio-streams), through the `Gasm`
+singleton. The runner fetches, decodes and mixes the stream after Godot's own
+audio; the game controls it and reads what's playing. The
+[media example](https://github.com/emdzej/gasm/tree/main/guests/godot/examples/media)
+plays the URL it's given.
+
+```gdscript
+var gasm := Engine.get_singleton("Gasm")
+var radio: int = gasm.media_open("https://radio.example/live.mp3")   # -1: see gasm.media_refusal()
+gasm.media_play(radio)
+gasm.media_set_volume(radio, 0.8)
+gasm.media_set_lowpass(radio, 600.0)   # heard from outside the car; 0 = off
+
+func _process(_delta):
+    if gasm.media_state(radio) == gasm.MEDIA_FAILED:
+        print(gasm.media_error(radio))
+    var v: int = gasm.media_metadata_version(radio)
+    if v != last_version:   # a new song
+        last_version = v
+        print(gasm.media_metadata(radio).title)   # { name, title, codec, bitrate }
+```
+
+- **Permission:** the game's manifest says `"media": true` (Godot games share one
+  engine module, so the manifest comes from the launcher: `--manifest game.json` or
+  an asset `gasm.manifest`), and the player is asked once before the game starts; or
+  `gasm-run --allow-media`. Headless runs need the flag (and `--realtime`: a stream
+  plays in real time).
+- **What plays:** https streams in MP3, AAC-LC, Ogg Vorbis or FLAC; live streams
+  (ICY: the station's name and the current title) and tracks (`media_duration`,
+  `MEDIA_ENDED` at their end). A live stream that drops reconnects by itself.
+- `media_state` is `MEDIA_CONNECTING`, `MEDIA_PLAYING`, `MEDIA_PAUSED`,
+  `MEDIA_FAILED` or `MEDIA_ENDED`; `media_caps(radio)` says whether volume, the
+  filter and the metadata work for this stream (natively all three). A handle
+  `media_open` didn't return is an error message, not a crash.
+- Browsers: not yet (`media_open` refuses there, `media_refusal()` says so).
+
 ## Multiplayer
 
 Two ways, both on [`gasm:net`](/docs/abi#gasm-net-optional-message-connections)

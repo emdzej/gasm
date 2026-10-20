@@ -62,13 +62,14 @@ BASE=https://127.0.0.1:$PORT
 run() {
   local name=$1 frames=$2
   shift 2
-  perl -e 'alarm 60; exec @ARGV' "$NATIVE" "$GUEST" --headless "$frames" --realtime "$@" >"$TMP/$name.out" 2>"$TMP/$name.log" || true
+  perl -e 'alarm 60; exec @ARGV' "$NATIVE" ${GAME:-$GUEST} --headless "$frames" --realtime "$@" >"$TMP/$name.out" 2>"$TMP/$name.log" || true
 }
-# expect NAME "what" PATTERN...: every pattern is in the log, in this order
+# expect NAME "what" PATTERN...: every pattern is in the log, in this order (the
+# guest's lines: "[mediatest] ...", or Godot's "media: ...")
 expect() {
   local name=$1 what=$2 log="$TMP/$1.log" rest
   shift 2
-  rest=$(grep '\[mediatest\]' "$log" || true)
+  rest=$(grep -E '\[mediatest\]|^media: ' "$log" || true)
   for p in "$@"; do
     if ! printf '%s\n' "$rest" | grep -q -- "$p"; then
       fail=$((fail + 1)); echo "FAIL  media-$name: $what (no \"$p\")"; grep -E 'mediatest|media' "$log" | sed 's/^/        /' | head -12
@@ -113,6 +114,16 @@ expect unlisted "a host not in the list is refused" "state Failed: 127.0.0.1 isn
 
 run plainhttp 10 --allow-media=127.0.0.1 --param url=http://127.0.0.1:$PORT/live.mp3
 expect plainhttp "http (not https) is refused" 'refused: only https:// streams'
+
+# Godot: the Gasm singleton's media_* calls (guests/godot/examples/media)
+if [ -f build/godot.wasm ] && [ -f build/godot/media.pck ]; then
+  GAME="build/godot.wasm --asset game.pck=build/godot/media.pck" run godot 330 --allow-media=127.0.0.1 --param url=$BASE/live.mp3
+  expect godot "Godot plays it through the Gasm singleton" 'media: opened' 'media: state playing' 'title gasm test - Song 1' 'title gasm test - Song 2'
+  GAME="build/godot.wasm --asset game.pck=build/godot/media.pck" run godot-refused 30 --param url=$BASE/live.mp3
+  expect godot-refused "Godot hears why it was refused" "media: refused: this game's manifest doesn't ask"
+else
+  echo "SKIP  media-godot (make godot)"
+fi
 
 echo "$pass passed, $fail failed"
 [ "$fail" -eq 0 ]

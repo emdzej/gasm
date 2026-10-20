@@ -55,6 +55,12 @@ C SDK (`gasm_gl.c`, so SDL 3 and Godot too):
   and its hash maps key on addresses; the runners agree).
 
 Godot:
+- Audio streams through the `Gasm` singleton (gasm:media, phase 3): `can_play_media`,
+  `media_open(url)`, `media_refusal`, `media_play`, `media_pause`, `media_close`,
+  `media_set_volume`, `media_set_lowpass`, `media_caps` (a Dictionary),
+  `media_state` (`MEDIA_*` constants), `media_error`, `media_position`,
+  `media_duration`, `media_metadata` (a Dictionary), `media_metadata_version`. A
+  handle it didn't hand out is an error, not a trap. New example `media`.
 - `make godot-mt-names`: `godot-mt.wasm` with its function names (SCons option
   `gasm_names=yes`: the link without `-s`, `wasm-opt -g`), for profiles.
 - Measured for NiP #22 (headless, NiP's Głowno, 8 workers): an engine built for
