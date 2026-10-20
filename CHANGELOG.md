@@ -6,6 +6,23 @@ embedders. The ABI version is still 0: additions keep it (see
 guests can probe for newer imports with `gasm.has`. Versions are the git tags and
 the package versions (`gasm-sdk`, `gasm-host`, `@emdzej/gasm-host`).
 
+## Unreleased
+
+Runners:
+- `gasm-run --profile <out.json>` (NiP #22): the game's main thread sampled every
+  millisecond with wasmtime's `GuestProfiler`, written in the Firefox Profiler's
+  format when the game ends, with the share of the run spent inside calls to the
+  runner. Time in those calls counts for the guest function that made them.
+
+Godot:
+- `make godot-mt-names`: `godot-mt.wasm` with its function names (SCons option
+  `gasm_names=yes`: the link without `-s`, `wasm-opt -g`), for profiles.
+- Measured for NiP #22 (headless, NiP's Głowno, 8 workers): an engine built for
+  speed (`optimize=speed`, `wasm-opt -O3`) is 3.7 % faster than `-Oz` (96.8 against
+  93.4 frames/s) at 1.7 times the size, and SIMD (`-msimd128`) adds nothing; the
+  release engines stay as they are. A third of that run's main thread is gasm-run's
+  GL layer (the model alone, no ANGLE).
+
 ## 0.15.0 (2026-10-10)
 
 Godot:

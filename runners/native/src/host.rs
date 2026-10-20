@@ -283,6 +283,8 @@ pub struct Host {
     pub requires: Vec<String>,
     /// wasi-threads: spawning and the shared memory (None: a module without threads)
     threads: Option<std::sync::Arc<crate::threads::Threads>>,
+    /// `--profile`: the main thread's guest stacks, sampled every millisecond
+    pub profile: Option<Profile>,
     pub storage: Storage,
     /// false during catch-up frames: gfx begin_frame returns 0
     pub show_frame: bool,
@@ -358,6 +360,7 @@ impl Host {
             files: Default::default(),
             requires: Vec::new(),
             threads: None,
+            profile: None,
             memory_limit: MemoryLimit(Some(DEFAULT_MEMORY_LIMIT)),
             catch_up: false,
             frame_index: 0,
@@ -1271,6 +1274,67 @@ fn new_engine() -> Engine {
     engine
 }
 
+/// `--profile <out.json>`: wasmtime's `GuestProfiler` sampling the main thread's guest
+/// stacks every millisecond (an extra epoch ticker; call timeouts are off meanwhile),
+/// written in the Firefox Profiler's format when the game ends. Only guest frames are
+/// recorded, and wasmtime checks the epoch only in guest code: the milliseconds a call
+/// into the runner (gasm:gl, ANGLE, ...) took are samples of the guest stack it returns
+/// to, so they count for the function that called it. The time inside those calls is
+/// measured too (the call hook) and printed with the file.
+pub struct Profile {
+    out: std::path::PathBuf,
+    profiler: Option<wasmtime::GuestProfiler>,
+    /// host calls in progress (the call hook)
+    host_depth: u32,
+    host_since: Option<Instant>,
+    host_time: Duration,
+    start: Instant,
+    last: Option<Instant>,
+    samples: u64,
+}
+
+impl Profile {
+    pub fn new(out: std::path::PathBuf) -> Profile {
+        Profile { out, profiler: None, host_depth: 0, host_since: None, host_time: Duration::ZERO, start: Instant::now(), last: None, samples: 0 }
+    }
+}
+
+impl Drop for Profile {
+    fn drop(&mut self) {
+        let Some(p) = self.profiler.take() else { return };
+        let written = std::fs::File::create(&self.out).map_err(wasmtime::Error::from).and_then(|f| p.finish(std::io::BufWriter::new(f)));
+        match written {
+            Ok(()) => eprintln!(
+                "[gasm] profile: {} samples in {:.1} s, {:.1} % of it inside calls to the runner -> {} (open it at https://profiler.firefox.com)",
+                self.samples,
+                self.start.elapsed().as_secs_f64(),
+                self.host_time.as_secs_f64() * 100.0 / self.start.elapsed().as_secs_f64().max(1e-9),
+                self.out.display()
+            ),
+            Err(e) => eprintln!("[gasm] profile: can't write {}: {e}", self.out.display()),
+        }
+    }
+}
+
+const PROFILE_INTERVAL: Duration = Duration::from_millis(1);
+
+/// The profiler's clock: the engine's epoch every millisecond (on top of the usual ticker).
+fn start_profile_ticker() {
+    static STARTED: OnceLock<()> = OnceLock::new();
+    STARTED.get_or_init(|| {
+        let ticker = engine().clone();
+        std::thread::Builder::new()
+            .name("gasm-profile".into())
+            .spawn(move || {
+                loop {
+                    std::thread::sleep(PROFILE_INTERVAL);
+                    ticker.increment_epoch();
+                }
+            })
+            .expect("profile thread");
+    });
+}
+
 /// Ahead-of-time compile a guest to native code for this host (no JIT needed at load).
 pub fn precompile(wasm: &[u8]) -> wasmtime::Result<Vec<u8>> {
     engine().precompile_module(wasm)
@@ -1400,8 +1464,57 @@ impl Game {
             t.set_linker(linker.clone());
         }
 
-        let deadline = opts.call_timeout.map_or(u64::MAX / 2, |t| (t.as_millis() as u64 * TICKS_PER_SEC).div_ceil(1000).max(1));
+        let profiling = store.data().profile.is_some();
+        let deadline = if profiling {
+            1 // (a sample at every tick: the callback below continues, so no call times out)
+        } else {
+            opts.call_timeout.map_or(u64::MAX / 2, |t| (t.as_millis() as u64 * TICKS_PER_SEC).div_ceil(1000).max(1))
+        };
         store.epoch_deadline_trap();
+        if profiling {
+            let p = wasmtime::GuestProfiler::new(engine, "game", PROFILE_INTERVAL, [("game".to_string(), module.clone())])?;
+            store.data_mut().profile.as_mut().expect("profile").profiler = Some(p);
+            store.epoch_deadline_callback(|mut ctx| {
+                let now = Instant::now();
+                let (prof, last) = match ctx.data_mut().profile.as_mut() {
+                    Some(pr) => (pr.profiler.take(), pr.last.replace(now)),
+                    None => (None, None),
+                };
+                if let Some(mut prof) = prof {
+                    // one sample a millisecond since the last one (ticks missed inside a call
+                    // to the runner come here, when it returns), at most a second's worth
+                    let n = last.map_or(1, |l| ((now - l).as_micros() / 1000).clamp(1, 1000) as u64);
+                    for _ in 0..n {
+                        prof.sample(&ctx, PROFILE_INTERVAL);
+                    }
+                    let pr = ctx.data_mut().profile.as_mut().expect("profile");
+                    pr.profiler = Some(prof);
+                    pr.samples += n;
+                }
+                Ok(wasmtime::UpdateDeadline::Continue(1))
+            });
+            store.call_hook(|mut ctx, kind| {
+                if let Some(pr) = ctx.data_mut().profile.as_mut() {
+                    match kind {
+                        wasmtime::CallHook::CallingHost => {
+                            pr.host_depth += 1;
+                            if pr.host_depth == 1 {
+                                pr.host_since = Some(Instant::now());
+                            }
+                        }
+                        wasmtime::CallHook::ReturningFromHost if pr.host_depth > 0 => {
+                            pr.host_depth -= 1;
+                            if pr.host_depth == 0 {
+                                pr.host_time += pr.host_since.take().map_or(Duration::ZERO, |t| t.elapsed());
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                Ok(())
+            });
+            start_profile_ticker();
+        }
         store.set_epoch_deadline(deadline);
         let exchange = switching.then(|| Exchange::new(deadline));
         store.data_mut().run = exchange.clone();

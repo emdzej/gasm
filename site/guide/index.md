@@ -296,6 +296,8 @@ gasm-run <game.wasm|game.cwasm> [options]
 --gl-lib <dir>           where ANGLE is, for OpenGL ES (gasm:gl) games (default: next to gasm-run)
 --gl-software            gasm:gl on SwiftShader (software) instead of the GPU
 --gl-stats               print the game's OpenGL ES calls a frame, by name, when it ends
+--profile <out.json>     sample the game every millisecond and write a profile when it ends
+                         (open it at profiler.firefox.com)
 --window-screenshot <frames>:<out.png>
                          write that frame as the window shows it, then quit (gasm:gl games)
 --headless <N>           run N frames with no window or audio; print hashes

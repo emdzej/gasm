@@ -17,7 +17,13 @@ def can_build():
 
 
 def get_opts():
-    return []
+    from SCons.Variables import BoolVariable
+
+    return [
+        # function names in the engine (the wasm name section), for profilers: a build
+        # without debug symbols links with -s, which drops them (link_names.py)
+        BoolVariable("gasm_names", "Keep function names in the engine (for profiling)", False),
+    ]
 
 
 def get_doc_classes():
@@ -79,6 +85,8 @@ def configure(env):
     env["AR"] = os.path.join(sdk, "bin", "llvm-ar")
     env["RANLIB"] = os.path.join(sdk, "bin", "llvm-ranlib")
     env["LINK"] = env["CXX"]
+    if env["gasm_names"]:
+        env["LINK"] = '"%s" "%s" "%s"' % (sys.executable, env.File("#platform/gasm/link_names.py").abspath, env["CXX"])
     env["OBJPREFIX"] = ""
     env["OBJSUFFIX"] = ".o"
     env["PROGPREFIX"] = ""

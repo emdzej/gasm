@@ -81,6 +81,9 @@ options:
                            to gasm-run, ../Frameworks in a .app, or $GASM_ANGLE_DIR)
   --gl-software            gasm:gl on SwiftShader (software Vulkan) instead of the GPU
   --gl-stats               count gasm:gl calls and print them (a frame, by name) when the game ends
+  --profile <out.json>     sample the game's main thread every millisecond and write the profile
+                           when it ends (open it at profiler.firefox.com; function names need an
+                           engine built with them; --call-timeout is off meanwhile)
   --window-screenshot <frames>:<out.png>
                            (window) write that frame as shown, then quit (gasm:gl games; tests)
   --headless <frames>      run N frames without window/audio, print hashes
@@ -150,6 +153,7 @@ struct Args {
     gl_lib: Option<String>,
     gl_software: bool,
     gl_stats: bool,
+    profile: Option<String>,
     window_screenshot: Option<(u64, String)>,
 }
 
@@ -199,6 +203,7 @@ fn parse_args() -> Result<Args, String> {
         gl_lib: None,
         gl_software: false,
         gl_stats: false,
+        profile: None,
         window_screenshot: None,
     };
     while let Some(a) = it.next() {
@@ -293,6 +298,7 @@ fn parse_args() -> Result<Args, String> {
             "--gl-lib" => args.gl_lib = Some(val("--gl-lib")?),
             "--gl-software" => args.gl_software = true,
             "--gl-stats" => args.gl_stats = true,
+            "--profile" => args.profile = Some(val("--profile")?),
             "--call-timeout" => {
                 let secs: f64 = val("--call-timeout")?.parse().map_err(|_| "--call-timeout expects seconds")?;
                 if !(secs >= 0.0 && secs.is_finite()) {
@@ -582,6 +588,7 @@ fn run(args: Args) -> Result<i32, String> {
         gl_lib: args.gl_lib.as_ref().map(std::path::PathBuf::from),
         gl_software: args.gl_software,
         gl_stats: args.gl_stats,
+        profile: args.profile.as_ref().map(std::path::PathBuf::from),
         watch_assets,
     };
     match args.headless {

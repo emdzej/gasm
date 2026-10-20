@@ -61,7 +61,7 @@ GUESTS   := $(BUILD)/test-pattern.wasm $(BUILD)/mttest.wasm $(BUILD)/gltest.wasm
 # made by the same recipes as the Asyncify builds
 RUN_BUILDS := $(BUILD)/loopdemo-run.wasm $(BUILD)/loopdemo-c-run.wasm $(BUILD)/sdl3-classic-run.wasm $(BUILD)/scummvm-run.wasm
 
-.PHONY: all guests native test web relay roms parity clean rust-toolchain doom scummvm sdl3 godot godot-2d godot-mt godot-custom FORCE
+.PHONY: all guests native test web relay roms parity clean rust-toolchain doom scummvm sdl3 godot godot-2d godot-mt godot-mt-names godot-custom FORCE
 all: guests native
 
 guests: $(GUESTS)
@@ -199,6 +199,17 @@ $(BUILD)/godot-mt.wasm: $(BUILD)/godot.wasm scripts/sync-godot-variant.sh $(call
 	cd tools/godot-src-mt && GASM_ROOT=$(CURDIR) WASI_SDK=$(WASI_SDK) PYTHONPATH=$(CURDIR)/tools/scons \
 	  python3 -c "import SCons.Script.Main as m; m.main()" platform=gasm target=template_release lto=full $(GODOT_MT_FLAGS) -j$(GODOT_JOBS)
 	$(WASM_OPT) tools/godot-src-mt/bin/godot.gasm.template_release.wasm32.wasm -Oz $(GODOT_FEATURES) --enable-threads -o $@
+
+# godot-mt.wasm with its function names (the wasm name section), for gasm-run --profile:
+# the same code, 7 MB more (tree tools/godot-src-mt-names; not part of `make godot`)
+GODOT_MT_NAMES_FLAGS := $(GODOT_MT_FLAGS) gasm_names=yes
+$(eval $(call flag_rule,godot-mt-names,$(GODOT_MT_NAMES_FLAGS)))
+godot-mt-names: $(BUILD)/godot-mt-names.wasm
+$(BUILD)/godot-mt-names.wasm: $(BUILD)/godot.wasm scripts/sync-godot-variant.sh $(call flags,godot-mt-names)
+	scripts/sync-godot-variant.sh tools/godot-src-mt-names
+	cd tools/godot-src-mt-names && GASM_ROOT=$(CURDIR) WASI_SDK=$(WASI_SDK) PYTHONPATH=$(CURDIR)/tools/scons \
+	  python3 -c "import SCons.Script.Main as m; m.main()" platform=gasm target=template_release lto=full $(GODOT_MT_NAMES_FLAGS) -j$(GODOT_JOBS)
+	$(WASM_OPT) tools/godot-src-mt-names/bin/godot.gasm.template_release.wasm32.wasm -Oz -g $(GODOT_FEATURES) --enable-threads -o $@
 
 # A game's own engine from a Godot build profile (the editor's Project > Tools >
 # Engine Compilation Configuration Editor: "Detect from Project", then save a .gdbuild):

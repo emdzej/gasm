@@ -36,7 +36,7 @@ default = ["window"]
 window = ["dep:winit", "dep:cpal", "dep:gilrs", "dep:arboard", "dep:font8x8"]
 
 [dependencies]
-wasmtime = "49"
+wasmtime = { version = "49", features = ["call-hook"] } # (call-hook: --profile)
 getrandom = "0.3"
 winit = { version = "0.30", optional = true }
 wgpu = "30"

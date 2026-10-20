@@ -397,6 +397,24 @@ shows as one long delta and a lower frame rate. Godot's `TIME_PROCESS` monitor
 is the slowest frame of the last second (updated once a second, drawing
 included), not the current frame's time.
 
+To see where the time goes, `gasm-run --profile out.json` samples the game's main
+thread every millisecond and writes a profile you open at
+[profiler.firefox.com](https://profiler.firefox.com) (call tree, flame graph). The
+release engines have no function names; build one that keeps them:
+
+```sh
+make godot-mt-names     # build/godot-mt-names.wasm: godot-mt.wasm's code, plus names
+gasm-run build/godot-mt-names.wasm --asset game.pck=game.pck --window 1280x720 \
+  --profile out.json --param "args=-- --your-bench-args"
+```
+
+Time spent in calls to the runner (OpenGL ES, audio, ...) counts for the engine
+function that made the call, and the runner prints its share of the run when it
+writes the file. Headless runs (`--headless N`, add `--threads 8` for the worker
+pool) profile the engine without ANGLE and are steadier to compare; GDScript shows
+up as `GDScriptFunction::call` and the operators it evaluates. Profiling slows the
+game by about a third, and `--call-timeout` is off meanwhile.
+
 ## Limits
 
 | | |
