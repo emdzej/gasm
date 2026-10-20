@@ -458,6 +458,48 @@ start of the next frame, on every runner, so runs are reproducible. Records are
 `<key>.json` (status, headers) and `<key>.body`, keyed by FNV-1a 64 of method,
 URL and request body (16 hex digits).
 
+## `gasm:media` (optional): audio streams
+
+The runner fetches, decodes and plays an audio stream for the guest (internet radio,
+an on-demand track), mixed after the guest's own `audio_push` samples. The guest
+controls it and reads its state and metadata, polled once per frame; it never gets
+the samples, and stream audio is never hashed. Design:
+[design/media.md](https://github.com/emdzej/gasm/blob/main/design/media.md).
+Natively `gasm-run` decodes MP3, AAC-LC (ADTS), Ogg Vorbis and FLAC (not HE-AAC);
+the JS host doesn't play streams yet (its `open` refuses, saying so).
+
+| Import | Signature | Semantics |
+|---|---|---|
+| `open` | `(desc_ptr, desc_len) -> i32` | A stream described by JSON `{"url":"https://…"}` (https only, at most 2048 bytes), not playing yet. Handle > 0, or `-1` if refused: no permission (below), not https, 4 streams already open, an invalid description; `error(-1, …)` says why. |
+| `play` / `pause` | `(h)` | Start or resume (the first `play` connects) / stop playing, keeping the place. A live stream paused for over 10 s lets go of its connection and reconnects on `play`. |
+| `close` | `(h)` | Stop and free the handle; closing again does nothing. |
+| `set_volume` | `(h, gain: f32)` | 0 to 1 (clamped; NaN is 0), ramped over about 20 ms. |
+| `set_lowpass` | `(h, hz: f32)` | A second-order low-pass at `hz` (20 to 20000, clamped), `0` = off. |
+| `caps` | `(h) -> u32` | `GASM_MEDIA_CAN_VOLUME` (1), `_CAN_LOWPASS` (2), `_CAN_METADATA` (4): what the controls above and `metadata` can do for this stream (natively all three); final once it plays. |
+| `state` | `(h) -> u32` | `GASM_MEDIA_CONNECTING` (0: also while the player is asked, and while a dropped live stream reconnects), `_PLAYING` (1), `_PAUSED` (2), `_FAILED` (3: `error` says why), `_ENDED` (4: a track played to its end). A closed handle reports `3`. |
+| `error` | `(h, dst, cap) -> i32` | Why the stream failed, or for `h = -1` why the last `open` was refused, as text. Length (copied only if ≤ `cap`), `0` if none. |
+| `position` / `duration` | `(h) -> f64` | Seconds played (live streams: since `play`) / a track's length, `-1` for live streams and while unknown. |
+| `metadata` | `(h, dst, cap) -> i32` | JSON `{"name","title","codec","bitrate"}`, `null` where unknown: the station's name (`icy-name`), the current title (ICY's in-band `StreamTitle`), the codec (`mp3`, `aac`, `vorbis`, `flac`), kbit/s (`icy-br`). Length (copied only if ≤ `cap`). |
+| `metadata_version` | `(h) -> u32` | Changes whenever `metadata` does (a new title): poll it each frame, read `metadata` only then. |
+
+**Permission.** A stream is a request from the player's machine, and its URL can
+carry data out, so it is the player's choice, once per game: the capabilities
+manifest declares `"media": true` and the runner asks before the game starts (the
+answer remembered as for hosts); without the manifest entry, `open` refuses.
+`gasm-run --allow-media` is the command line's yes (any public host), or
+`--allow-media=a,b` for a list. Headless runs never ask: they refuse unless the flag
+is given. Private and loopback addresses (the player's LAN, `localhost`) are reached
+only when listed (`--allow-media=127.0.0.1`), checked again at every redirect. It
+doesn't widen `--allow-net`.
+
+**Behaviour.** About 2 s are buffered; `PLAYING` once 0.25 s are in. A live stream
+(no length, or ICY headers) that drops or stalls (15 s without data) reconnects, up
+to 3 tries (1, 2, 4 s apart; a connection that lasted 10 s starts the count anew),
+then fails. Not-found, not-audio and refused URLs fail at once; 5xx and network
+errors are retried. Headless runs play to nowhere in real time, so states, position
+and metadata behave as in a window, but connecting takes real time: a guest that
+draws them isn't reproducible, by design.
+
 ## `gasm:storage` (optional): persistent key/value store
 
 For saves, settings and high scores. Each game gets its own **namespace, chosen
@@ -700,6 +742,7 @@ module, so theirs come that way):
 | `requires` | Modules (`gasm:gl`) or functions (`gasm:fetch.request`) the game can't run without: a runner that lacks one refuses the game before it starts, saying which (`gasm.has` names). |
 | `hosts` | Hosts it will reach (`*.` for subdomains). The window runner and the player ask about all of them in one question before the game starts; hosts it didn't declare are still asked about when it reaches them. Headless runs allow only what `--allow-net` does. |
 | `files` | It saves files for the player (`gasm:files`): natively asked before the game starts. |
+| `media` | It plays audio streams from any site (`gasm:media`): asked before the game starts; without it `open` refuses (unless `--allow-media`). |
 
 Unknown fields are ignored; a manifest that's present but invalid refuses the
 game with the reason. `gasm-run --info game.wasm` prints the manifest, the

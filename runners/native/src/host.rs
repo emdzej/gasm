@@ -275,6 +275,8 @@ pub struct Host {
     pub net: Net,
     /// gasm:fetch (denied until the runner sets a policy: `Fetch::new`)
     pub fetch: crate::fetch::Fetch,
+    /// gasm:media: the game's audio streams
+    pub media: crate::media::Media,
     /// gasm:clipboard: what the game may read this frame and what it copied
     pub clipboard: Clipboard,
     /// gasm:files: saves queued for the player (written between frames)
@@ -362,6 +364,7 @@ impl Host {
             gfx,
             gl: Default::default(),
             fetch: Default::default(),
+            media: Default::default(),
             clipboard: Default::default(),
             files: Default::default(),
             requires: Vec::new(),
@@ -1114,6 +1117,43 @@ fn add_fetch_imports(linker: &mut Linker<Host>) -> wasmtime::Result<()> {
     Ok(())
 }
 
+fn add_media_imports(linker: &mut Linker<Host>) -> wasmtime::Result<()> {
+    const M: &str = "gasm:media";
+    linker.func_wrap(M, "open", |mut c: Caller<'_, Host>, dp: u32, dl: u32| -> wasmtime::Result<i32> {
+        let desc = guest_str(&c, dp, dl)?;
+        Ok(c.data_mut().media.open(&desc))
+    })?;
+    linker.func_wrap(M, "play", |mut c: Caller<'_, Host>, h: i32| -> wasmtime::Result<()> { c.data_mut().media.play(h).map_err(trap) })?;
+    linker.func_wrap(M, "pause", |mut c: Caller<'_, Host>, h: i32| -> wasmtime::Result<()> { c.data_mut().media.pause(h).map_err(trap) })?;
+    linker.func_wrap(M, "close", |mut c: Caller<'_, Host>, h: i32| -> wasmtime::Result<()> { c.data_mut().media.close(h).map_err(trap) })?;
+    linker.func_wrap(M, "set_volume", |mut c: Caller<'_, Host>, h: i32, gain: f32| -> wasmtime::Result<()> {
+        c.data_mut().media.set_volume(h, gain).map_err(trap)
+    })?;
+    linker.func_wrap(M, "set_lowpass", |mut c: Caller<'_, Host>, h: i32, hz: f32| -> wasmtime::Result<()> {
+        c.data_mut().media.set_lowpass(h, hz).map_err(trap)
+    })?;
+    linker.func_wrap(M, "caps", |mut c: Caller<'_, Host>, h: i32| -> wasmtime::Result<u32> { c.data_mut().media.caps(h).map_err(trap) })?;
+    linker.func_wrap(M, "state", |mut c: Caller<'_, Host>, h: i32| -> wasmtime::Result<u32> { c.data_mut().media.state(h).map_err(trap) })?;
+    linker.func_wrap(M, "error", |mut c: Caller<'_, Host>, h: i32, dst: u32, cap: u32| -> wasmtime::Result<i32> {
+        let mem = memory(&c)?;
+        let (data, host) = mem.data_and_store_mut(&mut c);
+        let text = host.media.error(h).map_err(trap)?;
+        copy_if_fits(data, dst, cap, text.as_bytes())
+    })?;
+    linker.func_wrap(M, "position", |mut c: Caller<'_, Host>, h: i32| -> wasmtime::Result<f64> { c.data_mut().media.position(h).map_err(trap) })?;
+    linker.func_wrap(M, "duration", |mut c: Caller<'_, Host>, h: i32| -> wasmtime::Result<f64> { c.data_mut().media.duration(h).map_err(trap) })?;
+    linker.func_wrap(M, "metadata", |mut c: Caller<'_, Host>, h: i32, dst: u32, cap: u32| -> wasmtime::Result<i32> {
+        let mem = memory(&c)?;
+        let (data, host) = mem.data_and_store_mut(&mut c);
+        let json = host.media.metadata(h).map_err(trap)?;
+        copy_if_fits(data, dst, cap, json.as_bytes())
+    })?;
+    linker.func_wrap(M, "metadata_version", |mut c: Caller<'_, Host>, h: i32| -> wasmtime::Result<u32> {
+        c.data_mut().media.metadata_version(h).map_err(trap)
+    })?;
+    Ok(())
+}
+
 /// Every gasm import this runner has.
 fn add_all_imports(linker: &mut Linker<Host>, switching: bool) -> wasmtime::Result<()> {
     add_gasm_imports(linker)?;
@@ -1126,6 +1166,7 @@ fn add_all_imports(linker: &mut Linker<Host>, switching: bool) -> wasmtime::Resu
     crate::gl::add_gl_imports(linker)?;
     add_net_imports(linker)?;
     add_fetch_imports(linker)?;
+    add_media_imports(linker)?;
     add_storage_imports(linker)?;
     add_clipboard_imports(linker)?;
     add_files_imports(linker)?;

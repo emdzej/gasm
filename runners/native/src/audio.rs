@@ -10,6 +10,10 @@ pub trait AudioOut: Send {
     fn configure(&mut self, rate: u32, channels: u32);
     /// Interleaved little-endian f32 samples in the configured format.
     fn push_le_f32(&mut self, bytes: &[u8]);
+    /// The bus gasm:media streams play into (added after these samples), if this output has one.
+    fn media_bus(&self) -> Option<std::sync::Arc<crate::media::MediaBus>> {
+        None
+    }
 }
 
 /// Linear resampler to interleaved stereo (same algorithm as gasm-host.js `Resampler`).
@@ -64,6 +68,7 @@ mod sink {
     use cpal::{FromSample, SizedSample};
 
     use super::{AudioOut, Resampler};
+    use crate::media::MediaBus;
 
     /// Buffer this much audio before playback starts / after an underrun...
     const TARGET_LATENCY_S: f32 = 0.06;
@@ -141,6 +146,8 @@ mod sink {
 
     pub struct AudioSink {
         ring: Arc<Ring>,
+        /// gasm:media's streams, added after the game's samples
+        bus: Arc<MediaBus>,
         device_rate: u32,
         resampler: Resampler,
         scratch: Vec<f32>,
@@ -158,6 +165,7 @@ mod sink {
     pub struct AudioStream {
         stream: cpal::Stream,
         ring: Arc<Ring>,
+        bus: Arc<MediaBus>,
         device_name: Option<String>,
         device_rate: u32,
         broken: Arc<AtomicBool>,
@@ -169,9 +177,12 @@ mod sink {
         config: &cpal::StreamConfig,
         ring: Arc<Ring>,
         broken: Arc<AtomicBool>,
+        bus: Arc<MediaBus>,
     ) -> Result<cpal::Stream, cpal::Error> {
         let channels = config.channels as usize;
         let mut primed = false;
+        // the block in stereo f32: the game's samples, then gasm:media's streams on top
+        let mut mix: Vec<f32> = Vec::new();
         device.build_output_stream::<T, _, _>(
             *config,
             move |out: &mut [T], _| {
@@ -182,7 +193,10 @@ mod sink {
                 if !primed && ring.len() >= target {
                     primed = true;
                 }
-                for frame in out.chunks_mut(channels) {
+                let frames = out.len() / channels.max(1);
+                mix.clear();
+                mix.resize(frames * 2, 0.0);
+                for f in 0..frames {
                     let (l, r) = match ring.pop().filter(|_| primed) {
                         Some(s) => s,
                         None => {
@@ -193,6 +207,11 @@ mod sink {
                             (0.0, 0.0)
                         }
                     };
+                    (mix[f * 2], mix[f * 2 + 1]) = (l, r);
+                }
+                bus.mix(&mut mix);
+                for (f, frame) in out.chunks_mut(channels).enumerate() {
+                    let (l, r) = (mix[f * 2].clamp(-1.0, 1.0), mix[f * 2 + 1].clamp(-1.0, 1.0));
                     match frame.len() {
                         1 => frame[0] = T::from_sample(0.5 * (l + r)),
                         _ => {
@@ -215,7 +234,7 @@ mod sink {
     }
 
     /// The default output device's stream on `ring`, and the device's name and rate.
-    fn open_stream(ring: &Arc<Ring>, broken: &Arc<AtomicBool>) -> Result<(cpal::Stream, Option<String>, u32), String> {
+    fn open_stream(ring: &Arc<Ring>, broken: &Arc<AtomicBool>, bus: &Arc<MediaBus>) -> Result<(cpal::Stream, Option<String>, u32), String> {
         let host = cpal::default_host();
         let device = host.default_output_device().ok_or("no audio output device")?;
         // the device's id tells a change of device; its name goes to the log
@@ -226,17 +245,17 @@ mod sink {
         let supported = device.default_output_config().map_err(|e| e.to_string())?;
         let format = supported.sample_format();
         let config = supported.config();
-        let (r, b) = (ring.clone(), broken.clone());
+        let (r, b, m) = (ring.clone(), broken.clone(), bus.clone());
         use cpal::SampleFormat as F;
         let stream = match format {
-            F::F32 => build::<f32>(&device, &config, r, b),
-            F::F64 => build::<f64>(&device, &config, r, b),
-            F::I16 => build::<i16>(&device, &config, r, b),
-            F::U16 => build::<u16>(&device, &config, r, b),
-            F::I32 => build::<i32>(&device, &config, r, b),
-            F::U32 => build::<u32>(&device, &config, r, b),
-            F::I8 => build::<i8>(&device, &config, r, b),
-            F::U8 => build::<u8>(&device, &config, r, b),
+            F::F32 => build::<f32>(&device, &config, r, b, m),
+            F::F64 => build::<f64>(&device, &config, r, b, m),
+            F::I16 => build::<i16>(&device, &config, r, b, m),
+            F::U16 => build::<u16>(&device, &config, r, b, m),
+            F::I32 => build::<i32>(&device, &config, r, b, m),
+            F::U32 => build::<u32>(&device, &config, r, b, m),
+            F::I8 => build::<i8>(&device, &config, r, b, m),
+            F::U8 => build::<u8>(&device, &config, r, b, m),
             other => return Err(format!("unsupported device sample format {other:?}")),
         }
         .map_err(|e| e.to_string())?;
@@ -259,7 +278,7 @@ mod sink {
                 return;
             }
             self.broken.store(false, Ordering::Release);
-            match open_stream(&self.ring, &self.broken) {
+            match open_stream(&self.ring, &self.broken, &self.bus) {
                 Ok((stream, name, rate)) if rate == self.device_rate => (self.stream, self.device_name) = (stream, name),
                 Ok((_, name, rate)) => {
                     eprintln!("[audio] the new output runs at {rate} Hz, not {} Hz: staying on the old one", self.device_rate);
@@ -284,12 +303,13 @@ mod sink {
             let ring = Arc::new(Ring::new(max * 2));
             ring.target.store((per_second as f32 * TARGET_LATENCY_S) as usize & !1, Ordering::Relaxed);
             let broken = Arc::new(AtomicBool::new(false));
-            let (stream, device_name, device_rate) = open_stream(&ring, &broken)?;
+            let bus = MediaBus::new(device_rate);
+            let (stream, device_name, device_rate) = open_stream(&ring, &broken, &bus)?;
             let sink = AudioSink {
-                ring: ring.clone(), device_rate, resampler: Resampler::new(device_rate), scratch: Vec::new(),
+                ring: ring.clone(), bus: bus.clone(), device_rate, resampler: Resampler::new(device_rate), scratch: Vec::new(),
                 per_second, underruns_seen: 0, last_underrun: None,
             };
-            Ok((sink, AudioStream { stream, ring, device_name, device_rate, broken, last_check: Instant::now() }))
+            Ok((sink, AudioStream { stream, ring, bus, device_name, device_rate, broken, last_check: Instant::now() }))
         }
 
         pub fn device_rate(&self) -> u32 {
@@ -300,6 +320,10 @@ mod sink {
     impl AudioOut for AudioSink {
         fn configure(&mut self, rate: u32, channels: u32) {
             self.resampler.configure(rate, channels);
+        }
+
+        fn media_bus(&self) -> Option<Arc<MediaBus>> {
+            Some(self.bus.clone())
         }
 
         fn push_le_f32(&mut self, bytes: &[u8]) {

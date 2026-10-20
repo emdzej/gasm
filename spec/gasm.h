@@ -31,6 +31,7 @@
 #define GASM_GL_IMPORT(name) __attribute__((import_module("gasm:gl"), import_name(name)))
 #define GASM_NET_IMPORT(name) __attribute__((import_module("gasm:net"), import_name(name)))
 #define GASM_FETCH_IMPORT(name) __attribute__((import_module("gasm:fetch"), import_name(name)))
+#define GASM_MEDIA_IMPORT(name) __attribute__((import_module("gasm:media"), import_name(name)))
 #define GASM_STORAGE_IMPORT(name) __attribute__((import_module("gasm:storage"), import_name(name)))
 #define GASM_CLIPBOARD_IMPORT(name) __attribute__((import_module("gasm:clipboard"), import_name(name)))
 #define GASM_FILES_IMPORT(name) __attribute__((import_module("gasm:files"), import_name(name)))
@@ -41,6 +42,7 @@
 #define GASM_GL_IMPORT(name)
 #define GASM_NET_IMPORT(name)
 #define GASM_FETCH_IMPORT(name)
+#define GASM_MEDIA_IMPORT(name)
 #define GASM_STORAGE_IMPORT(name)
 #define GASM_CLIPBOARD_IMPORT(name)
 #define GASM_FILES_IMPORT(name)
@@ -105,6 +107,22 @@ enum {
     GASM_FETCH_HEADERS = 1,
     GASM_FETCH_DONE = 2,
     GASM_FETCH_FAILED = 3,
+};
+
+/* ---- media states ------------------------------------------------------------ */
+enum {
+    GASM_MEDIA_CONNECTING = 0,
+    GASM_MEDIA_PLAYING = 1,
+    GASM_MEDIA_PAUSED = 2,
+    GASM_MEDIA_FAILED = 3,
+    GASM_MEDIA_ENDED = 4,
+};
+
+/* ---- media caps -------------------------------------------------------------- */
+enum {
+    GASM_MEDIA_CAN_VOLUME = 1u << 0,
+    GASM_MEDIA_CAN_LOWPASS = 1u << 1,
+    GASM_MEDIA_CAN_METADATA = 1u << 2,
 };
 
 /* ---- input modes ------------------------------------------------------------- */
@@ -856,6 +874,55 @@ GASM_FETCH_IMPORT("headers") int32_t gasm_fetch_headers(int32_t req, char *dst, 
 GASM_FETCH_IMPORT("read") int32_t gasm_fetch_read(int32_t req, void *dst, uint32_t cap);
 /* Cancel if still running and free the handle; closing again does nothing. */
 GASM_FETCH_IMPORT("close") void gasm_fetch_close(int32_t req);
+
+/* ---- gasm:media (optional) -------------------------------------------------------- */
+/* Audio streams (internet radio, tracks) fetched, decoded and played by the
+ * runner, mixed after the guest's audio and never hashed. Needs the player's
+ * yes: the manifest's "media": true and the runner's question, or
+ * --allow-media natively; private and loopback addresses only when listed.
+ * Poll state and metadata each frame. A handle open never returned traps. */
+
+/* A stream described by JSON {"url":"https://..."}, not playing yet. Handle >
+ * 0, or -1 if refused (no media permission, a private or loopback address that
+ * is not listed, not https, 4 streams already open, an invalid description):
+ * error(-1, ...) says why. */
+GASM_MEDIA_IMPORT("open") int32_t gasm_media_open(const char *desc, uint32_t desc_len);
+/* Start or resume (connects on the first play). A live stream paused for long
+ * reconnects. */
+GASM_MEDIA_IMPORT("play") void gasm_media_play(int32_t h);
+/* Stop playing; the stream keeps its place (a live one may drop its connection
+ * meanwhile). */
+GASM_MEDIA_IMPORT("pause") void gasm_media_pause(int32_t h);
+/* Stop and free the handle; closing again does nothing. */
+GASM_MEDIA_IMPORT("close") void gasm_media_close(int32_t h);
+/* Volume 0 to 1 (outside that clamped, NaN is 0), applied smoothly. Where caps
+ * lacks GASM_MEDIA_CAN_VOLUME (iOS Safari) it is ignored. */
+GASM_MEDIA_IMPORT("set_volume") void gasm_media_set_volume(int32_t h, float gain);
+/* A low-pass filter at hz (20 to 20000, clamped), 0 = off. Ignored where caps
+ * lacks GASM_MEDIA_CAN_LOWPASS. */
+GASM_MEDIA_IMPORT("set_lowpass") void gasm_media_set_lowpass(int32_t h, float hz);
+/* GASM_MEDIA_CAN_* flags: what set_volume, set_lowpass and metadata can do for
+ * this stream. Final once the state is GASM_MEDIA_PLAYING (browsers: lowpass
+ * and metadata only where the stream sends CORS). */
+GASM_MEDIA_IMPORT("caps") uint32_t gasm_media_caps(int32_t h);
+/* GASM_MEDIA_CONNECTING (also while the player is asked) / PLAYING / PAUSED /
+ * FAILED (error says why) / ENDED (a track played to its end). A closed handle
+ * is FAILED. */
+GASM_MEDIA_IMPORT("state") uint32_t gasm_media_state(int32_t h);
+/* Why the stream failed (or, for h = -1, why the last open was refused), as
+ * text. Length (copied only if <= cap; cap = 0 queries), 0 if none. */
+GASM_MEDIA_IMPORT("error") int32_t gasm_media_error(int32_t h, char *dst, uint32_t cap);
+/* Seconds played so far (live streams: since play). */
+GASM_MEDIA_IMPORT("position") double gasm_media_position(int32_t h);
+/* A track's length in seconds, -1 for live streams and while unknown. */
+GASM_MEDIA_IMPORT("duration") double gasm_media_duration(int32_t h);
+/* JSON {"name","title","codec","bitrate"} (null where unknown; name and title
+ * from ICY: icy-name and StreamTitle). Length (copied only if <= cap; cap = 0
+ * queries). */
+GASM_MEDIA_IMPORT("metadata") int32_t gasm_media_metadata(int32_t h, char *dst, uint32_t cap);
+/* Changes whenever metadata does (a new title): poll it each frame and read
+ * metadata only then. */
+GASM_MEDIA_IMPORT("metadata_version") uint32_t gasm_media_metadata_version(int32_t h);
 
 /* ---- gasm:storage (optional) ------------------------------------------------------ */
 /* Persistent per-game key/value store; the runner chooses the namespace. Keys:

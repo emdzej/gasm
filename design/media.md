@@ -1,6 +1,7 @@
 # gasm:media: audio streams played by the runner
 
-Status: **proposal** (agreed with NIP, 2026-10-20; not started).
+Status: **phase 1 implemented** (native: `gasm-run`, the Rust SDK; see the CHANGELOG);
+phases 2 (browsers) and 3 (Godot) to come.
 
 ## Summary
 
@@ -36,7 +37,7 @@ creation order and never reused; at most 4 streams are open at once.
 | `close` | `(h)` | Stop and forget it. |
 | `set_volume` | `(h, gain: f32)` | 0 to 1 (more is clamped), applied smoothly. |
 | `set_lowpass` | `(h, hz: f32)` | A low-pass filter at `hz` (music heard from outside a car); 0 is off. Only where `caps` says so. |
-| `caps` | `(h) -> u32` | Flags: `VOLUME` (iOS Safari can't), `LOWPASS`, `METADATA`, `SEEKABLE` (natively all but `SEEKABLE` on live streams; in a browser `LOWPASS` and `METADATA` only where the stream sends CORS). Known once the stream is playing. |
+| `caps` | `(h) -> u32` | Flags: `VOLUME` (iOS Safari can't), `LOWPASS`, `METADATA` (natively all three; in a browser `LOWPASS` and `METADATA` only where the stream sends CORS). Known once the stream is playing. (No seeking: no `SEEKABLE`.) |
 | `state` | `(h) -> i32` | `CONNECTING`, `PLAYING`, `PAUSED`, `FAILED`, `ENDED` (a track played to its end). |
 | `error` | `(h, ptr, cap) -> i32` | Why it failed (or why `open` refused), as text; its length. |
 | `position`, `duration` | `(h) -> f64` | Seconds, for tracks; `duration` is -1 for live streams. |
@@ -61,6 +62,11 @@ query string), so the player decides, once per game:
   listed (`--allow-media=127.0.0.1`, NIP's smoke test), checked again on every
   redirect. Browsers enforce their own rules on top.
 - **It doesn't widen `--allow-net`:** a media permission opens audio streams only.
+- **Known gap:** natively the host is resolved and checked before connecting, but the
+  HTTP client resolves it again, so a host whose DNS answer changes in between (DNS
+  rebinding) could still reach a private address. Closing it means a resolver of our
+  own for the client (ureq's is unversioned API); until then the check stops plain
+  private URLs, not a determined rebinding server.
 
 ## Native runner
 

@@ -29,6 +29,12 @@ scummvm.wasm: ScummVM, GNU General Public License version 3, with zlib (zlib
 
 sdl3-*.wasm: SDL 3 (zlib license), https://libsdl.org
 
+gasm-run (the native runner, in the release bundles) decodes gasm:media's audio
+  streams with Symphonia 0.6 (symphonia, symphonia-core, -common, -metadata,
+  -bundle-mp3, -bundle-flac, -codec-aac, -codec-vorbis, -format-ogg, -utils-xiph),
+  Mozilla Public License 2.0 (https://mozilla.org/MPL/2.0/). Its source, unmodified:
+  https://github.com/pdeljanov/Symphonia and https://crates.io/crates/symphonia
+
 godot.wasm, godot-2d.wasm: Godot Engine 4.7.2 (MIT), https://godotengine.org, with the
   third-party components listed in its COPYRIGHT.txt (below). The example packs
   (godot/*.pck) are MIT, like gasm.

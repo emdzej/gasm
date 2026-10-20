@@ -518,6 +518,23 @@ pub mod abi {
     pub unsafe fn fetch_read(h: i32, _: *mut u8, _: u32) -> i32 { panic!("gasm:fetch: invalid handle {h}") }
     pub unsafe fn fetch_close(h: i32) { panic!("gasm:fetch: invalid handle {h}") }
 
+    // gasm:media: no streams natively (every open is refused, as in a headless run)
+    pub unsafe fn media_open(_: *const u8, _: u32) -> i32 { -1 }
+    pub unsafe fn media_play(h: i32) { panic!("gasm:media: invalid handle {h}") }
+    pub unsafe fn media_pause(h: i32) { panic!("gasm:media: invalid handle {h}") }
+    pub unsafe fn media_close(h: i32) { panic!("gasm:media: invalid handle {h}") }
+    pub unsafe fn media_set_volume(h: i32, _: f32) { panic!("gasm:media: invalid handle {h}") }
+    pub unsafe fn media_set_lowpass(h: i32, _: f32) { panic!("gasm:media: invalid handle {h}") }
+    pub unsafe fn media_caps(h: i32) -> u32 { panic!("gasm:media: invalid handle {h}") }
+    pub unsafe fn media_state(h: i32) -> u32 { panic!("gasm:media: invalid handle {h}") }
+    pub unsafe fn media_error(h: i32, _: *mut u8, _: u32) -> i32 {
+        if h == -1 { 0 } else { panic!("gasm:media: invalid handle {h}") }
+    }
+    pub unsafe fn media_position(h: i32) -> f64 { panic!("gasm:media: invalid handle {h}") }
+    pub unsafe fn media_duration(h: i32) -> f64 { panic!("gasm:media: invalid handle {h}") }
+    pub unsafe fn media_metadata(h: i32, _: *mut u8, _: u32) -> i32 { panic!("gasm:media: invalid handle {h}") }
+    pub unsafe fn media_metadata_version(h: i32) -> u32 { panic!("gasm:media: invalid handle {h}") }
+
     #[allow(clippy::too_many_arguments)]
     mod gl {
         include!("native_gl.rs");

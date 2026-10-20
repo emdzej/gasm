@@ -503,6 +503,29 @@ export class GasmHost {
     };
   }
 
+  // ---- gasm:media -------------------------------------------------------------
+  // Not in the JS host yet (design/media.md, phase 2: an <audio> element per stream):
+  // every open is refused with the reason, so games fall back as without the module.
+  mediaImports() {
+    const refusal = new TextEncoder().encode("this runner can't play audio streams yet (gasm:media: gasm-run only so far)");
+    const unknown = (h) => { throw new Error(`gasm:media: ${h} is not a stream handle`); };
+    return {
+      open: (dp, dl) => { this.str(dp, dl); return -1; },
+      play: (h) => unknown(h),
+      pause: (h) => unknown(h),
+      close: (h) => unknown(h),
+      set_volume: (h, gain) => unknown(h),
+      set_lowpass: (h, hz) => unknown(h),
+      caps: (h) => unknown(h),
+      state: (h) => unknown(h),
+      error: (h, dst, cap) => (h === -1 ? this.copyIfFits(dst, cap, refusal) : unknown(h)),
+      position: (h) => unknown(h),
+      duration: (h) => unknown(h),
+      metadata: (h, dst, cap) => unknown(h),
+      metadata_version: (h) => unknown(h),
+    };
+  }
+
   wasiImports() { return wasiImports(this); }
 
   // ---- lifecycle -----------------------------------------------------------
@@ -514,7 +537,7 @@ export class GasmHost {
     this.gl.model.hash = (b) => { if (this.hashing) this.videoHash = fnv32(this.videoHash, b); };
     const known = {
       gasm: this.gasmImports(), 'gasm:gfx': this.gfxImports(), 'gasm:gl': glImports(this.gl), 'gasm:net': this.netImports(),
-      'gasm:fetch': this.fetchImports(), 'gasm:storage': this.storageImports(), 'gasm:clipboard': this.clipboardImports(), 'gasm:files': this.filesImports(),
+      'gasm:fetch': this.fetchImports(), 'gasm:media': this.mediaImports(), 'gasm:storage': this.storageImports(), 'gasm:clipboard': this.clipboardImports(), 'gasm:files': this.filesImports(),
     };
     for (const [mod, fns] of Object.entries(known)) {
       this.provided.add(mod);

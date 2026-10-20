@@ -675,6 +675,49 @@ mod imports {
         pub fn fetch_close(req: i32);
     }
 
+    #[link(wasm_import_module = "gasm:media")]
+    unsafe extern "C" {
+        /// A stream described by JSON {"url":"https://..."}, not playing yet. Handle > 0, or -1 if refused (no media permission, a private or loopback address that is not listed, not https, 4 streams already open, an invalid description): error(-1, ...) says why.
+        #[link_name = "open"]
+        pub fn media_open(desc: *const u8, desc_len: u32) -> i32;
+        /// Start or resume (connects on the first play). A live stream paused for long reconnects.
+        #[link_name = "play"]
+        pub fn media_play(h: i32);
+        /// Stop playing; the stream keeps its place (a live one may drop its connection meanwhile).
+        #[link_name = "pause"]
+        pub fn media_pause(h: i32);
+        /// Stop and free the handle; closing again does nothing.
+        #[link_name = "close"]
+        pub fn media_close(h: i32);
+        /// Volume 0 to 1 (outside that clamped, NaN is 0), applied smoothly. Where caps lacks GASM_MEDIA_CAN_VOLUME (iOS Safari) it is ignored.
+        #[link_name = "set_volume"]
+        pub fn media_set_volume(h: i32, gain: f32);
+        /// A low-pass filter at hz (20 to 20000, clamped), 0 = off. Ignored where caps lacks GASM_MEDIA_CAN_LOWPASS.
+        #[link_name = "set_lowpass"]
+        pub fn media_set_lowpass(h: i32, hz: f32);
+        /// GASM_MEDIA_CAN_* flags: what set_volume, set_lowpass and metadata can do for this stream. Final once the state is GASM_MEDIA_PLAYING (browsers: lowpass and metadata only where the stream sends CORS).
+        #[link_name = "caps"]
+        pub fn media_caps(h: i32) -> u32;
+        /// GASM_MEDIA_CONNECTING (also while the player is asked) / PLAYING / PAUSED / FAILED (error says why) / ENDED (a track played to its end). A closed handle is FAILED.
+        #[link_name = "state"]
+        pub fn media_state(h: i32) -> u32;
+        /// Why the stream failed (or, for h = -1, why the last open was refused), as text. Length (copied only if <= cap; cap = 0 queries), 0 if none.
+        #[link_name = "error"]
+        pub fn media_error(h: i32, dst: *mut u8, cap: u32) -> i32;
+        /// Seconds played so far (live streams: since play).
+        #[link_name = "position"]
+        pub fn media_position(h: i32) -> f64;
+        /// A track's length in seconds, -1 for live streams and while unknown.
+        #[link_name = "duration"]
+        pub fn media_duration(h: i32) -> f64;
+        /// JSON {"name","title","codec","bitrate"} (null where unknown; name and title from ICY: icy-name and StreamTitle). Length (copied only if <= cap; cap = 0 queries).
+        #[link_name = "metadata"]
+        pub fn media_metadata(h: i32, dst: *mut u8, cap: u32) -> i32;
+        /// Changes whenever metadata does (a new title): poll it each frame and read metadata only then.
+        #[link_name = "metadata_version"]
+        pub fn media_metadata_version(h: i32) -> u32;
+    }
+
     #[link(wasm_import_module = "gasm:storage")]
     unsafe extern "C" {
         /// Value length, or -1 if missing. Copied only if length <= cap.
@@ -728,7 +771,7 @@ pub use imports::*;
 pub use crate::native::abi::*;
 
 /// Every import module and `module.function` of this ABI version (what `gasm::has` can report).
-pub const IMPORTS: [&str; 308] = [
+pub const IMPORTS: [&str; 322] = [
     "gasm", "gasm.log", "gasm.has", "gasm.time_ms",
     "gasm.max_threads", "gasm.utc_offset_minutes", "gasm.set_frame_rate", "gasm.video_present",
     "gasm.video_set_aspect", "gasm.audio_config", "gasm.audio_push", "gasm.input_pad",
@@ -802,10 +845,14 @@ pub const IMPORTS: [&str; 308] = [
     "gasm:gl.resume_transform_feedback", "gasm:net", "gasm:net.open", "gasm:net.state",
     "gasm:net.send", "gasm:net.recv", "gasm:net.close", "gasm:fetch",
     "gasm:fetch.request", "gasm:fetch.state", "gasm:fetch.status", "gasm:fetch.headers",
-    "gasm:fetch.read", "gasm:fetch.close", "gasm:storage", "gasm:storage.get",
-    "gasm:storage.set", "gasm:storage.delete", "gasm:storage.count", "gasm:storage.key",
-    "gasm:clipboard", "gasm:clipboard.set_text", "gasm:clipboard.get_text", "gasm:files",
-    "gasm:files.save", "gasm:files.state", "wasi_snapshot_preview1", "wasi_snapshot_preview1.proc_exit",
+    "gasm:fetch.read", "gasm:fetch.close", "gasm:media", "gasm:media.open",
+    "gasm:media.play", "gasm:media.pause", "gasm:media.close", "gasm:media.set_volume",
+    "gasm:media.set_lowpass", "gasm:media.caps", "gasm:media.state", "gasm:media.error",
+    "gasm:media.position", "gasm:media.duration", "gasm:media.metadata", "gasm:media.metadata_version",
+    "gasm:storage", "gasm:storage.get", "gasm:storage.set", "gasm:storage.delete",
+    "gasm:storage.count", "gasm:storage.key", "gasm:clipboard", "gasm:clipboard.set_text",
+    "gasm:clipboard.get_text", "gasm:files", "gasm:files.save", "gasm:files.state",
+    "wasi_snapshot_preview1", "wasi_snapshot_preview1.proc_exit",
 ];
 
 // ---- buttons
@@ -850,6 +897,18 @@ pub const GASM_FETCH_PENDING: u32 = 0;
 pub const GASM_FETCH_HEADERS: u32 = 1;
 pub const GASM_FETCH_DONE: u32 = 2;
 pub const GASM_FETCH_FAILED: u32 = 3;
+
+// ---- media states
+pub const GASM_MEDIA_CONNECTING: u32 = 0;
+pub const GASM_MEDIA_PLAYING: u32 = 1;
+pub const GASM_MEDIA_PAUSED: u32 = 2;
+pub const GASM_MEDIA_FAILED: u32 = 3;
+pub const GASM_MEDIA_ENDED: u32 = 4;
+
+// ---- media caps
+pub const GASM_MEDIA_CAN_VOLUME: u32 = 1 << 0;
+pub const GASM_MEDIA_CAN_LOWPASS: u32 = 1 << 1;
+pub const GASM_MEDIA_CAN_METADATA: u32 = 1 << 2;
 
 // ---- input modes
 /// input_mode flags.

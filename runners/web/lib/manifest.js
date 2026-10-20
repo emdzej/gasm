@@ -7,7 +7,7 @@
 export const MANIFEST_SECTION = 'gasm.manifest';
 export const MANIFEST_VERSION = 1;
 
-/** Parse a manifest: { name, requires, hosts, files }; throws why it's refused. */
+/** Parse a manifest: { name, requires, hosts, files, media }; throws why it's refused. */
 export function parseManifest(text) {
   let v;
   try { v = JSON.parse(text); } catch (e) { throw new Error(`not valid JSON: ${e.message}`); }
@@ -23,7 +23,7 @@ export function parseManifest(text) {
   const bad = hosts.find((h) => !h || /[/: ,]/.test(h));
   if (bad !== undefined) throw new Error(`${JSON.stringify(bad)} is not a host name (api.example.org, *.example.org)`);
   if (v.id !== undefined && (typeof v.id !== 'string' || !/^[A-Za-z0-9._-]{1,128}$/.test(v.id) || v.id === '.' || v.id === '..')) throw new Error('"id" must be 1 to 128 characters of A-Z a-z 0-9 . _ -');
-  return { name: typeof v.name === 'string' ? v.name : null, id: v.id ?? null, icon: typeof v.icon === 'string' ? v.icon : null, requires: strings('requires'), hosts, files: v.files === true };
+  return { name: typeof v.name === 'string' ? v.name : null, id: v.id ?? null, icon: typeof v.icon === 'string' ? v.icon : null, requires: strings('requires'), hosts, files: v.files === true, media: v.media === true };
 }
 
 /** The text of a compiled module's gasm.manifest section, or null. */

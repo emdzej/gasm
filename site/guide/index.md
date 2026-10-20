@@ -274,6 +274,9 @@ gasm-run <game.wasm|game.cwasm> [options]
 --param <name>=<value>   launch parameter for the game (repeatable)
 --allow-net[=<hosts>]    let the game open network connections and make HTTP requests (all hosts,
                          or only api.example.org,*.example.org)
+--allow-media[=<hosts>]  let the game play internet radio and audio streams (gasm:media) from any
+                         public https site, or only those hosts; otherwise a game whose manifest
+                         asks for media gets one question before it starts
 --storage-dir <dir>      where saves live (default: see "Saves" below)
 --storage-id <id>        save namespace (default: the game file's name)
 --window <W>x<H>         initial window size (default 960x720)

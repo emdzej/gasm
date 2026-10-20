@@ -9,6 +9,18 @@ the package versions (`gasm-sdk`, `gasm-host`, `@emdzej/gasm-host`).
 ## Unreleased
 
 Runners:
+- `gasm:media` (ABI addition; NIP #23, design/media.md, phase 1): audio streams the
+  runner fetches, decodes and plays after the game's own audio: internet radio
+  (live, with ICY titles) and tracks. `open({"url"})`, `play`, `pause`, `close`,
+  `set_volume`, `set_lowpass`, `caps`, `state`, `error`, `position`, `duration`,
+  `metadata`, `metadata_version`. `gasm-run` decodes MP3, AAC-LC, Ogg Vorbis and FLAC
+  (Symphonia, MPL-2.0: THIRD-PARTY.txt), buffers about 2 s, reconnects live streams
+  that drop. The permission is its own: the manifest's `"media": true` and the
+  player's yes (asked up front), or `--allow-media[=hosts]`; https only, private and
+  loopback addresses only when listed, 4 streams. Headless runs refuse without the
+  flag. The JS host doesn't play streams yet (its `open` refuses, saying so). SDK:
+  `gasm::media::Stream`. Test guest `mediatest`, `scripts/media-test.sh` (a local
+  https radio).
 - `gasm.set_fullscreen(on)` and `gasm.is_fullscreen()` (ABI addition): a game asks
   for fullscreen and reads back what the player sees. Honoured only within 5 s of a
   key press or click, as browsers require (so a game can't take the screen on its

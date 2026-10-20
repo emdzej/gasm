@@ -122,6 +122,9 @@ jobs:
       - name: "gasm:fetch (native == Node == Chrome, denials, record/replay)"
         run: CHROME=$(command -v google-chrome || command -v chromium) node scripts/fetch-test.mjs
 
+      - name: "gasm:media (native: a local https radio, tracks, reconnects, refusals)"
+        run: scripts/media-test.sh
+
       - name: Parity (NES native vs wasm)
         run: make parity ROM=roms/cpu_instr_test.nes FRAMES=600
 

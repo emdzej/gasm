@@ -14,6 +14,8 @@
 //! - `hosts`: network hosts it will reach; the player is asked once, up front, instead
 //!   of host by host (hosts it didn't declare are still asked about when reached).
 //! - `files`: it saves files for the player (gasm:files); asked up front too.
+//! - `media`: it plays audio streams from any site (gasm:media); asked up front, and
+//!   without it (or `--allow-media`) the game can't open one.
 //!
 //! Unknown fields are ignored (later versions add some); a manifest that isn't valid
 //! JSON or has a newer `manifest` version is refused with the reason.
@@ -35,6 +37,7 @@ pub struct Manifest {
     pub requires: Vec<String>,
     pub hosts: Vec<String>,
     pub files: bool,
+    pub media: bool,
 }
 
 impl Manifest {
@@ -72,6 +75,7 @@ impl Manifest {
             requires: strings("requires")?,
             hosts,
             files: o.get("files").and_then(Value::as_bool).unwrap_or(false),
+            media: o.get("media").and_then(Value::as_bool).unwrap_or(false),
         })
     }
 
@@ -126,7 +130,8 @@ mod tests {
     #[test]
     fn parse() {
         let m = Manifest::parse(r#"{"manifest":1,"name":"x","requires":["gasm:gl"],"hosts":["API.met.no."],"files":true,"later":5}"#).unwrap();
-        assert_eq!(m, Manifest { name: Some("x".into()), id: None, icon: None, requires: vec!["gasm:gl".into()], hosts: vec!["api.met.no".into()], files: true });
+        assert_eq!(m, Manifest { name: Some("x".into()), id: None, icon: None, requires: vec!["gasm:gl".into()], hosts: vec!["api.met.no".into()], files: true, media: false });
+        assert!(Manifest::parse(r#"{"manifest":1,"media":true}"#).unwrap().media);
         assert!(Manifest::parse(r#"{"manifest":2}"#).unwrap_err().contains("version 2"));
         assert!(Manifest::parse(r#"{"hosts":[]}"#).is_err());
         assert!(Manifest::parse(r#"{"manifest":1,"hosts":["http://x.org"]}"#).is_err());

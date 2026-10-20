@@ -375,6 +375,10 @@ fn agent() -> &'static ureq::Agent {
 }
 
 /// `location` relative to `base` (absolute, origin-relative, or path-relative).
+pub fn resolve_url(base: &str, location: &str) -> String {
+    resolve(base, location)
+}
+
 fn resolve(base: &str, location: &str) -> String {
     if location.contains("://") {
         return location.to_owned();

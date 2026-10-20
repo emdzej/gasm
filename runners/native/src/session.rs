@@ -45,6 +45,9 @@ pub struct Session {
     pub gl_stats: bool,
     /// `--profile <out.json>`: the main thread's guest stacks (`host::Profile`)
     pub profile: Option<std::path::PathBuf>,
+    /// gasm:media: `--allow-media` (the manifest's "media" and the player's consent are
+    /// added when the game starts)
+    pub media: crate::media::MediaPolicy,
     /// a window that can go fullscreen (the window runner), and whether it starts so:
     /// what set_fullscreen and is_fullscreen answer from the first call (gasm_init's too)
     pub fullscreen: Option<bool>,
@@ -117,7 +120,14 @@ impl Session {
     fn start_with(mut self, module: Option<wasmtime::Module>, audio: Option<Box<dyn AudioOut>>, gfx: Gfx, gl: Option<Angle>, reproducible: bool, hashing: bool) -> Result<Game, Stop> {
         let policy = crate::net::NetPolicy::new(self.allow_net, self.allow_hosts.clone()).with_consent(self.consent.clone());
         self.decide_mods(&policy);
+        // gasm:media: streams mixed into the audio output's own bus (a silent one without)
+        let bus = audio.as_ref().and_then(|a| a.media_bus());
+        let mut media = self.media.clone();
+        media.declared = self.manifest.as_ref().is_some_and(|m| m.media);
+        media.consent = self.consent.clone();
         let mut host = Host::new(self.assets, self.params, audio, gfx, Net::with_policy(policy.clone()), self.storage);
+        host.media = crate::media::Media::new(media);
+        host.media.set_output(bus);
         host.requires = self.manifest.map(|m| m.requires).unwrap_or_default();
         host.fetch = crate::fetch::Fetch::new(policy, self.fetch);
         host.fetch.set_app_id(self.app_id.as_deref());

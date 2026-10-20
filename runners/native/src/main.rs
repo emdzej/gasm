@@ -30,6 +30,10 @@ options:
   --allow-net[=<hosts>]    allow the guest to open network connections (gasm:net) and make HTTP
                            requests (gasm:fetch); with a comma-separated list only to those hosts
                            (api.example.org, *.example.org for its subdomains)
+  --allow-media[=<hosts>]  let the game play audio streams (gasm:media: internet radio) from any
+                           public https host, or with a list only from those; a private or local
+                           address only when listed (--allow-media=127.0.0.1). Without it the game
+                           needs media: true in its manifest, and the player's yes
   --mods <dir>             the game's mods: the folder's resource packs (*.pck, *.zip), read on
                            demand as assets mods/<name> in name order (Godot: Gasm.get_mods())
   --no-mods                no mods, even with --mods (for launchers that always pass it)
@@ -120,6 +124,8 @@ struct Args {
     allow_net: bool,
     no_splash: bool,
     allow_hosts: Vec<String>,
+    /// --allow-media: None not given, Some(empty) any public host, else a list
+    allow_media: Option<Vec<String>>,
     fetch: gasm_host::fetch::FetchMode,
     storage_dir: Option<String>,
     storage_id: Option<String>,
@@ -173,6 +179,7 @@ fn parse_args() -> Result<Args, String> {
         allow_net: false,
         no_splash: false,
         allow_hosts: Vec::new(),
+        allow_media: None,
         fetch: Default::default(),
         storage_dir: None,
         storage_id: None,
@@ -251,6 +258,14 @@ fn parse_args() -> Result<Args, String> {
                 if args.allow_hosts.is_empty() {
                     return Err("--allow-net= expects host names".into());
                 }
+            }
+            "--allow-media" => args.allow_media = Some(Vec::new()),
+            a if a.starts_with("--allow-media=") => {
+                let hosts: Vec<String> = a["--allow-media=".len()..].split(',').map(str::trim).filter(|h| !h.is_empty()).map(String::from).collect();
+                if hosts.is_empty() {
+                    return Err("--allow-media= expects host names".into());
+                }
+                args.allow_media = Some(hosts);
             }
             "--fetch-record" => args.fetch = gasm_host::fetch::FetchMode::Record(val("--fetch-record")?.into()),
             "--fetch-replay" => args.fetch = gasm_host::fetch::FetchMode::Replay(val("--fetch-replay")?.into()),
@@ -559,7 +574,7 @@ fn run(args: Args) -> Result<i32, String> {
         let mut c = c.lock().unwrap();
         if let Some(m) = &manifest {
             let hosts: Vec<String> = m.hosts.iter().filter(|h| !(allowed.allowed && allowed.permits(h))).cloned().collect();
-            c.ask_up_front(&hosts, m.files && args.save_dir.is_none() && !args.no_save);
+            c.ask_up_front(&hosts, m.files && args.save_dir.is_none() && !args.no_save, m.media && args.allow_media.is_none());
         }
         for (file, hosts) in &mod_requests {
             if !(allowed.allowed && hosts.iter().all(|h| allowed.permits(h))) {
@@ -599,6 +614,7 @@ fn run(args: Args) -> Result<i32, String> {
         gl_stats: args.gl_stats,
         profile: args.profile.as_ref().map(std::path::PathBuf::from),
         fullscreen: None, // (the window runner sets it)
+        media: gasm_host::media::MediaPolicy::new(args.allow_media.clone()),
         watch_assets,
     };
     match args.headless {

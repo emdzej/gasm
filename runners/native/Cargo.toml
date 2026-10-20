@@ -47,6 +47,8 @@ tungstenite = { version = "0.30", features = ["rustls-tls-native-roots"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
 rustls-pki-types = { version = "1", features = ["std"] }
 # gasm:fetch: HTTP(S) on ring (as above), roots from the OS store
+# gasm:media's decoders (MPL-2.0): MP3, AAC-LC (ADTS), Ogg Vorbis, FLAC
+symphonia = { version = "0.6", default-features = false, features = ["mp3", "aac", "ogg", "vorbis", "flac"] }
 ureq = { version = "3", default-features = false, features = ["rustls-no-provider", "gzip"] }
 rustls-native-certs = "0.8"
 cpal = { version = "0.18", optional = true }

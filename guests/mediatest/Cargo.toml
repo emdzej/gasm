@@ -1,0 +1,13 @@
+[package]
+name = "mediatest"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+publish = false
+description = "Test guest: audio streams through gasm:media (states, ICY metadata, refusals, pause, the end of a track)"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+gasm = { package = "gasm-sdk", path = "../gasm" }

@@ -959,6 +959,209 @@ pub mod fetch {
     }
 }
 
+/// Audio streams the runner plays (internet radio, tracks), mixed after the game's own
+/// audio (`gasm:media`). The game needs the player's yes: `"media": true` in its
+/// manifest (`manifest!`) and the runner's question, or `--allow-media`.
+///
+/// ```no_run
+/// let radio = gasm::media::Stream::open("https://radio.example/live.mp3");
+/// if let Some(r) = &radio {
+///     r.play();
+///     r.set_volume(0.8);
+/// }
+/// // each frame: r.state(), and r.metadata() when r.metadata_version() changes
+/// ```
+pub mod media {
+    use crate::sys;
+
+    /// Whether the runner has gasm:media (it may still refuse every stream).
+    pub fn available() -> bool {
+        crate::has("gasm:media")
+    }
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub enum State {
+        /// connecting (or the player is being asked)
+        Connecting,
+        Playing,
+        Paused,
+        /// see [`Stream::error`]
+        Failed,
+        /// a track played to its end
+        Ended,
+    }
+
+    /// What a stream's controls do here ([`Stream::caps`]).
+    #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+    pub struct Caps {
+        pub volume: bool,
+        pub lowpass: bool,
+        pub metadata: bool,
+    }
+
+    /// What the stream says about itself (ICY: the station's name, the current title).
+    #[derive(Clone, Debug, PartialEq, Eq, Default)]
+    pub struct Metadata {
+        pub name: Option<String>,
+        pub title: Option<String>,
+        pub codec: Option<String>,
+        pub bitrate: Option<u32>,
+    }
+
+    fn text(f: impl Fn(*mut u8, u32) -> i32) -> String {
+        let n = f(std::ptr::null_mut(), 0).max(0) as usize;
+        let mut buf = vec![0u8; n];
+        f(buf.as_mut_ptr(), n as u32);
+        String::from_utf8_lossy(&buf).into_owned()
+    }
+
+    /// Why the last [`Stream::open`] was refused.
+    pub fn refusal() -> String {
+        if !available() {
+            return "this runner has no gasm:media".into();
+        }
+        text(|p, c| unsafe { sys::media_error(-1, p, c) })
+    }
+
+    /// An open stream; dropping it closes it.
+    #[derive(Debug)]
+    pub struct Stream(i32);
+
+    impl Stream {
+        /// A stream from an https URL, not playing yet. `None` if refused ([`refusal`] says why).
+        pub fn open(url: &str) -> Option<Stream> {
+            if !available() {
+                return None;
+            }
+            let mut d = String::from("{\"url\":\"");
+            for c in url.chars() {
+                match c {
+                    '"' => d.push_str("\\\""),
+                    '\\' => d.push_str("\\\\"),
+                    c if (c as u32) < 0x20 => d.push_str(&format!("\\u{:04x}", c as u32)),
+                    c => d.push(c),
+                }
+            }
+            d.push_str("\"}");
+            let h = unsafe { sys::media_open(d.as_ptr(), d.len() as u32) };
+            (h > 0).then(|| Stream(h))
+        }
+        pub fn play(&self) {
+            unsafe { sys::media_play(self.0) }
+        }
+        pub fn pause(&self) {
+            unsafe { sys::media_pause(self.0) }
+        }
+        /// 0 to 1, applied smoothly.
+        pub fn set_volume(&self, gain: f32) {
+            unsafe { sys::media_set_volume(self.0, gain) }
+        }
+        /// A low-pass filter at `hz` (0: off), where [`Caps::lowpass`].
+        pub fn set_lowpass(&self, hz: f32) {
+            unsafe { sys::media_set_lowpass(self.0, hz) }
+        }
+        pub fn caps(&self) -> Caps {
+            let c = unsafe { sys::media_caps(self.0) };
+            Caps { volume: c & sys::GASM_MEDIA_CAN_VOLUME != 0, lowpass: c & sys::GASM_MEDIA_CAN_LOWPASS != 0, metadata: c & sys::GASM_MEDIA_CAN_METADATA != 0 }
+        }
+        pub fn state(&self) -> State {
+            match unsafe { sys::media_state(self.0) } {
+                sys::GASM_MEDIA_CONNECTING => State::Connecting,
+                sys::GASM_MEDIA_PLAYING => State::Playing,
+                sys::GASM_MEDIA_PAUSED => State::Paused,
+                sys::GASM_MEDIA_ENDED => State::Ended,
+                _ => State::Failed,
+            }
+        }
+        /// Why it failed ("" if it didn't).
+        pub fn error(&self) -> String {
+            text(|p, c| unsafe { sys::media_error(self.0, p, c) })
+        }
+        /// Seconds played.
+        pub fn position(&self) -> f64 {
+            unsafe { sys::media_position(self.0) }
+        }
+        /// A track's length in seconds; `None` for live streams and while unknown.
+        pub fn duration(&self) -> Option<f64> {
+            let d = unsafe { sys::media_duration(self.0) };
+            (d >= 0.0).then_some(d)
+        }
+        /// Changes whenever the metadata does: read [`Stream::metadata`] only then.
+        pub fn metadata_version(&self) -> u32 {
+            unsafe { sys::media_metadata_version(self.0) }
+        }
+        /// The metadata as the runner gives it (JSON).
+        pub fn metadata_json(&self) -> String {
+            text(|p, c| unsafe { sys::media_metadata(self.0, p, c) })
+        }
+        pub fn metadata(&self) -> Metadata {
+            let j = self.metadata_json();
+            Metadata {
+                name: json_string(&j, "name"),
+                title: json_string(&j, "title"),
+                codec: json_string(&j, "codec"),
+                bitrate: json_number(&j, "bitrate"),
+            }
+        }
+    }
+
+    impl Drop for Stream {
+        fn drop(&mut self) {
+            unsafe { sys::media_close(self.0) }
+        }
+    }
+
+    /// `"key":"value"` in the runner's flat JSON object (escapes undone), None if null or absent.
+    fn json_string(json: &str, key: &str) -> Option<String> {
+        let at = json.find(&format!("\"{key}\":\""))? + key.len() + 4;
+        let mut out = String::new();
+        let mut chars = json[at..].chars();
+        while let Some(c) = chars.next() {
+            match c {
+                '"' => return Some(out),
+                '\\' => match chars.next()? {
+                    'n' => out.push('\n'),
+                    't' => out.push('\t'),
+                    'r' => out.push('\r'),
+                    'b' | 'f' => {}
+                    'u' => {
+                        let hex: String = chars.by_ref().take(4).collect();
+                        let mut code = u32::from_str_radix(&hex, 16).ok()?;
+                        // a surrogate pair: the low half follows as \uXXXX
+                        if (0xd800..0xdc00).contains(&code) {
+                            let rest: String = chars.by_ref().take(6).collect();
+                            let low = u32::from_str_radix(rest.strip_prefix("\\u")?, 16).ok()?;
+                            code = 0x10000 + ((code - 0xd800) << 10) + (low - 0xdc00);
+                        }
+                        out.push(char::from_u32(code).unwrap_or('\u{fffd}'));
+                    }
+                    other => out.push(other),
+                },
+                c => out.push(c),
+            }
+        }
+        None
+    }
+
+    fn json_number(json: &str, key: &str) -> Option<u32> {
+        let at = json.find(&format!("\"{key}\":"))? + key.len() + 3;
+        let digits: String = json[at..].chars().take_while(|c| c.is_ascii_digit()).collect();
+        digits.parse().ok()
+    }
+
+    #[cfg(test)]
+    mod tests {
+        #[test]
+        fn metadata_json() {
+            let j = r#"{"bitrate":128,"codec":"mp3","name":"Radio \"X\"","title":"Café 🎵"}"#;
+            assert_eq!(super::json_string(j, "name").as_deref(), Some("Radio \"X\""));
+            assert_eq!(super::json_string(j, "title").as_deref(), Some("Café 🎵"));
+            assert_eq!(super::json_number(j, "bitrate"), Some(128));
+            assert_eq!(super::json_string(r#"{"title":null}"#, "title"), None);
+        }
+    }
+}
+
 // ---- game entry points ----------------------------------------------------------------
 
 /// A gasm game. `init` runs once; `frame` runs at the configured frame rate.

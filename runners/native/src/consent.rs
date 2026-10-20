@@ -94,13 +94,16 @@ impl Store {
 
     /// A manifest's hosts and saves, asked about before the game starts (one question
     /// for the hosts not answered yet).
-    pub fn ask_up_front(&mut self, hosts: &[String], files: bool) {
+    pub fn ask_up_front(&mut self, hosts: &[String], files: bool, media: bool) {
         let open: Vec<&str> = hosts.iter().map(String::as_str).filter(|h| self.answered(&net_subject(h)).is_none()).collect();
         if !open.is_empty() {
             self.queue(net_subject(&open.join(",")));
         }
         if files {
             _ = self.check(SAVE);
+        }
+        if media {
+            _ = self.check(crate::media::CONSENT_SUBJECT);
         }
     }
 
@@ -215,6 +218,9 @@ pub fn describe(subject: &str) -> (&'static str, String) {
     if let Some(file) = subject.strip_prefix("mod:") {
         return ("wants to load a mod that connects out", file.to_owned());
     }
+    if subject == crate::media::CONSENT_SUBJECT {
+        return ("wants to play internet radio", "from any site, as a browser plays audio".to_owned());
+    }
     ("wants to save files for you", "in Pictures or Downloads".to_owned())
 }
 
@@ -242,7 +248,7 @@ mod tests {
     fn up_front_and_mods() {
         let mut s = Store::never_ask();
         s.ask = true;
-        s.ask_up_front(&["a.org".into(), "b.org".into()], false);
+        s.ask_up_front(&["a.org".into(), "b.org".into()], false, false);
         assert_eq!(s.question().map(String::as_str), Some("net:a.org,b.org"));
         s.answer("net:a.org,b.org", Answer::ThisTime);
         assert_eq!((s.check("net:a.org"), s.check("net:b.org")), (Some(true), Some(true)));
@@ -251,5 +257,16 @@ mod tests {
         s.answer("mod:roads.pck", Answer::ThisTime);
         assert_eq!((s.check_mod("roads.pck", &["c.org".into()]), s.check("net:c.org")), (Some(true), Some(true)));
         assert_eq!(Store::never_ask().check_mod("x.pck", &["d.org".into()]), Some(false));
+    }
+
+    #[test]
+    fn media_up_front() {
+        let mut s = Store::never_ask();
+        s.ask = true;
+        s.ask_up_front(&[], false, true);
+        assert_eq!(s.question().map(String::as_str), Some("media"));
+        assert_eq!(describe("media").0, "wants to play internet radio");
+        s.answer("media", Answer::ThisTime);
+        assert_eq!(s.check("media"), Some(true));
     }
 }
