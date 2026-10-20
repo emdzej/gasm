@@ -68,6 +68,9 @@ options:
   --mute                   no audio output
   --copy-key <code>        (window) copy the game's frame to the clipboard on this key (default F2;
                            a KeyboardEvent.code name, or none); the key also reaches the game
+  --fullscreen             (window) start fullscreen (borderless, on the window's monitor)
+  --fullscreen-key <code>  (window) toggle fullscreen on this key (default F11, or none); Alt+Enter
+                           and, on macOS, Ctrl+Cmd+F toggle it too; the game doesn't get them
   --no-splash              start the game without the gasm splash screen (window only)
   --compile <out.cwasm>    AOT-compile the game to native code and exit
                            (then run the .cwasm with --allow-precompiled)
@@ -145,6 +148,8 @@ struct Args {
     realtime: bool,
     mute: bool,
     copy_key: String,
+    fullscreen: bool,
+    fullscreen_key: String,
     no_hash: bool,
     allow_precompiled: bool,
     call_timeout: Option<Duration>,
@@ -195,6 +200,8 @@ fn parse_args() -> Result<Args, String> {
         realtime: false,
         mute: false,
         copy_key: "F2".into(),
+        fullscreen: false,
+        fullscreen_key: "F11".into(),
         no_hash: false,
         allow_precompiled: false,
         call_timeout: Some(Duration::from_secs(30)),
@@ -292,6 +299,8 @@ fn parse_args() -> Result<Args, String> {
             "--realtime" => args.realtime = true,
             "--mute" => args.mute = true,
             "--copy-key" => args.copy_key = val("--copy-key")?,
+            "--fullscreen" => args.fullscreen = true,
+            "--fullscreen-key" => args.fullscreen_key = val("--fullscreen-key")?,
             "--no-hash" => args.no_hash = true,
             "--allow-precompiled" => args.allow_precompiled = true,
             "--no-stack-switching" => args.stack_switching = false,
@@ -624,13 +633,15 @@ fn run(args: Args) -> Result<i32, String> {
         None => {
             let (keymap, _, source) = load_keymap(&args)?;
             eprintln!("[gasm] keyboard layout: {source}");
-            let copy_key = match args.copy_key.as_str() {
-                "none" => None,
+            let key_option = |flag: &str, k: &str, example: &str| match k {
+                "none" => Ok(None),
                 k => match gasm_host::keymap::key_from_code(gasm_host::keymap::normalize(k)) {
-                    Some(c) => Some(c),
-                    None => return Err(format!("--copy-key: unknown key code {k:?} (use a KeyboardEvent.code name like F2, or none)")),
+                    Some(c) => Ok(Some(c)),
+                    None => Err(format!("{flag}: unknown key code {k:?} (use a KeyboardEvent.code name like {example}, or none)")),
                 },
             };
+            let copy_key = key_option("--copy-key", &args.copy_key, "F2")?;
+            let fullscreen_key = key_option("--fullscreen-key", &args.fullscreen_key, "F11")?;
             // --icon, else the manifest's "icon" (an asset)
             let icon_png = match (&args.icon, session.manifest.as_ref().and_then(|m| m.icon.clone())) {
                 (Some(p), _) => Some(std::fs::read(p).map_err(|e| format!("--icon {p}: {e}"))?),
@@ -654,7 +665,7 @@ fn run(args: Args) -> Result<i32, String> {
                     None
                 }
             });
-            gasm_host::window::run(session, gasm_host::window::Options { size: args.window, keymap, mute: args.mute, present: args.present, screenshot: args.window_screenshot.clone(), splash: !args.no_splash && args.window_screenshot.is_none(), copy_key, icon, app_class: args.app_class.clone() })
+            gasm_host::window::run(session, gasm_host::window::Options { size: args.window, keymap, mute: args.mute, present: args.present, screenshot: args.window_screenshot.clone(), splash: !args.no_splash && args.window_screenshot.is_none(), copy_key, fullscreen: args.fullscreen, fullscreen_key, icon, app_class: args.app_class.clone() })
         }
         #[cfg(not(feature = "window"))]
         None => Err("this gasm-run was built without the window feature: use --headless".into()),

@@ -11,7 +11,7 @@ use winit::dpi::LogicalSize;
 use winit::event::{DeviceEvent, DeviceId, ElementState, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{Key, KeyCode, NamedKey, PhysicalKey};
-use winit::window::{CursorGrabMode, Window, WindowId};
+use winit::window::{CursorGrabMode, Fullscreen, Window, WindowId};
 
 use crate::audio::{AudioOut, AudioSink, AudioStream};
 use crate::angle::NativeWindow;
@@ -35,6 +35,11 @@ pub struct Options {
     pub splash: bool,
     /// copy the game's frame to the clipboard on this key (`--copy-key`; None: off)
     pub copy_key: Option<KeyCode>,
+    /// start fullscreen (`--fullscreen`): borderless, on the window's monitor
+    pub fullscreen: bool,
+    /// toggle fullscreen on this key (`--fullscreen-key`, default F11; None: off). Alt+Enter
+    /// and, on macOS, Ctrl+Cmd+F toggle it too; none of them reaches the game
+    pub fullscreen_key: Option<KeyCode>,
     /// the window's icon, RGBA8 (`--icon`, the manifest's "icon"); macOS takes the app's
     pub icon: Option<(Vec<u8>, u32, u32)>,
     /// X11 WM_CLASS / Wayland app id (`--app-class`): desktops match it to a .desktop entry
@@ -575,6 +580,9 @@ impl ApplicationHandler for App {
         let mut attrs = Window::default_attributes()
             .with_title(format!("{} — gasm", self.title))
             .with_inner_size(LogicalSize::new(self.opts.size.0, self.opts.size.1));
+        if self.opts.fullscreen {
+            attrs = attrs.with_fullscreen(Some(Fullscreen::Borderless(None)));
+        }
         if let Some((rgba, w, h)) = &self.opts.icon {
             match winit::window::Icon::from_rgba(rgba.clone(), *w, *h) {
                 Ok(icon) => attrs = attrs.with_window_icon(Some(icon)),
@@ -736,6 +744,23 @@ impl ApplicationHandler for App {
                     }
                 }
                 if let PhysicalKey::Code(code) = event.physical_key {
+                    // fullscreen: the key (F11), Alt+Enter, Ctrl+Cmd+F on macOS; the game never sees it
+                    let held = |ks: &[KeyCode]| ks.iter().any(|k| self.keys.contains(k));
+                    let toggle = Some(code) == self.opts.fullscreen_key
+                        || (code == KeyCode::Enter && held(&[KeyCode::AltLeft, KeyCode::AltRight]))
+                        || (cfg!(target_os = "macos")
+                            && code == KeyCode::KeyF
+                            && held(&[KeyCode::ControlLeft, KeyCode::ControlRight])
+                            && held(&[KeyCode::SuperLeft, KeyCode::SuperRight]));
+                    if toggle && event.state == ElementState::Pressed {
+                        if !event.repeat {
+                            if let Some(w) = &self.window {
+                                w.set_fullscreen(if w.fullscreen().is_some() { None } else { Some(Fullscreen::Borderless(None)) });
+                            }
+                        }
+                        self.swallowed.insert(code);
+                        return;
+                    }
                     if code == KeyCode::Escape && !event.repeat {
                         self.esc_down = (event.state == ElementState::Pressed).then(Instant::now);
                     }

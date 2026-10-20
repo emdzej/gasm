@@ -152,6 +152,12 @@ chat or an image editor. The key still reaches the game; `?copykey=F8` picks
 another key (a `KeyboardEvent.code` name) and `?copykey=none` turns it off.
 `gasm-run`'s window does the same for 2D and OpenGL ES games (`--copy-key`).
 
+**Fullscreen (`gasm-run`):** F11 or Alt+Enter switches the window to fullscreen
+on its monitor and back; on a Mac, Ctrl+Cmd+F (F11 is often a media key there).
+The game doesn't get those keys, it just sees a bigger screen. `--fullscreen`
+starts that way, `--fullscreen-key F10` picks another key and
+`--fullscreen-key none` leaves only Alt+Enter (and Ctrl+Cmd+F).
+
 **The splash screen:** while a game loads, the player shows gasm's splash (a
 moment of Pong that turns into the gasm logo, about 1.6 s; it waits on the logo
 if the game takes longer to load). A key or click shortens it; `?nosplash`
@@ -276,6 +282,8 @@ gasm-run <game.wasm|game.cwasm> [options]
 --mute                   no audio output
 --no-splash              start without the gasm splash screen
 --copy-key <code>        copy the game's frame to the clipboard on this key (default F2, or none)
+--fullscreen             start fullscreen (F11, Alt+Enter or Ctrl+Cmd+F switch back and forth)
+--fullscreen-key <code>  the fullscreen key (default F11, or none)
 --icon <png>             the window's icon (Windows, Linux; macOS shows the app's)
 --app-class <name>       (Linux) the window's class / app id, matching a .desktop entry with your icon
 --manifest <file>        the game's capabilities manifest (what it needs; else the one in the .wasm)

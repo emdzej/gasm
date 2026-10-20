@@ -9,6 +9,10 @@ the package versions (`gasm-sdk`, `gasm-host`, `@emdzej/gasm-host`).
 ## Unreleased
 
 Runners:
+- Fullscreen in `gasm-run`'s window: F11 (`--fullscreen-key`), Alt+Enter and, on
+  macOS, Ctrl+Cmd+F switch to borderless fullscreen on the window's monitor and
+  back; `--fullscreen` starts that way. The game doesn't get those keys; it sees the
+  resize (a GL game draws at the display's full resolution).
 - `gasm-run --profile <out.json>` (NiP #22): the game's main thread sampled every
   millisecond with wasmtime's `GuestProfiler`, written in the Firefox Profiler's
   format when the game ends, with the share of the run spent inside calls to the
