@@ -59,6 +59,7 @@ mods and the capabilities manifest.
 | glow upstream | Rust GL code runs on a fork of glow (`sdk/glow`: its native backend on wasm32), used through `[patch.crates-io]`. Upstream support (a loader-based backend on `wasm32-unknown-unknown`) would make the patch unnecessary. | idea |
 | A display scale | Guests only see drawable pixels, so UI code guesses a scale (the egui demo uses the drawable height). A `gasm.display_scale()` import would give the real one. | idea |
 | `gasm:gfx` render targets | Render-to-texture. | not started |
+| Temporal upscaling (`gasm:upscale`) | 3D `gasm:gfx` games render at a lower resolution and the runner upscales from colour, depth and motion vectors: a portable FSR 2 port everywhere, and natively MetalFX or DLSS where the player's machine has them (DLSS never shipped, only found). Needs render targets first. [design/upscale.md](https://github.com/emdzej/gasm/blob/main/design/upscale.md) | proposal |
 | `gasm:gfx` cube maps, render bundles | Skyboxes and environment maps; cheaper repeated draws. | not started |
 | Batched gfx commands | One call per frame for draw-heavy guests instead of one per command. | not started |
 | More of WebGPU | Storage textures, compute, stencil: not in the `gasm:gfx` subset and not planned yet. | not planned |

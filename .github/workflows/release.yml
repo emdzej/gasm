@@ -49,6 +49,7 @@ jobs:
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: games
+          retention-days: 7 # (used within the run, and by reruns of it)
           path: |
             build/*.wasm
             build/godot/*.pck
@@ -64,6 +65,7 @@ jobs:
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: doom-src
+          retention-days: 7 # (used within the run, and by reruns of it)
           path: |
             dist/*-doom-src.tar.gz
             dist/*-scummvm-src.tar.gz
@@ -167,6 +169,7 @@ jobs:
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: package-${{ matrix.platform }}
+          retention-days: 7 # (used within the run, and by reruns of it)
           path: |
             dist/*.tar.gz
             dist/*.zip
@@ -312,6 +315,8 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ github.token }}
       - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        env:
+          DOCKER_BUILD_RECORD_RETENTION_DAYS: 7
         with:
           context: runners/native
           file: runners/native/relay.Dockerfile
