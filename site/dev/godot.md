@@ -317,7 +317,9 @@ func _process(_delta):
   `MEDIA_FAILED` or `MEDIA_ENDED`; `media_caps(radio)` says whether volume, the
   filter and the metadata work for this stream (natively all three). A handle
   `media_open` didn't return is an error message, not a crash.
-- Browsers: not yet (`media_open` refuses there, `media_refusal()` says so).
+- In browsers the stream is an `<audio>` element: volume works (not on iOS), the
+  low-pass only where the station sends CORS, and there are no titles
+  (`media_caps` says so); the player asks the same question.
 
 ## Multiplayer
 

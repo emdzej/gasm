@@ -41,7 +41,7 @@ export class GasmWorker {
   static async start({
     wasm, assets = [], params = {}, storage = null, allowNet = false, keyboard = false, memoryLimit = undefined, threads = 0, bytes: moduleBytes = null,
     hashing = false, virtualTime = false, onLog = console.log, onAudio = () => {}, onTitle = () => {}, onCopyText = () => {}, onSaveFile = () => true, ask = null,
-    onFullscreen = null, canvas = null, glCanvas = null, size = null, url = null,
+    onFullscreen = null, allowMedia = false, mediaBackend = null, canvas = null, glCanvas = null, size = null, url = null,
   }) {
     // written out literally so bundlers (Vite, webpack) find and emit the worker
     const worker = url
@@ -50,6 +50,7 @@ export class GasmWorker {
     const w = new GasmWorker(worker, onLog, onAudio);
     w.onTitle = onTitle;
     w.onFullscreen = onFullscreen;
+    w.mediaBackend = mediaBackend;
     w.onCopyText = onCopyText;
     w.onSaveFile = onSaveFile;
     w.ask = ask;
@@ -58,7 +59,7 @@ export class GasmWorker {
     const bytes = module || wasm instanceof ArrayBuffer ? wasm : wasm.buffer.slice(wasm.byteOffset, wasm.byteOffset + wasm.byteLength);
     const transfer = [...(module ? [] : [bytes]), ...(canvas ? [canvas] : []), ...(glCanvas ? [glCanvas] : [])];
     const ready = w.next('ready');
-    w.worker.postMessage({ type: 'init', wasm: bytes, bytes: moduleBytes, assets, params, storage, allowNet, keyboard, hashing, virtualTime, canvas, glCanvas, size, memoryLimit, threads, ask: !!ask, fullscreen: !!onFullscreen }, transfer);
+    w.worker.postMessage({ type: 'init', wasm: bytes, bytes: moduleBytes, assets, params, storage, allowNet, keyboard, hashing, virtualTime, canvas, glCanvas, size, memoryLimit, threads, ask: !!ask, fullscreen: !!onFullscreen, allowMedia, media: !!mediaBackend }, transfer);
     try {
       const r = await ready;
       w.frameRate = r.frameRate;
@@ -81,6 +82,9 @@ export class GasmWorker {
     this.title = null;    // the guest's set_title, as of the last batch
     this.onTitle = () => {};
     this.onFullscreen = null;   // set_fullscreen: (on), after the batch that asked
+    // gasm:media: the page plays the worker's streams (ElementMedia); id -> its controls
+    this.mediaBackend = null;
+    this.mediaStreams = new Map();
     this.fullscreen = false;    // shown fullscreen now: the page keeps it current (is_fullscreen)
     this.onCopyText = () => {};
     this.onSaveFile = () => true;
@@ -93,6 +97,17 @@ export class GasmWorker {
     if (m.type === 'error') return this.fail(new Error(m.message));
     if (m.type === 'exit') return this.fail(new ProcExit(m.code));
     if (m.type === 'threads') return this.watchThreads(m.ctrl);
+    // gasm:media: the worker's stream, played here; what changes goes back at once
+    if (m.type === 'media') {
+      if (m.op === 'create') {
+        const report = (info) => this.worker.postMessage({ type: 'mediaInfo', id: m.id, info });
+        if (this.mediaBackend) this.mediaStreams.set(m.id, this.mediaBackend.create(m.url, report));
+      } else {
+        this.mediaStreams.get(m.id)?.[m.op](m.arg);
+        if (m.op === 'close') this.mediaStreams.delete(m.id);
+      }
+      return;
+    }
     // player consent: the worker's guest wants a host; the page asks
     if (m.type === 'consent') {
       Promise.resolve().then(() => this.ask?.(m.subject)).then((v) => !!v, () => false)
@@ -149,6 +164,7 @@ export class GasmWorker {
     if (i >= 0) this.waiters.splice(i, 1)[0].resolve(m);
   }
   fail(err) {
+    this.closeMedia();   // a guest that exited or trapped plays nothing more
     this.failed = err;
     for (const w of this.waiters.splice(0)) w.reject(err);
   }
@@ -179,7 +195,13 @@ export class GasmWorker {
 
   /** The player is quitting: gasm_exit (flush saves), close sockets, stop the worker.
    *  Also after the guest exited or trapped (sockets and storage still get closed). */
+  closeMedia() {
+    for (const c of this.mediaStreams.values()) c.close();
+    this.mediaStreams.clear();
+  }
+
   async exit(timeoutMs = 1000) {
+    this.closeMedia();
     if (this.terminated) return;
     this.terminated = true;
     const closed = this.next('exited');
@@ -209,6 +231,21 @@ async function buildAssets(specs, log) {
 
 if (inWorker) {
   let host = null, gfx = null, glCanvas = null, keyboard = false, audio = [], copied = null, saves = [], fullscreen = null, onConsent = () => {};
+  // gasm:media: streams the page plays for this worker (Worker mode has no <audio>)
+  const mediaReports = new Map();
+  let mediaIds = 0;
+  const relayMedia = {
+    create(url, report) {
+      const id = ++mediaIds;
+      mediaReports.set(id, report);
+      globalThis.postMessage({ type: 'media', op: 'create', id, url });
+      const op = (name) => (arg) => globalThis.postMessage({ type: 'media', op: name, id, arg });
+      return {
+        play: op('play'), pause: op('pause'), setVolume: op('setVolume'), setLowpass: op('setLowpass'),
+        close: () => { op('close')(); mediaReports.delete(id); },
+      };
+    },
+  };
   const post = (m, transfer = []) => globalThis.postMessage(m, transfer);
   const log = (msg) => post({ type: 'log', msg });
   const stats = () => ({
@@ -219,6 +256,7 @@ if (inWorker) {
   globalThis.onmessage = async (e) => {
     const m = e.data;
     if (m.type === 'consent') return onConsent(m);   // the page's answer (not queued behind frames)
+    if (m.type === 'mediaInfo') return mediaReports.get(m.id)?.(m.info);
     if (m.type === 'init') {
       try {
         const assets = await buildAssets(m.assets, log);
@@ -250,6 +288,7 @@ if (inWorker) {
           onAudio: (samples, rate, channels) => audio.push({ samples, rate, channels }), ...(gfx ? { gfx } : {}), ...(gl ? { gl } : {}),
           onCopyText: (t) => { copied = t; },
           onFullscreen: m.fullscreen ? (on) => { fullscreen = on; } : null,
+          allowMedia: m.allowMedia ?? false, mediaBackend: m.media ? relayMedia : null,
           onSaveFile: (name, mime, bytes) => { saves.push({ name, mime, bytes }); return true; },
         });
         host.hashing = m.hashing;

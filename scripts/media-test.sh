@@ -82,8 +82,8 @@ expect() {
 
 run live 330 --allow-media=127.0.0.1 --param url=$BASE/live.mp3
 expect live "plays, with the station's name and changing titles" \
-  'state Connecting' 'name=Some("gasm test radio")' 'state Playing (volume true, lowpass true, metadata true)' \
-  'title=Some("gasm test - Song 1")' 'title=Some("gasm test - Song 2")' 'position'
+  'state Connecting' 'state Playing (volume true, lowpass true, metadata true)' \
+  'name=Some("gasm test radio") title=Some("gasm test - Song 1")' 'title=Some("gasm test - Song 2")' 'position'
 
 run track 300 --allow-media=127.0.0.1 --param url=$BASE/track.mp3
 expect track "a track plays to its end" 'state Playing' 'state Ended at 3.0 s'

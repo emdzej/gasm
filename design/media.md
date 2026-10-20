@@ -1,7 +1,9 @@
 # gasm:media: audio streams played by the runner
 
-Status: **phases 1 and 3 implemented** (native: `gasm-run`, the Rust SDK; Godot's
-`Gasm` singleton; see the CHANGELOG); phase 2 (browsers) to come.
+Status: **implemented** (all three phases: `gasm-run`, the JS host and the player,
+Godot's `Gasm` singleton; see the CHANGELOG). Differences from the plan below: no
+`SEEKABLE`, and browsers give no metadata at all (reading ICY needs a custom request
+header and CORS that exposes `icy-metaint`, which stations practically never send).
 
 ## Summary
 

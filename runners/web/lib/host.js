@@ -9,6 +9,7 @@ import { GfxModel, NullGfx, clampRect } from './gfx.js';
 import { GlHost, glImports } from './gl.js';
 import { GAMEPAD_AXES, GAMEPAD_BUTTONS, GAMEPAD_BYTES, KEY_STATE_BYTES, POINTER_BYTES, framePosition } from './input.js';
 import { Consent, FetchRequests } from './fetch.js';
+import { MediaStreams } from './media.js';
 import { NetConnections } from './net.js';
 import { MemoryStorage, StorageError, STORAGE_ERR_IO } from './storage.js';
 import { ProcExit, Splitmix, WASI_IMPLEMENTED, wasiImports } from './wasi.js';
@@ -84,7 +85,8 @@ export class GasmHost {
   constructor({ assets = {}, params = {}, gfx = new NullGfx(), storage = new MemoryStorage(), allowNet = false,
                 onPresent = () => {}, onAudio = () => {}, onLog = console.log, onTitle = () => {}, onCopyText = () => {}, onSaveFile = () => true,
                 onFullscreen = null, getPad = () => 0, virtualTime = false, stackSwitching = STACK_SWITCHING, gl = null,
-                fetchReplay = null, fetchRecord = null, memoryLimit = DEFAULT_MEMORY_LIMIT, userAgent = null, ask = null, threads = 0 } = {}) {
+                fetchReplay = null, fetchRecord = null, memoryLimit = DEFAULT_MEMORY_LIMIT, userAgent = null, ask = null, threads = 0,
+                allowMedia = false, mediaBackend = null } = {}) {
     // GasmAssetProvider ({ size(name), readAt(name, offset, dst), names() }), or a plain
     // { name: Uint8Array } record (wrapped as an in-memory provider).
     this.assets = isAssetProvider(assets) ? assets : memoryAssets(assets);
@@ -99,6 +101,9 @@ export class GasmHost {
     const consent = ask ? new Consent(ask) : null;
     this.net = new NetConnections(allowNet, (m) => this.onLog(m), consent);
     this.fetch = new FetchRequests(allowNet, (m) => this.onLog(m), { replay: fetchReplay, record: fetchRecord, userAgent, consent });
+    // gasm:media: allowMedia false, true or a list of hosts (else the manifest's "media" and
+    // the player's yes); mediaBackend plays them (ElementMedia in a page; none: refused)
+    this.media = new MediaStreams({ allow: allowMedia, consent, backend: mediaBackend, log: (m) => this.onLog(m) });
     this.showFrame = true;           // false during catch-up frames: begin_frame returns 0
     this.catchUp = false;            // a catch-up frame (not the last of a batch): gasm:gl frame_shown 0
     this.onPresent = onPresent;      // (rgba: Uint8ClampedArray, w, h)
@@ -504,25 +509,23 @@ export class GasmHost {
   }
 
   // ---- gasm:media -------------------------------------------------------------
-  // Not in the JS host yet (design/media.md, phase 2: an <audio> element per stream):
-  // every open is refused with the reason, so games fall back as without the module.
   mediaImports() {
-    const refusal = new TextEncoder().encode("this runner can't play audio streams yet (gasm:media: gasm-run only so far)");
-    const unknown = (h) => { throw new Error(`gasm:media: ${h} is not a stream handle`); };
+    const m = this.media;
+    const text = (dst, cap, t) => this.copyIfFits(dst, cap, new TextEncoder().encode(t));
     return {
-      open: (dp, dl) => { this.str(dp, dl); return -1; },
-      play: (h) => unknown(h),
-      pause: (h) => unknown(h),
-      close: (h) => unknown(h),
-      set_volume: (h, gain) => unknown(h),
-      set_lowpass: (h, hz) => unknown(h),
-      caps: (h) => unknown(h),
-      state: (h) => unknown(h),
-      error: (h, dst, cap) => (h === -1 ? this.copyIfFits(dst, cap, refusal) : unknown(h)),
-      position: (h) => unknown(h),
-      duration: (h) => unknown(h),
-      metadata: (h, dst, cap) => unknown(h),
-      metadata_version: (h) => unknown(h),
+      open: (dp, dl) => m.open(this.str(dp, dl)),
+      play: (h) => m.play(h),
+      pause: (h) => m.pause(h),
+      close: (h) => m.close(h),
+      set_volume: (h, gain) => m.setVolume(h, gain),
+      set_lowpass: (h, hz) => m.setLowpass(h, hz),
+      caps: (h) => m.caps(h),
+      state: (h) => m.state(h),
+      error: (h, dst, cap) => text(dst, cap, m.error(h)),
+      position: (h) => m.position(h),
+      duration: (h) => m.duration(h),
+      metadata: (h, dst, cap) => text(dst, cap, m.metadata(h)),
+      metadata_version: (h) => m.version(h),
     };
   }
 
@@ -558,6 +561,7 @@ export class GasmHost {
     const text = given >= 0 ? (() => { const b = new Uint8Array(given); this.assets.readAt(MANIFEST_SECTION, 0, b); return new TextDecoder().decode(b); })() : moduleManifest(module);
     if (text !== null) {
       try { this.manifest = parseManifest(text); } catch (e) { throw new Error(`the game's manifest: ${e.message}`); }
+      this.media.declared = this.manifest.media;
       const missing = this.manifest.requires.filter((r) => !this.provided.has(r));
       if (missing.length) throw new Error(`this game needs ${missing.join(', ')}, which this runner doesn't have`);
     }
@@ -761,6 +765,7 @@ export class GasmHost {
     this.exit();
     this.files.flush();   // saved on the way out (gasm_exit)
     this.fetch.closeAll();
+    this.media.shutdown();
     await this.net.closeAll();
     await this.storage.flush?.();
     this.storage.close?.();

@@ -53,6 +53,10 @@ export declare class GasmWorker {
     onTitle?: (title: string | null) => void;
     /** gasm.set_fullscreen, after the batch that asked (see GasmHostOptions.onFullscreen). */
     onFullscreen?: ((on: boolean) => void) | null;
+    /** gasm:media (see GasmHostOptions.allowMedia and mediaBackend): the page plays the
+     * worker's streams with this backend (new ElementMedia()). */
+    allowMedia?: boolean | string[];
+    mediaBackend?: import('./gasm-host.js').MediaBackend | null;
     /** gasm:clipboard: text the guest copied, after the batch. */
     onCopyText?: (text: string) => void;
     /** gasm:files: a file the guest saved for the player (the worker reports it saved). */

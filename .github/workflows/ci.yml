@@ -125,6 +125,9 @@ jobs:
       - name: "gasm:media (native: a local https radio, tracks, reconnects, refusals)"
         run: scripts/media-test.sh
 
+      - name: "gasm:media in Chrome (<audio> elements, Web Audio with CORS, Worker mode)"
+        run: CHROME=$(command -v google-chrome || command -v chromium) node scripts/media-web-test.mjs
+
       - name: Parity (NES native vs wasm)
         run: make parity ROM=roms/cpu_instr_test.nes FRAMES=600
 

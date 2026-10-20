@@ -13,6 +13,7 @@
 
 export { ABI_VERSION, CLIPBOARD_MAX, DEFAULT_MEMORY_LIMIT, FNV_INIT, GasmHost, memoryLimitMessage, ProcExit, STACK_SWITCHING, TITLE_MAX_BYTES, VirtualClock, cleanTitle, fnv32, staticTitle } from './lib/host.js';
 export { Splitmix } from './lib/wasi.js';
+export { CAN_LOWPASS, CAN_METADATA, CAN_VOLUME, ElementMedia, MAX_STREAMS, MEDIA_SUBJECT, MediaStreams, parseMediaDesc } from './lib/media.js';
 export { BUF_COPY_DST, BUF_INDEX, BUF_STORAGE, BUF_UNIFORM, BUF_VERTEX, GfxModel, MAX_BIND_GROUPS, MAX_TEXTURE_SIZE, MAX_VERTEX_BUFFERS, NullGfx, OFFSET_ALIGNMENT, clampRect } from './lib/gfx.js';
 export { MAX_CONNECTIONS, NET_CLOSED, NET_CONNECTING, NET_ERROR, NET_OPEN, NetConnections } from './lib/net.js';
 export { SPLASH_FRAMES, SPLASH_H, SPLASH_HOLD, SPLASH_W, splashFrame, splashHash } from './lib/splash.js';

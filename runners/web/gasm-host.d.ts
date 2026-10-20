@@ -253,6 +253,13 @@ export interface GasmHostOptions {
    * hears it can't go fullscreen (set_fullscreen returns 0), as in headless runs. Browsers
    * allow requestFullscreen only shortly after a key press or click. */
   onFullscreen?: ((on: boolean) => void) | null;
+  /** gasm:media: false (default), true (any public https host) or a list of hosts (also how a
+   * private address is reached). Without it the game's manifest must say "media": true and
+   * `ask("media")` decide. */
+  allowMedia?: boolean | string[];
+  /** What plays gasm:media's streams: `new ElementMedia()` in a page; null (default): every
+   * open is refused, as in gasm-headless. */
+  mediaBackend?: MediaBackend | null;
   /** Buttons held on virtual pad `player` (0..3) as a bitmask. */
   getPad?: (player: number) => number;
   /** Reproducible (headless) mode: frame-derived time_ms and WASI clocks, a fixed
@@ -465,3 +472,35 @@ export declare const MANIFEST_VERSION: number;
 export declare function parseManifest(text: string): Manifest;
 /** The text of a module's gasm.manifest custom section, or null. */
 export declare function moduleManifest(module: WebAssembly.Module): string | null;
+
+/** What a gasm:media backend reports about a stream (any subset, as it changes). */
+export interface MediaInfo {
+  state?: number; error?: string; caps?: number; position?: number; duration?: number;
+  metadata?: { name: string | null; title: string | null; codec: string | null; bitrate: number | null };
+}
+export interface MediaControls {
+  play(): void; pause(): void; close(): void; setVolume(gain: number): void; setLowpass(hz: number): void;
+}
+/** Plays gasm:media's streams: `create` one for a URL the host allowed. */
+export interface MediaBackend {
+  create(url: string, report: (info: MediaInfo) => void): MediaControls;
+}
+/** Streams on <audio> elements: Web Audio's gain and low-pass where the stream sends CORS,
+ * else element volume; no ICY titles in browsers. */
+export declare class ElementMedia implements MediaBackend {
+  create(url: string, report: (info: MediaInfo) => void): MediaControls;
+}
+export declare const MAX_STREAMS: number;
+export declare const MEDIA_SUBJECT: string;
+export declare const CAN_VOLUME: number;
+export declare const CAN_LOWPASS: number;
+export declare const CAN_METADATA: number;
+/** `{"url": "https://..."}` -> the URL; throws why it's refused (gasm-run's rules). */
+export declare function parseMediaDesc(json: string): string;
+/** gasm:media's rules and handles (GasmHost uses one: `host.media`). */
+export declare class MediaStreams {
+  constructor(options?: { allow?: boolean | string[]; consent?: { check(subject: string): boolean | Promise<boolean> } | null; backend?: MediaBackend | null; log?: (msg: string) => void });
+  declared: boolean;
+  open(desc: string): number;
+  shutdown(): void;
+}

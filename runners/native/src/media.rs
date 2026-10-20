@@ -877,6 +877,12 @@ fn run(url: String, policy: MediaPolicy, ctl: Control) {
         };
         if live {
             eprintln!("[gasm] media: {url}: the stream dropped, reconnecting");
+            // the game sees it at once (what's buffered still plays meanwhile)
+            ctl.set(|i| {
+                if i.state != PAUSED {
+                    i.state = CONNECTING;
+                }
+            });
         }
         tries += 1;
         if tries > RECONNECTS {

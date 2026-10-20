@@ -18,7 +18,11 @@ Runners:
   that drop. The permission is its own: the manifest's `"media": true` and the
   player's yes (asked up front), or `--allow-media[=hosts]`; https only, private and
   loopback addresses only when listed, 4 streams. Headless runs refuse without the
-  flag. The JS host doesn't play streams yet (its `open` refuses, saying so). SDK:
+  flag. Browsers (phase 2): the JS host's `MediaStreams` with the same rules, played
+  by a backend the embedder gives (`mediaBackend: new ElementMedia()`, an `<audio>`
+  element per stream: Web Audio's gain and low-pass with CORS, element volume
+  without, no ICY titles); Worker mode relays to the page; the player has
+  `?allowmedia[=hosts]` and asks the manifest's question; `gasm-headless` refuses. SDK:
   `gasm::media::Stream`. Test guest `mediatest`, `scripts/media-test.sh` (a local
   https radio).
 - `gasm.set_fullscreen(on)` and `gasm.is_fullscreen()` (ABI addition): a game asks

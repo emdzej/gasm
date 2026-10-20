@@ -5,6 +5,7 @@ import {
   GasmHost, STACK_SWITCHING, staticTitle, IdbStorage, MemoryStorage, ProcExit, Resampler, AssetTable, bytesSource,
   directoryHandleEntries, fileListEntries, preloadAssets, DEFAULT_KEYMAP, parseKeymap, keyboardPads,
   BrowserInput, INPUT_KEYS_RAW, gamepadPads, normalizeCode, SPLASH_W, SPLASH_H, NetPolicy, moduleManifest, parseManifest,
+  ElementMedia, MEDIA_SUBJECT,
 } from './gasm-host.js';
 import { GasmWorker } from './gasm-worker.js';
 import { WebGpuGfx } from './webgpu-gfx.js';
@@ -24,7 +25,7 @@ const GAMES = {
   'sdl3-classic.wasm': 'SDL3: classic main loop', 'sdl3-threads.wasm': 'SDL3: threads (cooperative)',
   'sdl3-gl.wasm': 'SDL3: OpenGL ES', 'sdl3-snake-gl.wasm': 'SDL3: snake on GLES 2',
   'triangle.wasm': 'GPU triangle', 'textured.wasm': 'GPU textures (test)', 'inputtest.wasm': 'input tester', 'test-pattern.wasm': 'test pattern (C)', 'gltest.wasm': 'GLES 3 test (C)', 'glowtest.wasm': 'GLES 3 from Rust (glow)', 'eguidemo.wasm': 'egui demo (egui_glow)',
-  'assetcheck.wasm': 'asset check (test)', 'fetchtest.wasm': 'HTTP requests (test)',
+  'assetcheck.wasm': 'asset check (test)', 'fetchtest.wasm': 'HTTP requests (test)', 'mediatest.wasm': 'audio streams (test)',
   'godot.wasm': 'Godot: your game (.pck)',
 };
 // Godot projects: an engine with the project's pack as asset game.pck. 2D games run on
@@ -137,12 +138,15 @@ const CONSENT = 'gasm.consent.';
 const remembered = (g) => { try { return JSON.parse(localStorage.getItem(CONSENT + g) ?? '{}'); } catch { return {}; } };
 let consentQueue = Promise.resolve();
 // Subjects: "net:<host>", "net:a.org,b.org" (a manifest's hosts, asked at once and
-// remembered for each) and "mod:<file>" (a mod whose manifest wants hosts).
+// remembered for each), "mod:<file>" (a mod whose manifest wants hosts) and "media"
+// (gasm:media, asked before the game starts: its answer holds for the run).
 function askPlayer(subject, detail = '') {
+  if (subject === MEDIA_SUBJECT && runMedia !== null) return runMedia;
   const g = gameName, r = remembered(g);
   const each = subject.startsWith('net:') ? subject.slice(4).split(',').map((h) => `net:${h}`) : [subject];
   if (each.every((s) => s in r)) return each.every((s) => r[s]);
   const what = subject.startsWith('mod:') ? `wants to load the mod ${subject.slice(4)}${detail ? `, which connects to ${detail}` : ''}`
+    : subject === MEDIA_SUBJECT ? 'wants to play internet radio from any site'
     : `wants to connect to ${subject.slice(4).replaceAll(',', ', ')}`;
   const asked = consentQueue.then(() => new Promise((resolve) => {
     const dlg = $('consentdlg');
@@ -168,6 +172,18 @@ $('forget').onclick = (e) => {
 /** Hosts allowed up front: ?allownet (all) or ?allownet=a.org,b.org, plus the relay's host,
  *  plus what the player allowed for this run before it started (runHosts). */
 let runHosts = [];
+// gasm:media: ?allowmedia (any public https host) or ?allowmedia=a.org,127.0.0.1, else the
+// player's answer this run (runMedia: null not asked); the page plays them (ElementMedia)
+let runMedia = null;
+const mediaPlayer = new ElementMedia();
+function allowedMedia() {
+  const p = new URLSearchParams(location.search);
+  if (p.has('allowmedia')) {
+    const hosts = (p.get('allowmedia') ?? '').split(',').map((h) => h.trim()).filter(Boolean);
+    return hosts.length ? hosts : true;
+  }
+  return runMedia === true;
+}
 function allowedHosts() {
   const p = new URLSearchParams(location.search);
   if (p.has('allownet') && !p.get('allownet')) return true;
@@ -559,6 +575,9 @@ async function start({ romBytes, romName = null } = {}) {
     const unasked = (manifest?.hosts ?? []).filter((h) => !policy.permits(h));
     if (unasked.length && await askPlayer(`net:${unasked.join(',')}`)) runHosts.push(...unasked);
     if (stale()) return;
+    runMedia = null;
+    if (manifest?.media && allowedMedia() === false) runMedia = !!(await askPlayer(MEDIA_SUBJECT));
+    if (stale()) return;
     if (mods && GODOT_GAMES[game]) await mountMods(record, policy);
     if (stale()) return;
     // gfx guests go to the worker only if the canvas can be transferred (OffscreenCanvas);
@@ -590,6 +609,7 @@ async function start({ romBytes, romName = null } = {}) {
       const start = (canvasOpt) => GasmWorker.start({
         wasm: module, bytes: threaded ? bytes : null, threads, assets: specs, params, storage: namespace, allowNet: allowedHosts(), ask: askPlayer, keyboard: true,
         hashing: hashFrames > 0, virtualTime: hashFrames > 0, onLog: log, onAudio, onTitle: showTitle, onFullscreen: gameFullscreen, onCopyText: copyText, onSaveFile: saveFile, ...canvasOpt,
+        allowMedia: allowedMedia(), mediaBackend: mediaPlayer,
       });
       if (usesGfx) {
         const size = canvasSize();
@@ -629,6 +649,7 @@ async function start({ romBytes, romName = null } = {}) {
         return new MemoryStorage();
       });
       const h = new GasmHost({ assets, params, gfx, gl, storage, allowNet: allowedHosts(), ask: askPlayer, onPresent: present, onAudio, onLog: log, onTitle: showTitle, onFullscreen: gameFullscreen, onCopyText: copyText, onSaveFile: saveFile,
+                               allowMedia: allowedMedia(), mediaBackend: mediaPlayer,
                                virtualTime: hashFrames > 0 });
       h.text = '';     // the page has a keyboard
       if (stale()) { h.shutdown(); gfx?.device.destroy(); return; }

@@ -465,8 +465,13 @@ an on-demand track), mixed after the guest's own `audio_push` samples. The guest
 controls it and reads its state and metadata, polled once per frame; it never gets
 the samples, and stream audio is never hashed. Design:
 [design/media.md](https://github.com/emdzej/gasm/blob/main/design/media.md).
-Natively `gasm-run` decodes MP3, AAC-LC (ADTS), Ogg Vorbis and FLAC (not HE-AAC);
-the JS host doesn't play streams yet (its `open` refuses, saying so).
+Natively `gasm-run` decodes MP3, AAC-LC (ADTS), Ogg Vorbis and FLAC (not HE-AAC).
+In browsers each stream is an `<audio>` element (whatever the browser plays): with
+CORS from the stream through Web Audio (volume and the low-pass), without it with
+element volume only (`caps` says which; iOS Safari has no volume either), and with
+no metadata (browsers don't expose ICY). The JS host plays them when its embedder
+gives it a backend (`mediaBackend: new ElementMedia()`, the player does); without
+one (`gasm-headless`) `open` refuses.
 
 | Import | Signature | Semantics |
 |---|---|---|
@@ -487,7 +492,8 @@ carry data out, so it is the player's choice, once per game: the capabilities
 manifest declares `"media": true` and the runner asks before the game starts (the
 answer remembered as for hosts); without the manifest entry, `open` refuses.
 `gasm-run --allow-media` is the command line's yes (any public host), or
-`--allow-media=a,b` for a list. Headless runs never ask: they refuse unless the flag
+`--allow-media=a,b` for a list (in the player `?allowmedia[=a,b]`, in the JS host
+`allowMedia`). Headless runs never ask: they refuse unless the flag
 is given. Private and loopback addresses (the player's LAN, `localhost`) are reached
 only when listed (`--allow-media=127.0.0.1`), checked again at every redirect. It
 doesn't widen `--allow-net`.

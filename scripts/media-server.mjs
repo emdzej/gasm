@@ -1,13 +1,16 @@
 #!/usr/bin/env node
 // A local https stream server for gasm:media's tests (scripts/media-test.sh): radio and
 // tracks from tests/fixtures/media/tone.mp3 (3 s, 64 kbps).
-//   /live.mp3     a live stream (the tone looped at real time), ICY metadata when asked
+//   /live.mp3     a live stream (the tone looped at real time, after a 2 s burst on connect as
+//                 Icecast sends: players buffer before they start), ICY metadata when asked
 //                 (icy-metaint 8000: a block a second; the title changes every 2 s:
 //                 "gasm test - Song 1", "Song 2", ...), icy-name and icy-br
 //   /track.mp3    the tone once, with a length (a track: it ends)
 //   /redirect     302 to /live.mp3
 //   /drop.mp3     a live stream that closes after 1.5 s (each connection is counted)
 //   /notaudio     an HTML page
+// Any of them with ?cors: Access-Control-Allow-Origin: * (browsers then play through Web
+// Audio: gain and the low-pass).
 // Prints "listening on <port>" when ready, and "connection <path> <n>" for each request.
 //   node scripts/media-server.mjs --port 8443 --cert leaf.pem --key leaf.key
 import { createServer } from 'node:https';
@@ -29,6 +32,7 @@ const counts = new Map();
 function live(req, res, { dropAfterMs = 0 } = {}) {
   const icy = req.headers['icy-metadata'] === '1';
   res.writeHead(200, {
+    ...cors(req),
     'content-type': 'audio/mpeg',
     'icy-name': 'gasm test radio',
     'icy-br': '64',
@@ -38,13 +42,15 @@ function live(req, res, { dropAfterMs = 0 } = {}) {
   const started = Date.now();
   let at = 0;          // position in the tone
   let sinceMeta = 0;   // audio bytes since the last ICY block
-  const timer = setInterval(() => {
+  let burst = 2 * BYTES_PER_S;
+  const send = () => {
     if (dropAfterMs && Date.now() - started >= dropAfterMs) {
       clearInterval(timer);
       res.destroy();
       return;
     }
-    let left = BYTES_PER_S / 10;
+    let left = burst || BYTES_PER_S / 10;
+    burst = 0;
     const parts = [];
     while (left > 0) {
       let n = Math.min(left, tone.length - at);
@@ -67,11 +73,14 @@ function live(req, res, { dropAfterMs = 0 } = {}) {
       }
     }
     res.write(Buffer.concat(parts));
-  }, 100);
+  };
+  const timer = setInterval(send, 100);
+  send();
   res.on('close', () => clearInterval(timer));
 }
 
 const options = { cert: readFileSync(arg('--cert')), key: readFileSync(arg('--key')) };
+const cors = (req) => (new URL(req.url, 'https://x').searchParams.has('cors') ? { 'access-control-allow-origin': '*' } : {});
 const server = createServer(options, (req, res) => {
   const path = new URL(req.url, 'https://x').pathname;
   counts.set(path, (counts.get(path) ?? 0) + 1);
@@ -79,7 +88,7 @@ const server = createServer(options, (req, res) => {
   if (path === '/live.mp3') return live(req, res);
   if (path === '/drop.mp3') return live(req, res, { dropAfterMs: 1500 });
   if (path === '/track.mp3') {
-    res.writeHead(200, { 'content-type': 'audio/mpeg', 'content-length': String(tone.length) });
+    res.writeHead(200, { ...cors(req), 'content-type': 'audio/mpeg', 'content-length': String(tone.length) });
     return res.end(tone);
   }
   if (path === '/redirect') {
