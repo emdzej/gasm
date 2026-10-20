@@ -44,6 +44,7 @@ mods and the capabilities manifest.
 | Stack switching beyond JSPI | Browsers without JSPI (and Node 22) still need the Asyncify builds; wasm's stack-switching proposal would cover them too. | waiting on engines |
 | Asynchronous decompression | A runner call that unpacks a compressed block (zstd, deflate) outside the game and hands it over at the next frame: faster loading on every runner, threads or not. | not started |
 | `.gasm` packages | One file bundling `game.wasm`, its assets and a manifest. | not started |
+| Audio streams (`gasm:media`) | Internet radio and on-demand tracks from a URL, fetched, decoded and played by the runner after the game's own audio (symphonia natively, an `<audio>` element in browsers), under a media permission of its own asked once per game. Asked for by NIP's Mixtape. [design/media.md](https://github.com/emdzej/gasm/blob/main/design/media.md) | proposal |
 | Opening files (`gasm:files`) | A file picker run by the runner (importing a map, a replay): the game only sees what the player picks. Saving for the player already works (`gasm:files.save`). | not started |
 | Asking before a save | `gasm-run` writes a game's saves to a default folder (or `--save-dir`, or refuses them with `--no-save`); a native save dialog for each would let the player pick the place. | idea |
 | WIT / Component Model | Move the ABI to WIT once browsers don't need transpiling for components. | waiting on browsers |

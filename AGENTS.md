@@ -43,7 +43,7 @@ property: most tests assert bit-identical hashes.
 | `scripts/` | toolchain/ROM fetchers (`lib.sh`: shared checksum helpers), test suites, packaging (`third-party-notices.sh`: license notices shipped with the games), site build, Linux container |
 | `site/` | VitePress website (docs live here; `site/docs/abi.md` includes `spec/ABI.md`) |
 | `site/docs/roadmap.md` | **The roadmap**: everything planned or known to be missing, in one place |
-| `design/` | design documents with a status line: `threads.md` (part A implemented, B a proposal), `upscale.md` (a proposal: temporal upscaling, DLSS found but never shipped), and implemented ones kept as a record (`gasm-gl.md`, `fetch.md`, `presentation.md`, `stack-switching.md`) |
+| `design/` | design documents with a status line: `threads.md` (part A implemented, B a proposal), `upscale.md` (a proposal: temporal upscaling, DLSS found but never shipped), `media.md` (a proposal: audio streams played by the runner, NIP's radio), and implemented ones kept as a record (`gasm-gl.md`, `fetch.md`, `presentation.md`, `stack-switching.md`) |
 | `.github/workflows/` | `ci.yml`, `pages.yml`, `release.yml` |
 
 ## Build and test
