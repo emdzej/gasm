@@ -84,11 +84,22 @@ for d, k in DEL.items():
     n, a = cmds[d][1][0][1], cmds[d][1][1][1]
     OVERRIDES[d] = f'for (GLsizei i = 0; i < {n}; i++) gasm_gl_delete_{k}({a}[i]);'
 O = OVERRIDES
+O['glDeleteTextures'] = ('for (GLsizei i = 0; i < n; i++) {\n'
+                         '        if (textures[i]) cache_forget_texture(textures[i]);\n'
+                         '        gasm_gl_delete_texture(textures[i]);\n    }')
 O['glGetError'] = 'if (c_error) { GLenum e = c_error; c_error = 0; return e; }\n    return gasm_gl_get_error();'
 O['glShaderSource'] = 'shader_source(shader, count, string, length);'
 O['glBufferData'] = 'gasm_gl_buffer_data(target, data, (uint32_t)size, usage);'
 O['glBufferSubData'] = 'gasm_gl_buffer_sub_data(target, (uint32_t)offset, data, (uint32_t)size);'
-O['glBindBuffer'] = 'track_buffer(target, buffer);\n    gasm_gl_bind_buffer(target, buffer);'
+O['glBindBuffer'] = ('if (target == GL_ARRAY_BUFFER && buffer == array_buffer) return;\n'
+                      '    if (target == GL_ELEMENT_ARRAY_BUFFER) {\n'
+                      '        cvao *v = cache_vao();\n'
+                      '        if (v) {\n'
+                      '            if (v->elements_known && v->elements == buffer) return;\n'
+                      '            v->elements_known = 1; v->elements = buffer;\n'
+                      '        }\n'
+                      '    }\n'
+                      '    track_buffer(target, buffer);\n    gasm_gl_bind_buffer(target, buffer);')
 O['glPixelStorei'] = 'track_store(pname, param);\n    gasm_gl_pixel_storei(pname, param);'
 O['glTexImage2D'] = 'gasm_gl_tex_image_2d(target, level, internalformat, width, height, border, format, type, UNPACK_PTR(pixels), UNPACK_LEN(pixels, width, height, 1, format, type));'
 O['glTexImage3D'] = 'gasm_gl_tex_image_3d(target, level, internalformat, width, height, depth, border, format, type, UNPACK_PTR(pixels), UNPACK_LEN(pixels, width, height, depth, format, type));'
@@ -104,22 +115,66 @@ O['glDrawElements'] = 'draw_elements(mode, count, type, indices, 1, 0);'
 O['glDrawRangeElements'] = ('if (client_arrays() || (!vertex_array && !element_buffer0 && indices)) { draw_elements(mode, count, type, indices, 1, 0); return; }\n'
                             '    gasm_gl_draw_range_elements(mode, start, end, count, type, (uint32_t)(uintptr_t)indices);')
 O['glDrawElementsInstanced'] = 'draw_elements(mode, count, type, indices, instancecount, 1);'
-# overridden only for C's client-side arrays: Rust guests (glow uses buffers) forward them as is
+# overridden only for C (client-side arrays, the state cache): Rust guests (glow uses
+# buffers) forward them as they are
 C_ONLY = {'glDrawArrays', 'glDrawArraysInstanced', 'glEnableVertexAttribArray', 'glDisableVertexAttribArray',
-          'glVertexAttribDivisor', 'glBindVertexArray'}
+          'glVertexAttribDivisor', 'glBindVertexArray', 'glActiveTexture', 'glBindTexture', 'glUseProgram',
+          'glLinkProgram'}
+O['glActiveTexture'] = ('GLuint unit = texture - GL_TEXTURE0;\n'
+                        '    if (unit < CACHE_UNITS && unit == active_unit) return;\n'
+                        '    active_unit = unit < CACHE_UNITS ? unit : CACHE_UNITS;\n'
+                        '    gasm_gl_active_texture(texture);')
+O['glBindTexture'] = ('int slot = texture_slot(target);\n'
+                      '    if (slot >= 0 && active_unit < CACHE_UNITS) {\n'
+                      '        if (cache_textures[active_unit][slot] == texture + 1) return;\n'
+                      '        cache_textures[active_unit][slot] = texture + 1;\n'
+                      '    }\n'
+                      '    gasm_gl_bind_texture(target, texture);')
+O['glUseProgram'] = ('if (program_known && program == current_program) return;\n'
+                     '    current_program = program; program_known = 1;\n'
+                     '    gasm_gl_use_program(program);')
+O['glLinkProgram'] = 'cache_forget_uniforms(program);\n    gasm_gl_link_program(program);'
+for f in [c for c in want_cmds if re.fullmatch(r'glUniform(\d(f|i|ui)v?|Matrix\w+fv)', c)]:
+    C_ONLY.add(f)
+    ps = [n for _, n in cmds[f][1]]
+    args = ', '.join(ps)
+    if f.endswith('v'):
+        # (count, value) or (count, transpose, value): one element is cached, more forget the program
+        dims = re.search(r'Matrix(\d)(?:x(\d))?fv', f)
+        per = (int(dims.group(1)) * int(dims.group(2) or dims.group(1))) if dims else int(re.search(r'(\d)', f).group(1))
+        tr = ' && !transpose' if dims else ''
+        O[f] = (f'if (count == 1{tr} && uniform_same(location, value, {per * 4})) return;\n'
+                f'    if (count != 1) cache_forget_uniforms(current_program);\n'
+                f'    gasm_gl_{snake(f)}({args});')
+    else:
+        t = cmds[f][1][1][0]
+        vals = ', '.join(ps[1:])
+        O[f] = (f'{t} v[] = {{ {vals} }};\n'
+                f'    if (uniform_same(location, v, sizeof v)) return;\n'
+                f'    gasm_gl_{snake(f)}({args});')
 O['glDrawArrays'] = 'if (client_arrays()) upload_client(first + count, 1);\n    gasm_gl_draw_arrays(mode, first, count);'
 O['glDrawArraysInstanced'] = 'if (client_arrays()) upload_client(first + count, instancecount);\n    gasm_gl_draw_arrays_instanced(mode, first, count, instancecount);'
 O['glVertexAttribPointer'] = 'attrib_pointer(index, size, type, normalized, stride, pointer, 0);'
 O['glVertexAttribIPointer'] = 'attrib_pointer(index, size, type, GL_FALSE, stride, pointer, 1);'
 O['glEnableVertexAttribArray'] = 'attrib_enable(index, 1);'
 O['glDisableVertexAttribArray'] = 'attrib_enable(index, 0);'
-O['glVertexAttribDivisor'] = 'if (!vertex_array && index < CLIENT_ATTRIBS) attribs[index].divisor = divisor;\n    gasm_gl_vertex_attrib_divisor(index, divisor);'
-O['glBindVertexArray'] = 'vertex_array = array;\n    gasm_gl_bind_vertex_array(array);'
-O['glDeleteVertexArrays'] = 'for (GLsizei i = 0; i < n; i++) { if (arrays[i] == vertex_array) vertex_array = 0; gasm_gl_delete_vertex_array(arrays[i]); }'
+O['glVertexAttribDivisor'] = ('if (!vertex_array && index < CLIENT_ATTRIBS) attribs[index].divisor = divisor;\n'
+                               '    cvao *v = index < CLIENT_ATTRIBS ? cache_vao() : 0;\n'
+                               '    if (v) {\n'
+                               '        if (v->a[index].divisor_known && v->a[index].divisor == divisor) return;\n'
+                               '        v->a[index].divisor_known = 1; v->a[index].divisor = divisor;\n'
+                               '    }\n'
+                               '    gasm_gl_vertex_attrib_divisor(index, divisor);')
+O['glBindVertexArray'] = 'if (array == vertex_array) return;\n    vertex_array = array;\n    gasm_gl_bind_vertex_array(array);'
+O['glDeleteVertexArrays'] = ('for (GLsizei i = 0; i < n; i++) {\n'
+                              '        if (arrays[i] == vertex_array) vertex_array = 0;\n'
+                              '        cache_forget_vao(arrays[i]);\n'
+                              '        gasm_gl_delete_vertex_array(arrays[i]);\n    }')
 O['glDeleteBuffers'] = ('for (GLsizei i = 0; i < n; i++) {\n'
                         '        if (buffers[i] && buffers[i] == array_buffer) array_buffer = 0;\n'
                         '        if (buffers[i] && buffers[i] == element_buffer0 && !vertex_array) element_buffer0 = 0;\n'
-                        '        gasm_gl_delete_buffer(buffers[i]);\n    }')
+                        '        gasm_gl_delete_buffer(buffers[i]);\n    }\n'
+                        '    if (n > 0) buffer_generation++;')
 O['glGetIntegerv'] = ('if (pname == GL_NUM_EXTENSIONS) { *data = (GLint)extension_count(); return; }\n'
                       '    gasm_gl_get_integerv(pname, data, 64);')
 O['glGetBooleanv'] = ('GLint v[64];\n    int n = gasm_gl_get_integerv(pname, v, 64);\n'
@@ -161,6 +216,8 @@ O['glGetAttachedShaders'] = 'int n = gasm_gl_get_attached_shaders(program, shade
 for f in ['glGetUniformLocation', 'glGetAttribLocation', 'glGetFragDataLocation', 'glGetUniformBlockIndex']:
     nm = cmds[f][1][1][1]
     O[f] = f'return gasm_gl_{snake(f)}(program, {nm}, (uint32_t)strlen({nm}));'
+O['glGetUniformLocation'] = ('if (strchr(name, \'[\')) { cprogram *p = cache_program(program); if (p) p->uncached = 1; }\n'
+                             '    return gasm_gl_get_uniform_location(program, name, (uint32_t)strlen(name));')
 O['glBindAttribLocation'] = 'gasm_gl_bind_attrib_location(program, index, name, (uint32_t)strlen(name));'
 O['glGetUniformIndices'] = 'for (GLsizei i = 0; i < uniformCount; i++) uniformIndices[i] = gasm_gl_get_uniform_index(program, uniformNames[i], (uint32_t)strlen(uniformNames[i]));'
 O['glGetActiveUniformsiv'] = 'gasm_gl_get_active_uniformsiv(program, uniformIndices, (uint32_t)uniformCount, pname, params);'
@@ -406,6 +463,109 @@ static void upload_client(GLsizei vertices, GLsizei instances) {
     gasm_gl_bind_buffer(GL_ARRAY_BUFFER, array_buffer);
 }
 
+/* ---- state that is already set: such calls never leave the guest -------------------------
+ * A call into the runner costs the same whether or not it changes anything (the crossing,
+ * the WebGL model, ANGLE), and engines written for desktop drivers repeat state freely:
+ * Godot's Compatibility renderer re-specifies each draw's instance attributes, textures
+ * and uniforms, and 43 % of its calls changed nothing. Kept here: vertex attributes per
+ * vertex array (not the default one, whose client arrays are above), the array and element
+ * buffers, the active unit and its textures, the program and small uniform values. Only
+ * state is skipped, never data (the runner hashes uploads, not state), and any doubt
+ * (an unknown entry, a collision) sends the call: the cache can only drop a call that sets
+ * what the last identical call set. */
+typedef struct { GLuint buffer; GLint size; GLenum type; GLsizei stride; uint32_t offset; GLuint divisor;
+                 uint8_t normalized, integer, pointer_known, divisor_known, enabled; } cattr;   /* enabled: 0 unknown, 1 off, 2 on */
+/* Vertex arrays by number in a small table (engines make and delete some every frame, so
+ * numbers grow): another array with the same slot takes it over, its state forgotten. */
+typedef struct { GLuint id; uint32_t buffers; cattr a[CLIENT_ATTRIBS]; GLuint elements; uint8_t elements_known; } cvao;
+#define CACHE_VAOS 256
+static cvao cvaos[CACHE_VAOS];
+static uint32_t buffer_generation = 1;   /* + 1 at every buffer deletion */
+
+static cvao *cache_vao(void) {   /* the bound vertex array's entry, or null */
+    if (!vertex_array) return 0;
+    cvao *v = &cvaos[(vertex_array * 2654435761u) >> 24];
+    if (v->id != vertex_array) {
+        memset(v, 0, sizeof *v);
+        v->id = vertex_array;
+    }
+    if (v->buffers != buffer_generation) {   /* a deleted buffer left every vertex array */
+        v->buffers = buffer_generation;
+        v->elements_known = 0;
+        for (int j = 0; j < CLIENT_ATTRIBS; j++) v->a[j].pointer_known = 0;
+    }
+    return v;
+}
+
+static void cache_forget_vao(GLuint array) {
+    cvao *v = &cvaos[(array * 2654435761u) >> 24];
+    if (array && v->id == array) memset(v, 0, sizeof *v);
+}
+
+#define CACHE_UNITS 32
+static GLuint active_unit;   /* 0 .. CACHE_UNITS-1, or CACHE_UNITS: unknown */
+static GLuint cache_textures[CACHE_UNITS][4];   /* + 1: 0 unknown */
+
+static int texture_slot(GLenum target) {
+    switch (target) {
+    case GL_TEXTURE_2D: return 0;
+    case GL_TEXTURE_CUBE_MAP: return 1;
+    case GL_TEXTURE_3D: return 2;
+    case GL_TEXTURE_2D_ARRAY: return 3;
+    default: return -1;
+    }
+}
+
+static void cache_forget_texture(GLuint texture) {   /* deleted: unbound wherever it was */
+    for (int u = 0; u < CACHE_UNITS; u++)
+        for (int t = 0; t < 4; t++)
+            if (cache_textures[u][t] == texture + 1) cache_textures[u][t] = 0;
+}
+
+/* Uniform values by program and location. A location can't name an element another one
+ * also names (the model numbers names, GL resolves "a" and "a[0]" to one uniform), so a
+ * program whose locations were asked for with a "[" is never cached, and writing more
+ * than one element, or linking, forgets the program's values (its generation). */
+static GLuint current_program;
+static uint8_t program_known = 1;
+typedef struct { uint32_t generation; uint8_t uncached; } cprogram;
+static cprogram *cprograms;
+static uint32_t cprogram_count;
+#define CACHE_PROGRAMS 65536
+#define CACHE_UNIFORMS 2048
+typedef struct { GLuint program; GLint location; uint32_t generation; uint8_t len; uint8_t bytes[64]; } cuniform;
+static cuniform cache_uniforms[CACHE_UNIFORMS];
+
+static cprogram *cache_program(GLuint program) {
+    if (!program || program >= CACHE_PROGRAMS) return 0;
+    if (program >= cprogram_count) {
+        uint32_t n = cprogram_count ? cprogram_count : 64;
+        while (n <= program) n *= 2;
+        cprogram *p = (cprogram *)realloc(cprograms, n * sizeof *p);
+        if (!p) return 0;
+        memset(p + cprogram_count, 0, (n - cprogram_count) * sizeof *p);
+        cprograms = p; cprogram_count = n;
+    }
+    return &cprograms[program];
+}
+
+static void cache_forget_uniforms(GLuint program) {
+    cprogram *p = cache_program(program);
+    if (p) p->generation++;
+}
+
+/* Whether the current program's uniform `location` already has these bytes (and records them). */
+static int uniform_same(GLint location, const void *value, uint32_t len) {
+    if (!program_known || location < 0 || len > 64) return 0;
+    cprogram *p = cache_program(current_program);
+    if (!p || p->uncached) return 0;
+    cuniform *e = &cache_uniforms[((uint32_t)current_program * 2654435761u ^ (uint32_t)location * 40503u) & (CACHE_UNIFORMS - 1)];
+    if (e->program == current_program && e->location == location && e->generation == p->generation + 1 && e->len == len && !memcmp(e->bytes, value, len)) return 1;
+    e->program = current_program; e->location = location; e->generation = p->generation + 1; e->len = (uint8_t)len;
+    memcpy(e->bytes, value, len);
+    return 0;
+}
+
 static void attrib_pointer(GLuint index, GLint size, GLenum type, GLboolean normalized, GLsizei stride, const void *pointer, int integer) {
     if (!vertex_array && !array_buffer && pointer && index < CLIENT_ATTRIBS) {
         attrib *a = &attribs[index];   /* in the program's memory: recorded, sent at the draw */
@@ -414,12 +574,26 @@ static void attrib_pointer(GLuint index, GLint size, GLenum type, GLboolean norm
         return;
     }
     if (!vertex_array && index < CLIENT_ATTRIBS) attribs[index].client = 0;
+    cvao *v = index < CLIENT_ATTRIBS ? cache_vao() : 0;
+    if (v) {
+        cattr *c = &v->a[index];
+        uint32_t offset = (uint32_t)(uintptr_t)pointer;
+        if (c->pointer_known && c->buffer == array_buffer && c->size == size && c->type == type && c->stride == stride
+            && c->offset == offset && c->normalized == normalized && c->integer == integer) return;
+        c->pointer_known = 1; c->buffer = array_buffer; c->size = size; c->type = type; c->stride = stride;
+        c->offset = offset; c->normalized = normalized; c->integer = (uint8_t)integer;
+    }
     if (integer) gasm_gl_vertex_attrib_ipointer(index, size, type, stride, (uint32_t)(uintptr_t)pointer);
     else gasm_gl_vertex_attrib_pointer(index, size, type, normalized, stride, (uint32_t)(uintptr_t)pointer);
 }
 
 static void attrib_enable(GLuint index, int on) {
     if (!vertex_array && index < CLIENT_ATTRIBS) attribs[index].enabled = on;
+    cvao *v = index < CLIENT_ATTRIBS ? cache_vao() : 0;
+    if (v) {
+        if (v->a[index].enabled == (on ? 2 : 1)) return;
+        v->a[index].enabled = on ? 2 : 1;
+    }
     if (on) gasm_gl_enable_vertex_attrib_array(index);
     else gasm_gl_disable_vertex_attrib_array(index);
 }
@@ -640,6 +814,8 @@ static void *map_range(GLenum target, GLintptr offset, GLsizeiptr length, GLbitf
         if (!p) { c_error = GL_OUT_OF_MEMORY; return 0; }
         if ((access & GL_MAP_READ_BIT) || !(access & (GL_MAP_INVALIDATE_RANGE_BIT | GL_MAP_INVALIDATE_BUFFER_BIT)))
             gasm_gl_get_buffer_sub_data(target, (uint32_t)offset, p, (uint32_t)length);   /* the current contents */
+        else
+            memset(p, 0, (size_t)length);   /* invalidated: GL leaves it undefined, gasm zeros (what's left unwritten is uploaded and hashed) */
         maps[i] = (mapping){ target, p, offset, length, access };
         return p;
     }

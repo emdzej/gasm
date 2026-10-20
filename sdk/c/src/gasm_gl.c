@@ -74,6 +74,109 @@ static void upload_client(GLsizei vertices, GLsizei instances) {
     gasm_gl_bind_buffer(GL_ARRAY_BUFFER, array_buffer);
 }
 
+/* ---- state that is already set: such calls never leave the guest -------------------------
+ * A call into the runner costs the same whether or not it changes anything (the crossing,
+ * the WebGL model, ANGLE), and engines written for desktop drivers repeat state freely:
+ * Godot's Compatibility renderer re-specifies each draw's instance attributes, textures
+ * and uniforms, and 43 % of its calls changed nothing. Kept here: vertex attributes per
+ * vertex array (not the default one, whose client arrays are above), the array and element
+ * buffers, the active unit and its textures, the program and small uniform values. Only
+ * state is skipped, never data (the runner hashes uploads, not state), and any doubt
+ * (an unknown entry, a collision) sends the call: the cache can only drop a call that sets
+ * what the last identical call set. */
+typedef struct { GLuint buffer; GLint size; GLenum type; GLsizei stride; uint32_t offset; GLuint divisor;
+                 uint8_t normalized, integer, pointer_known, divisor_known, enabled; } cattr;   /* enabled: 0 unknown, 1 off, 2 on */
+/* Vertex arrays by number in a small table (engines make and delete some every frame, so
+ * numbers grow): another array with the same slot takes it over, its state forgotten. */
+typedef struct { GLuint id; uint32_t buffers; cattr a[CLIENT_ATTRIBS]; GLuint elements; uint8_t elements_known; } cvao;
+#define CACHE_VAOS 256
+static cvao cvaos[CACHE_VAOS];
+static uint32_t buffer_generation = 1;   /* + 1 at every buffer deletion */
+
+static cvao *cache_vao(void) {   /* the bound vertex array's entry, or null */
+    if (!vertex_array) return 0;
+    cvao *v = &cvaos[(vertex_array * 2654435761u) >> 24];
+    if (v->id != vertex_array) {
+        memset(v, 0, sizeof *v);
+        v->id = vertex_array;
+    }
+    if (v->buffers != buffer_generation) {   /* a deleted buffer left every vertex array */
+        v->buffers = buffer_generation;
+        v->elements_known = 0;
+        for (int j = 0; j < CLIENT_ATTRIBS; j++) v->a[j].pointer_known = 0;
+    }
+    return v;
+}
+
+static void cache_forget_vao(GLuint array) {
+    cvao *v = &cvaos[(array * 2654435761u) >> 24];
+    if (array && v->id == array) memset(v, 0, sizeof *v);
+}
+
+#define CACHE_UNITS 32
+static GLuint active_unit;   /* 0 .. CACHE_UNITS-1, or CACHE_UNITS: unknown */
+static GLuint cache_textures[CACHE_UNITS][4];   /* + 1: 0 unknown */
+
+static int texture_slot(GLenum target) {
+    switch (target) {
+    case GL_TEXTURE_2D: return 0;
+    case GL_TEXTURE_CUBE_MAP: return 1;
+    case GL_TEXTURE_3D: return 2;
+    case GL_TEXTURE_2D_ARRAY: return 3;
+    default: return -1;
+    }
+}
+
+static void cache_forget_texture(GLuint texture) {   /* deleted: unbound wherever it was */
+    for (int u = 0; u < CACHE_UNITS; u++)
+        for (int t = 0; t < 4; t++)
+            if (cache_textures[u][t] == texture + 1) cache_textures[u][t] = 0;
+}
+
+/* Uniform values by program and location. A location can't name an element another one
+ * also names (the model numbers names, GL resolves "a" and "a[0]" to one uniform), so a
+ * program whose locations were asked for with a "[" is never cached, and writing more
+ * than one element, or linking, forgets the program's values (its generation). */
+static GLuint current_program;
+static uint8_t program_known = 1;
+typedef struct { uint32_t generation; uint8_t uncached; } cprogram;
+static cprogram *cprograms;
+static uint32_t cprogram_count;
+#define CACHE_PROGRAMS 65536
+#define CACHE_UNIFORMS 2048
+typedef struct { GLuint program; GLint location; uint32_t generation; uint8_t len; uint8_t bytes[64]; } cuniform;
+static cuniform cache_uniforms[CACHE_UNIFORMS];
+
+static cprogram *cache_program(GLuint program) {
+    if (!program || program >= CACHE_PROGRAMS) return 0;
+    if (program >= cprogram_count) {
+        uint32_t n = cprogram_count ? cprogram_count : 64;
+        while (n <= program) n *= 2;
+        cprogram *p = (cprogram *)realloc(cprograms, n * sizeof *p);
+        if (!p) return 0;
+        memset(p + cprogram_count, 0, (n - cprogram_count) * sizeof *p);
+        cprograms = p; cprogram_count = n;
+    }
+    return &cprograms[program];
+}
+
+static void cache_forget_uniforms(GLuint program) {
+    cprogram *p = cache_program(program);
+    if (p) p->generation++;
+}
+
+/* Whether the current program's uniform `location` already has these bytes (and records them). */
+static int uniform_same(GLint location, const void *value, uint32_t len) {
+    if (!program_known || location < 0 || len > 64) return 0;
+    cprogram *p = cache_program(current_program);
+    if (!p || p->uncached) return 0;
+    cuniform *e = &cache_uniforms[((uint32_t)current_program * 2654435761u ^ (uint32_t)location * 40503u) & (CACHE_UNIFORMS - 1)];
+    if (e->program == current_program && e->location == location && e->generation == p->generation + 1 && e->len == len && !memcmp(e->bytes, value, len)) return 1;
+    e->program = current_program; e->location = location; e->generation = p->generation + 1; e->len = (uint8_t)len;
+    memcpy(e->bytes, value, len);
+    return 0;
+}
+
 static void attrib_pointer(GLuint index, GLint size, GLenum type, GLboolean normalized, GLsizei stride, const void *pointer, int integer) {
     if (!vertex_array && !array_buffer && pointer && index < CLIENT_ATTRIBS) {
         attrib *a = &attribs[index];   /* in the program's memory: recorded, sent at the draw */
@@ -82,12 +185,26 @@ static void attrib_pointer(GLuint index, GLint size, GLenum type, GLboolean norm
         return;
     }
     if (!vertex_array && index < CLIENT_ATTRIBS) attribs[index].client = 0;
+    cvao *v = index < CLIENT_ATTRIBS ? cache_vao() : 0;
+    if (v) {
+        cattr *c = &v->a[index];
+        uint32_t offset = (uint32_t)(uintptr_t)pointer;
+        if (c->pointer_known && c->buffer == array_buffer && c->size == size && c->type == type && c->stride == stride
+            && c->offset == offset && c->normalized == normalized && c->integer == integer) return;
+        c->pointer_known = 1; c->buffer = array_buffer; c->size = size; c->type = type; c->stride = stride;
+        c->offset = offset; c->normalized = normalized; c->integer = (uint8_t)integer;
+    }
     if (integer) gasm_gl_vertex_attrib_ipointer(index, size, type, stride, (uint32_t)(uintptr_t)pointer);
     else gasm_gl_vertex_attrib_pointer(index, size, type, normalized, stride, (uint32_t)(uintptr_t)pointer);
 }
 
 static void attrib_enable(GLuint index, int on) {
     if (!vertex_array && index < CLIENT_ATTRIBS) attribs[index].enabled = on;
+    cvao *v = index < CLIENT_ATTRIBS ? cache_vao() : 0;
+    if (v) {
+        if (v->a[index].enabled == (on ? 2 : 1)) return;
+        v->a[index].enabled = on ? 2 : 1;
+    }
     if (on) gasm_gl_enable_vertex_attrib_array(index);
     else gasm_gl_disable_vertex_attrib_array(index);
 }
@@ -308,6 +425,8 @@ static void *map_range(GLenum target, GLintptr offset, GLsizeiptr length, GLbitf
         if (!p) { c_error = GL_OUT_OF_MEMORY; return 0; }
         if ((access & GL_MAP_READ_BIT) || !(access & (GL_MAP_INVALIDATE_RANGE_BIT | GL_MAP_INVALIDATE_BUFFER_BIT)))
             gasm_gl_get_buffer_sub_data(target, (uint32_t)offset, p, (uint32_t)length);   /* the current contents */
+        else
+            memset(p, 0, (size_t)length);   /* invalidated: GL leaves it undefined, gasm zeros (what's left unwritten is uploaded and hashed) */
         maps[i] = (mapping){ target, p, offset, length, access };
         return p;
     }
@@ -334,6 +453,9 @@ static GLboolean unmap(GLenum target) {
 /* ---- the API ------------------------------------------------------------------------------ */
 
 void GL_APIENTRY glActiveTexture(GLenum texture) {
+    GLuint unit = texture - GL_TEXTURE0;
+    if (unit < CACHE_UNITS && unit == active_unit) return;
+    active_unit = unit < CACHE_UNITS ? unit : CACHE_UNITS;
     gasm_gl_active_texture(texture);
 }
 
@@ -346,6 +468,14 @@ void GL_APIENTRY glBindAttribLocation(GLuint program, GLuint index, const GLchar
 }
 
 void GL_APIENTRY glBindBuffer(GLenum target, GLuint buffer) {
+    if (target == GL_ARRAY_BUFFER && buffer == array_buffer) return;
+    if (target == GL_ELEMENT_ARRAY_BUFFER) {
+        cvao *v = cache_vao();
+        if (v) {
+            if (v->elements_known && v->elements == buffer) return;
+            v->elements_known = 1; v->elements = buffer;
+        }
+    }
     track_buffer(target, buffer);
     gasm_gl_bind_buffer(target, buffer);
 }
@@ -359,6 +489,11 @@ void GL_APIENTRY glBindRenderbuffer(GLenum target, GLuint renderbuffer) {
 }
 
 void GL_APIENTRY glBindTexture(GLenum target, GLuint texture) {
+    int slot = texture_slot(target);
+    if (slot >= 0 && active_unit < CACHE_UNITS) {
+        if (cache_textures[active_unit][slot] == texture + 1) return;
+        cache_textures[active_unit][slot] = texture + 1;
+    }
     gasm_gl_bind_texture(target, texture);
 }
 
@@ -452,6 +587,7 @@ void GL_APIENTRY glDeleteBuffers(GLsizei n, const GLuint * buffers) {
         if (buffers[i] && buffers[i] == element_buffer0 && !vertex_array) element_buffer0 = 0;
         gasm_gl_delete_buffer(buffers[i]);
     }
+    if (n > 0) buffer_generation++;
 }
 
 void GL_APIENTRY glDeleteFramebuffers(GLsizei n, const GLuint * framebuffers) {
@@ -471,7 +607,10 @@ void GL_APIENTRY glDeleteShader(GLuint shader) {
 }
 
 void GL_APIENTRY glDeleteTextures(GLsizei n, const GLuint * textures) {
-    for (GLsizei i = 0; i < n; i++) gasm_gl_delete_texture(textures[i]);
+    for (GLsizei i = 0; i < n; i++) {
+        if (textures[i]) cache_forget_texture(textures[i]);
+        gasm_gl_delete_texture(textures[i]);
+    }
 }
 
 void GL_APIENTRY glDepthFunc(GLenum func) {
@@ -653,6 +792,7 @@ void GL_APIENTRY glGetUniformiv(GLuint program, GLint location, GLint * params) 
 }
 
 GLint GL_APIENTRY glGetUniformLocation(GLuint program, const GLchar * name) {
+    if (strchr(name, '[')) { cprogram *p = cache_program(program); if (p) p->uncached = 1; }
     return gasm_gl_get_uniform_location(program, name, (uint32_t)strlen(name));
 }
 
@@ -705,6 +845,7 @@ void GL_APIENTRY glLineWidth(GLfloat width) {
 }
 
 void GL_APIENTRY glLinkProgram(GLuint program) {
+    cache_forget_uniforms(program);
     gasm_gl_link_program(program);
 }
 
@@ -800,82 +941,122 @@ void GL_APIENTRY glTexSubImage2D(GLenum target, GLint level, GLint xoffset, GLin
 }
 
 void GL_APIENTRY glUniform1f(GLint location, GLfloat v0) {
+    GLfloat v[] = { v0 };
+    if (uniform_same(location, v, sizeof v)) return;
     gasm_gl_uniform1f(location, v0);
 }
 
 void GL_APIENTRY glUniform1fv(GLint location, GLsizei count, const GLfloat * value) {
+    if (count == 1 && uniform_same(location, value, 4)) return;
+    if (count != 1) cache_forget_uniforms(current_program);
     gasm_gl_uniform1fv(location, count, value);
 }
 
 void GL_APIENTRY glUniform1i(GLint location, GLint v0) {
+    GLint v[] = { v0 };
+    if (uniform_same(location, v, sizeof v)) return;
     gasm_gl_uniform1i(location, v0);
 }
 
 void GL_APIENTRY glUniform1iv(GLint location, GLsizei count, const GLint * value) {
+    if (count == 1 && uniform_same(location, value, 4)) return;
+    if (count != 1) cache_forget_uniforms(current_program);
     gasm_gl_uniform1iv(location, count, value);
 }
 
 void GL_APIENTRY glUniform2f(GLint location, GLfloat v0, GLfloat v1) {
+    GLfloat v[] = { v0, v1 };
+    if (uniform_same(location, v, sizeof v)) return;
     gasm_gl_uniform2f(location, v0, v1);
 }
 
 void GL_APIENTRY glUniform2fv(GLint location, GLsizei count, const GLfloat * value) {
+    if (count == 1 && uniform_same(location, value, 8)) return;
+    if (count != 1) cache_forget_uniforms(current_program);
     gasm_gl_uniform2fv(location, count, value);
 }
 
 void GL_APIENTRY glUniform2i(GLint location, GLint v0, GLint v1) {
+    GLint v[] = { v0, v1 };
+    if (uniform_same(location, v, sizeof v)) return;
     gasm_gl_uniform2i(location, v0, v1);
 }
 
 void GL_APIENTRY glUniform2iv(GLint location, GLsizei count, const GLint * value) {
+    if (count == 1 && uniform_same(location, value, 8)) return;
+    if (count != 1) cache_forget_uniforms(current_program);
     gasm_gl_uniform2iv(location, count, value);
 }
 
 void GL_APIENTRY glUniform3f(GLint location, GLfloat v0, GLfloat v1, GLfloat v2) {
+    GLfloat v[] = { v0, v1, v2 };
+    if (uniform_same(location, v, sizeof v)) return;
     gasm_gl_uniform3f(location, v0, v1, v2);
 }
 
 void GL_APIENTRY glUniform3fv(GLint location, GLsizei count, const GLfloat * value) {
+    if (count == 1 && uniform_same(location, value, 12)) return;
+    if (count != 1) cache_forget_uniforms(current_program);
     gasm_gl_uniform3fv(location, count, value);
 }
 
 void GL_APIENTRY glUniform3i(GLint location, GLint v0, GLint v1, GLint v2) {
+    GLint v[] = { v0, v1, v2 };
+    if (uniform_same(location, v, sizeof v)) return;
     gasm_gl_uniform3i(location, v0, v1, v2);
 }
 
 void GL_APIENTRY glUniform3iv(GLint location, GLsizei count, const GLint * value) {
+    if (count == 1 && uniform_same(location, value, 12)) return;
+    if (count != 1) cache_forget_uniforms(current_program);
     gasm_gl_uniform3iv(location, count, value);
 }
 
 void GL_APIENTRY glUniform4f(GLint location, GLfloat v0, GLfloat v1, GLfloat v2, GLfloat v3) {
+    GLfloat v[] = { v0, v1, v2, v3 };
+    if (uniform_same(location, v, sizeof v)) return;
     gasm_gl_uniform4f(location, v0, v1, v2, v3);
 }
 
 void GL_APIENTRY glUniform4fv(GLint location, GLsizei count, const GLfloat * value) {
+    if (count == 1 && uniform_same(location, value, 16)) return;
+    if (count != 1) cache_forget_uniforms(current_program);
     gasm_gl_uniform4fv(location, count, value);
 }
 
 void GL_APIENTRY glUniform4i(GLint location, GLint v0, GLint v1, GLint v2, GLint v3) {
+    GLint v[] = { v0, v1, v2, v3 };
+    if (uniform_same(location, v, sizeof v)) return;
     gasm_gl_uniform4i(location, v0, v1, v2, v3);
 }
 
 void GL_APIENTRY glUniform4iv(GLint location, GLsizei count, const GLint * value) {
+    if (count == 1 && uniform_same(location, value, 16)) return;
+    if (count != 1) cache_forget_uniforms(current_program);
     gasm_gl_uniform4iv(location, count, value);
 }
 
 void GL_APIENTRY glUniformMatrix2fv(GLint location, GLsizei count, GLboolean transpose, const GLfloat * value) {
+    if (count == 1 && !transpose && uniform_same(location, value, 16)) return;
+    if (count != 1) cache_forget_uniforms(current_program);
     gasm_gl_uniform_matrix2fv(location, count, transpose, value);
 }
 
 void GL_APIENTRY glUniformMatrix3fv(GLint location, GLsizei count, GLboolean transpose, const GLfloat * value) {
+    if (count == 1 && !transpose && uniform_same(location, value, 36)) return;
+    if (count != 1) cache_forget_uniforms(current_program);
     gasm_gl_uniform_matrix3fv(location, count, transpose, value);
 }
 
 void GL_APIENTRY glUniformMatrix4fv(GLint location, GLsizei count, GLboolean transpose, const GLfloat * value) {
+    if (count == 1 && !transpose && uniform_same(location, value, 64)) return;
+    if (count != 1) cache_forget_uniforms(current_program);
     gasm_gl_uniform_matrix4fv(location, count, transpose, value);
 }
 
 void GL_APIENTRY glUseProgram(GLuint program) {
+    if (program_known && program == current_program) return;
+    current_program = program; program_known = 1;
     gasm_gl_use_program(program);
 }
 
@@ -994,26 +1175,38 @@ void GL_APIENTRY glDrawBuffers(GLsizei n, const GLenum * bufs) {
 }
 
 void GL_APIENTRY glUniformMatrix2x3fv(GLint location, GLsizei count, GLboolean transpose, const GLfloat * value) {
+    if (count == 1 && !transpose && uniform_same(location, value, 24)) return;
+    if (count != 1) cache_forget_uniforms(current_program);
     gasm_gl_uniform_matrix2x3fv(location, count, transpose, value);
 }
 
 void GL_APIENTRY glUniformMatrix3x2fv(GLint location, GLsizei count, GLboolean transpose, const GLfloat * value) {
+    if (count == 1 && !transpose && uniform_same(location, value, 24)) return;
+    if (count != 1) cache_forget_uniforms(current_program);
     gasm_gl_uniform_matrix3x2fv(location, count, transpose, value);
 }
 
 void GL_APIENTRY glUniformMatrix2x4fv(GLint location, GLsizei count, GLboolean transpose, const GLfloat * value) {
+    if (count == 1 && !transpose && uniform_same(location, value, 32)) return;
+    if (count != 1) cache_forget_uniforms(current_program);
     gasm_gl_uniform_matrix2x4fv(location, count, transpose, value);
 }
 
 void GL_APIENTRY glUniformMatrix4x2fv(GLint location, GLsizei count, GLboolean transpose, const GLfloat * value) {
+    if (count == 1 && !transpose && uniform_same(location, value, 32)) return;
+    if (count != 1) cache_forget_uniforms(current_program);
     gasm_gl_uniform_matrix4x2fv(location, count, transpose, value);
 }
 
 void GL_APIENTRY glUniformMatrix3x4fv(GLint location, GLsizei count, GLboolean transpose, const GLfloat * value) {
+    if (count == 1 && !transpose && uniform_same(location, value, 48)) return;
+    if (count != 1) cache_forget_uniforms(current_program);
     gasm_gl_uniform_matrix3x4fv(location, count, transpose, value);
 }
 
 void GL_APIENTRY glUniformMatrix4x3fv(GLint location, GLsizei count, GLboolean transpose, const GLfloat * value) {
+    if (count == 1 && !transpose && uniform_same(location, value, 48)) return;
+    if (count != 1) cache_forget_uniforms(current_program);
     gasm_gl_uniform_matrix4x3fv(location, count, transpose, value);
 }
 
@@ -1038,12 +1231,17 @@ void GL_APIENTRY glFlushMappedBufferRange(GLenum target, GLintptr offset, GLsize
 }
 
 void GL_APIENTRY glBindVertexArray(GLuint array) {
+    if (array == vertex_array) return;
     vertex_array = array;
     gasm_gl_bind_vertex_array(array);
 }
 
 void GL_APIENTRY glDeleteVertexArrays(GLsizei n, const GLuint * arrays) {
-    for (GLsizei i = 0; i < n; i++) { if (arrays[i] == vertex_array) vertex_array = 0; gasm_gl_delete_vertex_array(arrays[i]); }
+    for (GLsizei i = 0; i < n; i++) {
+        if (arrays[i] == vertex_array) vertex_array = 0;
+        cache_forget_vao(arrays[i]);
+        gasm_gl_delete_vertex_array(arrays[i]);
+    }
 }
 
 void GL_APIENTRY glGenVertexArrays(GLsizei n, GLuint * arrays) {
@@ -1119,34 +1317,50 @@ GLint GL_APIENTRY glGetFragDataLocation(GLuint program, const GLchar * name) {
 }
 
 void GL_APIENTRY glUniform1ui(GLint location, GLuint v0) {
+    GLuint v[] = { v0 };
+    if (uniform_same(location, v, sizeof v)) return;
     gasm_gl_uniform1ui(location, v0);
 }
 
 void GL_APIENTRY glUniform2ui(GLint location, GLuint v0, GLuint v1) {
+    GLuint v[] = { v0, v1 };
+    if (uniform_same(location, v, sizeof v)) return;
     gasm_gl_uniform2ui(location, v0, v1);
 }
 
 void GL_APIENTRY glUniform3ui(GLint location, GLuint v0, GLuint v1, GLuint v2) {
+    GLuint v[] = { v0, v1, v2 };
+    if (uniform_same(location, v, sizeof v)) return;
     gasm_gl_uniform3ui(location, v0, v1, v2);
 }
 
 void GL_APIENTRY glUniform4ui(GLint location, GLuint v0, GLuint v1, GLuint v2, GLuint v3) {
+    GLuint v[] = { v0, v1, v2, v3 };
+    if (uniform_same(location, v, sizeof v)) return;
     gasm_gl_uniform4ui(location, v0, v1, v2, v3);
 }
 
 void GL_APIENTRY glUniform1uiv(GLint location, GLsizei count, const GLuint * value) {
+    if (count == 1 && uniform_same(location, value, 4)) return;
+    if (count != 1) cache_forget_uniforms(current_program);
     gasm_gl_uniform1uiv(location, count, value);
 }
 
 void GL_APIENTRY glUniform2uiv(GLint location, GLsizei count, const GLuint * value) {
+    if (count == 1 && uniform_same(location, value, 8)) return;
+    if (count != 1) cache_forget_uniforms(current_program);
     gasm_gl_uniform2uiv(location, count, value);
 }
 
 void GL_APIENTRY glUniform3uiv(GLint location, GLsizei count, const GLuint * value) {
+    if (count == 1 && uniform_same(location, value, 12)) return;
+    if (count != 1) cache_forget_uniforms(current_program);
     gasm_gl_uniform3uiv(location, count, value);
 }
 
 void GL_APIENTRY glUniform4uiv(GLint location, GLsizei count, const GLuint * value) {
+    if (count == 1 && uniform_same(location, value, 16)) return;
+    if (count != 1) cache_forget_uniforms(current_program);
     gasm_gl_uniform4uiv(location, count, value);
 }
 
@@ -1288,6 +1502,11 @@ void GL_APIENTRY glGetSamplerParameterfv(GLuint sampler, GLenum pname, GLfloat *
 
 void GL_APIENTRY glVertexAttribDivisor(GLuint index, GLuint divisor) {
     if (!vertex_array && index < CLIENT_ATTRIBS) attribs[index].divisor = divisor;
+    cvao *v = index < CLIENT_ATTRIBS ? cache_vao() : 0;
+    if (v) {
+        if (v->a[index].divisor_known && v->a[index].divisor == divisor) return;
+        v->a[index].divisor_known = 1; v->a[index].divisor = divisor;
+    }
     gasm_gl_vertex_attrib_divisor(index, divisor);
 }
 

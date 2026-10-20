@@ -14,6 +14,21 @@ Runners:
   format when the game ends, with the share of the run spent inside calls to the
   runner. Time in those calls counts for the guest function that made them.
 
+C SDK (`gasm_gl.c`, so SDL 3 and Godot too):
+- GL calls that set what is already set never leave the guest (NiP #22): vertex
+  attributes per vertex array, the array and element buffers, the active unit and its
+  textures, the program and small uniform values. Godot's Compatibility renderer
+  repeats state freely: NiP's Głowno went from 57.7k to 35.0k calls a frame, and the
+  time inside calls to the runner from 26.5 % to 19.7 % of a headless run (8 % less
+  in all; in a window ANGLE's share of each call is saved too). Only state is
+  skipped, never uploads; frames render pixel-identical (checked through ANGLE).
+  Rust guests forward these calls as before.
+- `glMapBufferRange` with an invalidate bit zeroes the mapped copy (GL leaves it
+  undefined): what a game left unwritten was uploaded from leftover heap bytes, so
+  `gltest`'s hash depended on memory layout.
+- Godot's and `gltest`'s golden hashes change (the cache's tables move Godot's heap,
+  and its hash maps key on addresses; the runners agree).
+
 Godot:
 - `make godot-mt-names`: `godot-mt.wasm` with its function names (SCons option
   `gasm_names=yes`: the link without `-s`, `wasm-opt -g`), for profiles.

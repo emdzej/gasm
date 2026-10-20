@@ -178,6 +178,15 @@ from the repo root, then
   (`SDL_USE_BUILTIN_OPENGL_DEFINITIONS`). SDL's GLES 2 renderer uses client-side
   arrays (VBOs only on Emscripten): `gasm_gl.c` emulates them; functions overridden
   only for that are in `C_ONLY` in `gen-gl-headers.py`, so Rust still forwards them.
+- **`gasm_gl.c` skips GL state calls that change nothing** (the state cache, in
+  `gen-gl-headers.py`). A miss must always send the call, so: entries live in fixed
+  tables (Godot makes and deletes ~100 vertex arrays a frame: a table that grew by
+  number, walked on each buffer delete, made it 15 times slower), deletions forget
+  by generation counter, never by walking; uniforms are forgotten on link and on any
+  write of more than one element, and never cached for a program that looked up a
+  name with `[` (`a` and `a[0]` are one uniform to GL, two numbers to the model). Never
+  skip an upload (uploads are hashed). Check a change with pixel-identical
+  `--screenshot`s against the previous build, not only hashes.
 - **Runners never call a guest after it exited or trapped** (the windowed
   runner drops the game in `stop()`; the event loop can tick once more;
   `GasmHost.dead` makes `frame()` throw without calling the guest).
