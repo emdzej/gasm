@@ -45,6 +45,9 @@ pub struct Session {
     pub gl_stats: bool,
     /// `--profile <out.json>`: the main thread's guest stacks (`host::Profile`)
     pub profile: Option<std::path::PathBuf>,
+    /// a window that can go fullscreen (the window runner), and whether it starts so:
+    /// what set_fullscreen and is_fullscreen answer from the first call (gasm_init's too)
+    pub fullscreen: Option<bool>,
     /// `--watch-asset name=path`: files re-read as assets whenever they change
     /// (create each watch before opening its file, so no change is missed)
     pub watch_assets: Vec<crate::assets::AssetWatch>,
@@ -124,6 +127,10 @@ impl Session {
         }
         if let Some(out) = self.profile.clone() {
             host.profile = Some(crate::host::Profile::new(out));
+        }
+        if let Some(on) = self.fullscreen {
+            host.fullscreen_capable = true;
+            host.fullscreen = on;
         }
         if let Some(a) = gl {
             eprintln!("[gasm] gl: {}", a.renderer);

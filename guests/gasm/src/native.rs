@@ -204,6 +204,13 @@ pub mod abi {
     pub unsafe fn yield_frame() {
         super::end_frame();
     }
+    /// No window here: like a headless run, fullscreen can't be shown.
+    pub unsafe fn set_fullscreen(_on: u32) -> i32 {
+        0
+    }
+    pub unsafe fn is_fullscreen() -> u32 {
+        0
+    }
     pub unsafe fn set_title(ptr: *const u8, len: u32) {
         eprintln!("[gasm] title: {}", unsafe { text(ptr, len) });
     }

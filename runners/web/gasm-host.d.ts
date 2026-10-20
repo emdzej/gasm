@@ -249,6 +249,10 @@ export interface GasmHostOptions {
   onLog?: (message: string) => void;
   /** gasm.set_title, after a frame that changed it (cleaned; null = back to the default). */
   onTitle?: (title: string | null) => void;
+  /** gasm.set_fullscreen, after the frame that asked (true: fullscreen). Without it the guest
+   * hears it can't go fullscreen (set_fullscreen returns 0), as in headless runs. Browsers
+   * allow requestFullscreen only shortly after a key press or click. */
+  onFullscreen?: ((on: boolean) => void) | null;
   /** Buttons held on virtual pad `player` (0..3) as a bitmask. */
   getPad?: (player: number) => number;
   /** Reproducible (headless) mode: frame-derived time_ms and WASI clocks, a fixed
@@ -314,6 +318,9 @@ export declare class GasmHost {
   constructor(options?: GasmHostOptions);
   /** The guest's set_title (cleaned); null: the runner's default. */
   readonly title: string | null;
+  /** Shown fullscreen now: what gasm.is_fullscreen answers. The embedder keeps it current
+   * (e.g. from document.fullscreenElement). */
+  fullscreen: boolean;
   /** The module's gasm.title section (cleaned), after load(); null if none. */
   readonly staticTitle: string | null;
   /** This guest runs through gasm_run (stack switching, JSPI): use frameAsync / runFramesAsync. */

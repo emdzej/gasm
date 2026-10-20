@@ -305,6 +305,12 @@ pub struct Host {
     pub title: Option<String>,
     /// set_title changed `title` since the runner last looked (it clears this)
     pub title_changed: bool,
+    /// set_fullscreen can be honoured here (the window runner sets it; headless: false)
+    pub fullscreen_capable: bool,
+    /// shown fullscreen now (is_fullscreen; the window runner keeps it up to date)
+    pub fullscreen: bool,
+    /// set_fullscreen asked for this since the runner last looked (it takes it)
+    pub fullscreen_request: Option<bool>,
     pub hashing: bool,
     pub video_hash: Fnv,
     pub audio_hash: Fnv,
@@ -372,6 +378,9 @@ impl Host {
             provided: HashSet::new(),
             title: None,
             title_changed: false,
+            fullscreen_capable: false,
+            fullscreen: false,
+            fullscreen_request: None,
             aspect: None,
             run: None,
             rgba: Vec::new(),
@@ -617,6 +626,17 @@ fn add_gasm_imports(linker: &mut Linker<Host>) -> wasmtime::Result<()> {
         }
         Ok(())
     })?;
+
+    // fullscreen: a request the runner applies after the frame (or not: headless runs)
+    linker.func_wrap("gasm", "set_fullscreen", |mut caller: Caller<'_, Host>, on: u32| -> i32 {
+        let h = caller.data_mut();
+        if !h.fullscreen_capable {
+            return 0;
+        }
+        h.fullscreen_request = Some(on != 0);
+        1
+    })?;
+    linker.func_wrap("gasm", "is_fullscreen", |caller: Caller<'_, Host>| -> u32 { caller.data().fullscreen as u32 })?;
 
     linker.func_wrap("gasm", "time_ms", |caller: Caller<'_, Host>| -> f64 {
         let h = caller.data();

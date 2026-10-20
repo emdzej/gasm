@@ -41,7 +41,7 @@ export class GasmWorker {
   static async start({
     wasm, assets = [], params = {}, storage = null, allowNet = false, keyboard = false, memoryLimit = undefined, threads = 0, bytes: moduleBytes = null,
     hashing = false, virtualTime = false, onLog = console.log, onAudio = () => {}, onTitle = () => {}, onCopyText = () => {}, onSaveFile = () => true, ask = null,
-    canvas = null, glCanvas = null, size = null, url = null,
+    onFullscreen = null, canvas = null, glCanvas = null, size = null, url = null,
   }) {
     // written out literally so bundlers (Vite, webpack) find and emit the worker
     const worker = url
@@ -49,6 +49,7 @@ export class GasmWorker {
       : new Worker(new URL('./gasm-worker.js', import.meta.url), { type: 'module', name: 'gasm-guest' });
     const w = new GasmWorker(worker, onLog, onAudio);
     w.onTitle = onTitle;
+    w.onFullscreen = onFullscreen;
     w.onCopyText = onCopyText;
     w.onSaveFile = onSaveFile;
     w.ask = ask;
@@ -57,7 +58,7 @@ export class GasmWorker {
     const bytes = module || wasm instanceof ArrayBuffer ? wasm : wasm.buffer.slice(wasm.byteOffset, wasm.byteOffset + wasm.byteLength);
     const transfer = [...(module ? [] : [bytes]), ...(canvas ? [canvas] : []), ...(glCanvas ? [glCanvas] : [])];
     const ready = w.next('ready');
-    w.worker.postMessage({ type: 'init', wasm: bytes, bytes: moduleBytes, assets, params, storage, allowNet, keyboard, hashing, virtualTime, canvas, glCanvas, size, memoryLimit, threads, ask: !!ask }, transfer);
+    w.worker.postMessage({ type: 'init', wasm: bytes, bytes: moduleBytes, assets, params, storage, allowNet, keyboard, hashing, virtualTime, canvas, glCanvas, size, memoryLimit, threads, ask: !!ask, fullscreen: !!onFullscreen }, transfer);
     try {
       const r = await ready;
       w.frameRate = r.frameRate;
@@ -79,6 +80,8 @@ export class GasmWorker {
     this.stats = null;
     this.title = null;    // the guest's set_title, as of the last batch
     this.onTitle = () => {};
+    this.onFullscreen = null;   // set_fullscreen: (on), after the batch that asked
+    this.fullscreen = false;    // shown fullscreen now: the page keeps it current (is_fullscreen)
     this.onCopyText = () => {};
     this.onSaveFile = () => true;
     worker.onmessage = (e) => this.message(e.data);
@@ -101,6 +104,7 @@ export class GasmWorker {
       this.onTitle(m.title);
     }
     if (m.type === 'done') {
+      if (m.fullscreen !== null) this.onFullscreen?.(m.fullscreen);
       if (m.copied !== null) this.onCopyText(m.copied);
       // gasm:files: the worker counted these as saved; the page offers them to the player
       for (const s of m.saves) {
@@ -159,7 +163,7 @@ export class GasmWorker {
     if (this.failed) return Promise.reject(this.failed);
     const done = this.next('done');
     const norm = steps.map((s) => (Array.isArray(s) ? { pads: s } : s));
-    this.worker.postMessage({ type: 'frames', steps: norm, show, size, copy });
+    this.worker.postMessage({ type: 'frames', steps: norm, show, size, copy, fullscreen: this.fullscreen });
     return done;
   }
 
@@ -204,7 +208,7 @@ async function buildAssets(specs, log) {
 }
 
 if (inWorker) {
-  let host = null, gfx = null, glCanvas = null, keyboard = false, audio = [], copied = null, saves = [], onConsent = () => {};
+  let host = null, gfx = null, glCanvas = null, keyboard = false, audio = [], copied = null, saves = [], fullscreen = null, onConsent = () => {};
   const post = (m, transfer = []) => globalThis.postMessage(m, transfer);
   const log = (msg) => post({ type: 'log', msg });
   const stats = () => ({
@@ -245,6 +249,7 @@ if (inWorker) {
           ...(m.memoryLimit !== undefined ? { memoryLimit: m.memoryLimit } : {}), threads: m.threads ?? 0,
           onAudio: (samples, rate, channels) => audio.push({ samples, rate, channels }), ...(gfx ? { gfx } : {}), ...(gl ? { gl } : {}),
           onCopyText: (t) => { copied = t; },
+          onFullscreen: m.fullscreen ? (on) => { fullscreen = on; } : null,
           onSaveFile: (name, mime, bytes) => { saves.push({ name, mime, bytes }); return true; },
         });
         host.hashing = m.hashing;
@@ -258,6 +263,7 @@ if (inWorker) {
       let exit = null, error = null, video = false;
       if (gfx && m.size) gfx.setSize(...m.size);
       if (glCanvas && m.size && (glCanvas.width !== m.size[0] || glCanvas.height !== m.size[1])) [glCanvas.width, glCanvas.height] = m.size;
+      host.fullscreen = !!m.fullscreen;
       const steps = m.steps.map((s) => ({ ...s, text: keyboard ? (s.text ?? '') : null }));
       // a gfx canvas belongs to WebGPU here: runFrames blits 2D frames into it
       // gasm_run guests (stack switching) resume asynchronously
@@ -271,9 +277,10 @@ if (inWorker) {
       if (!gfx && video) frame = { rgba: host.rgba.slice(), width: host.width, height: host.height, aspect: host.aspect };
       const out = audio; audio = [];
       const text = copied; copied = null;
+      const asked = fullscreen; fullscreen = null;
       const files = saves; saves = [];
       const transfer = [...(frame ? [frame.rgba.buffer] : []), ...out.map((a) => a.samples.buffer), ...files.map((f) => f.bytes.buffer)];
-      post({ type: 'done', frame, png, audio: out, stats: stats(), frameIndex: host.frameIndex, frameRate: host.frameRate, inputMode: host.inputMode, title: host.title, copied: text, saves: files, exit, error }, transfer);
+      post({ type: 'done', frame, png, audio: out, stats: stats(), frameIndex: host.frameIndex, frameRate: host.frameRate, inputMode: host.inputMode, title: host.title, fullscreen: asked, copied: text, saves: files, exit, error }, transfer);
     } else if (m.type === 'setAsset') {
       host?.setAsset(m.name, m.bytes);
     } else if (m.type === 'removeAsset') {

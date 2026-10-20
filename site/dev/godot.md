@@ -150,7 +150,12 @@ saves and loads a settings file. When the player quits, the game gets
 - **The window** is the gasm drawable: its size is the player's window or canvas,
   `DisplayServer.window_set_title` sets the title, and `get_tree().quit(code)`
   ends the game with that exit code. There is one window (no popups as separate
-  windows) and no fullscreen switching from the game.
+  windows). `DisplayServer.window_set_mode(WINDOW_MODE_FULLSCREEN)` and back to
+  `WINDOW_MODE_WINDOWED` switch fullscreen, but only from the frame that handles
+  the player's key press or click (a settings button; gasm ignores it otherwise,
+  as browsers do), so the project's start-up window mode isn't applied: the
+  player starts fullscreen with `--fullscreen`. `window_get_mode` reads back what
+  the player sees, F11 and Esc included (it was `MINIMIZED` before gasm 0.16).
 
 ## 7. Test it with hashes
 

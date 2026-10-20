@@ -26,6 +26,10 @@
   canvas.gl { image-rendering: auto; }
   canvas.gpu { image-rendering: auto; aspect-ratio: 16 / 9; width: min(100%, calc((100vh - 12rem) * 16 / 9)); height: auto; }
   main.drag canvas { outline: 2px dashed var(--accent); }
+  /* gasm.set_fullscreen: the stage alone, the frame as large as its shape allows */
+  main:fullscreen { padding: 0; background: #000; }
+  main:fullscreen canvas { width: min(100vw, 100vh * var(--ar)); }
+  main:fullscreen canvas.gpu { width: min(100vw, 100vh * 16 / 9); }
   footer { display: flex; justify-content: space-between; gap: 1rem; padding: .5rem 1rem; color: var(--dim);
            border-top: 1px solid #222832; font-size: 12px; }
   #log { white-space: pre; overflow: hidden; text-overflow: ellipsis; max-width: 70vw; }

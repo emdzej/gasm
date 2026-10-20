@@ -83,7 +83,7 @@ export const memoryLimitMessage = (limit) => `the game needs more memory than it
 export class GasmHost {
   constructor({ assets = {}, params = {}, gfx = new NullGfx(), storage = new MemoryStorage(), allowNet = false,
                 onPresent = () => {}, onAudio = () => {}, onLog = console.log, onTitle = () => {}, onCopyText = () => {}, onSaveFile = () => true,
-                getPad = () => 0, virtualTime = false, stackSwitching = STACK_SWITCHING, gl = null,
+                onFullscreen = null, getPad = () => 0, virtualTime = false, stackSwitching = STACK_SWITCHING, gl = null,
                 fetchReplay = null, fetchRecord = null, memoryLimit = DEFAULT_MEMORY_LIMIT, userAgent = null, ask = null, threads = 0 } = {}) {
     // GasmAssetProvider ({ size(name), readAt(name, offset, dst), names() }), or a plain
     // { name: Uint8Array } record (wrapped as an in-memory provider).
@@ -105,6 +105,11 @@ export class GasmHost {
     this.onAudio = onAudio;          // (samples: Float32Array interleaved, rate, channels)
     this.onLog = onLog;
     this.onTitle = onTitle;
+    // set_fullscreen: (on: boolean) after the frame that asked; null: this embedder can't
+    // show the game fullscreen (set_fullscreen returns 0, as in headless runs)
+    this.onFullscreen = onFullscreen;
+    this.fullscreen = false;         // shown fullscreen now (is_fullscreen); the embedder keeps it current
+    this.fullscreenRequest = null;   // what set_fullscreen asked for this frame (true/false), until the frame ends
     // gasm:clipboard: (text) after a frame that copied text; put it on the clipboard
     this.onCopyText = onCopyText;
     this.pasted = null;              // the player's pasted text, during the frame that carries the paste key
@@ -203,6 +208,12 @@ export class GasmHost {
         const t = cleanTitle(this.str(ptr, len));
         if (t !== this.title) { this.title = t; this.titleChanged = true; }
       },
+      set_fullscreen: (on) => {
+        if (!this.onFullscreen) return 0;
+        this.fullscreenRequest = on !== 0;
+        return 1;
+      },
+      is_fullscreen: () => (this.fullscreen ? 1 : 0),
       time_ms: () => (this.virtualTime ? this.vtime : performance.now() - this.t0),
       // minutes east of UTC (getTimezoneOffset is west); headless runs are UTC
       max_threads: () => this.pool?.size ?? 0,
@@ -629,6 +640,7 @@ export class GasmHost {
     } finally {
       this.frameIndex++; // a frame that exits or traps still counts (as in the other runners)
       if (this.titleChanged) { this.titleChanged = false; this.onTitle(this.title); }
+      if (this.fullscreenRequest !== null) { const on = this.fullscreenRequest; this.fullscreenRequest = null; this.onFullscreen?.(on); }
       if (this.copied !== null) { const t = this.copied; this.copied = null; this.onCopyText(t); }
       this.files.flush();
     }
@@ -662,6 +674,7 @@ export class GasmHost {
     } finally {
       this.frameIndex++;
       if (this.titleChanged) { this.titleChanged = false; this.onTitle(this.title); }
+      if (this.fullscreenRequest !== null) { const on = this.fullscreenRequest; this.fullscreenRequest = null; this.onFullscreen?.(on); }
       if (this.copied !== null) { const t = this.copied; this.copied = null; this.onCopyText(t); }
       this.files.flush();
     }

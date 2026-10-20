@@ -11,6 +11,8 @@
 //! Clipboard (`gasm:clipboard`): pasted text is logged ("pasted ..."), and C copies
 //! "copied by inputtest" (scripts/player-test.mjs). Files (`gasm:files`): S saves
 //! inputtest.txt for the player and logs the save's state ("save: ...").
+//! Fullscreen: F asks to switch (`gasm::set_fullscreen`), and every change of
+//! `gasm::is_fullscreen` is logged ("fullscreen: on/off"), also the player's own key.
 
 use gasm::input::{self, Pointer};
 use gasm::keys;
@@ -27,6 +29,8 @@ struct InputTest {
     saves: u32,
     /// the last save, until it's done
     save: Option<gasm::files::Save>,
+    /// is_fullscreen as of the last frame
+    fullscreen: bool,
 }
 
 fn rect(fb: &mut [u8], x: i32, y: i32, w: i32, h: i32, c: [u8; 3]) {
@@ -62,7 +66,7 @@ impl gasm::Game for InputTest {
             let ratio = (n.parse().map_err(|_| "aspect: bad num")?, d.parse().map_err(|_| "aspect: bad den")?);
             gasm::log!("aspect {}:{} shown by the runner: {}", ratio.0, ratio.1, gasm::video_set_aspect(ratio.0, ratio.1));
         }
-        Ok(InputTest { fb: vec![0; W * H * 4], wheel: (0.0, 0.0), motion: (0.0, 0.0), clicks: 0, flash: vec![0; keys::NAMES.len()], saves: 0, save: None })
+        Ok(InputTest { fb: vec![0; W * H * 4], wheel: (0.0, 0.0), motion: (0.0, 0.0), clicks: 0, flash: vec![0; keys::NAMES.len()], saves: 0, save: None, fullscreen: false })
     }
 
     fn frame(&mut self) {
@@ -76,6 +80,10 @@ impl gasm::Game for InputTest {
             self.flash[e.code as usize] = 8;
             if e.down && keys::NAMES[e.code as usize] == "KeyC" && gasm::clipboard::available() {
                 gasm::clipboard::set_text("copied by inputtest");
+            }
+            if e.down && keys::NAMES[e.code as usize] == "KeyF" {
+                let on = !gasm::is_fullscreen();
+                gasm::log!("fullscreen: asked {}, the runner can: {}", if on { "on" } else { "off" }, gasm::set_fullscreen(on));
             }
             if e.down && keys::NAMES[e.code as usize] == "KeyS" && gasm::files::available() {
                 self.saves += 1;
@@ -91,6 +99,10 @@ impl gasm::Game for InputTest {
                     self.save = None;
                 }
             }
+        }
+        if gasm::is_fullscreen() != self.fullscreen {
+            self.fullscreen = !self.fullscreen;
+            gasm::log!("fullscreen: {}", if self.fullscreen { "on" } else { "off" });
         }
         if let Some(t) = gasm::clipboard::available().then(gasm::clipboard::pasted).flatten() {
             gasm::log!("pasted {t:?}");

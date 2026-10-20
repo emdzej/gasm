@@ -287,7 +287,21 @@ async function initAudio() {
 // Two runtimes behind one loop: main thread (default; required for gasm:gfx) and
 // Worker mode (gasm-worker.js; lazy OPFS / File assets, guest off the main thread).
 let host = null, worker = null, gpu = null, inflight = false, running = false, rafId = 0;
-let workerGl = false;   // a gasm:gl game in Worker mode: its canvas belongs to the worker
+let workerGl = false;
+// gasm.set_fullscreen: the stage (the game's canvas) fullscreen and back. The browser allows
+// it only shortly after a key press or click; is_fullscreen follows what it did (and Esc).
+function gameFullscreen(on) {
+  if (on && !document.fullscreenElement) {
+    stage.requestFullscreen().catch((e) => log(`[gasm] fullscreen: ${e.message}`));
+  } else if (!on && document.fullscreenElement) {
+    document.exitFullscreen().catch(() => {});
+  }
+}
+document.addEventListener('fullscreenchange', () => {
+  const on = !!document.fullscreenElement;
+  if (host) host.fullscreen = on;
+  if (worker) worker.fullscreen = on;
+});   // a gasm:gl game in Worker mode: its canvas belongs to the worker
 let startGen = 0;     // start() calls; an older one still loading gives up
 let frame2d = null;   // the latest 2D frame, drawn once per tick
 // The canvas' display size in device pixels (Worker mode: the OffscreenCanvas can't measure itself).
@@ -575,7 +589,7 @@ async function start({ romBytes, romName = null } = {}) {
       if (folder) specs.push({ kind: 'files', entries: folder.entries, prefix });
       const start = (canvasOpt) => GasmWorker.start({
         wasm: module, bytes: threaded ? bytes : null, threads, assets: specs, params, storage: namespace, allowNet: allowedHosts(), ask: askPlayer, keyboard: true,
-        hashing: hashFrames > 0, virtualTime: hashFrames > 0, onLog: log, onAudio, onTitle: showTitle, onCopyText: copyText, onSaveFile: saveFile, ...canvasOpt,
+        hashing: hashFrames > 0, virtualTime: hashFrames > 0, onLog: log, onAudio, onTitle: showTitle, onFullscreen: gameFullscreen, onCopyText: copyText, onSaveFile: saveFile, ...canvasOpt,
       });
       if (usesGfx) {
         const size = canvasSize();
@@ -614,7 +628,7 @@ async function start({ romBytes, romName = null } = {}) {
         log(`storage unavailable (${e.message}); saves won't persist`);
         return new MemoryStorage();
       });
-      const h = new GasmHost({ assets, params, gfx, gl, storage, allowNet: allowedHosts(), ask: askPlayer, onPresent: present, onAudio, onLog: log, onTitle: showTitle, onCopyText: copyText, onSaveFile: saveFile,
+      const h = new GasmHost({ assets, params, gfx, gl, storage, allowNet: allowedHosts(), ask: askPlayer, onPresent: present, onAudio, onLog: log, onTitle: showTitle, onFullscreen: gameFullscreen, onCopyText: copyText, onSaveFile: saveFile,
                                virtualTime: hashFrames > 0 });
       h.text = '';     // the page has a keyboard
       if (stale()) { h.shutdown(); gfx?.device.destroy(); return; }

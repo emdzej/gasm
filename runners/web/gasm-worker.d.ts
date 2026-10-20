@@ -51,6 +51,8 @@ export declare class GasmWorker {
     onAudio?: (samples: Float32Array, rate: number, channels: number) => void;
     /** gasm.set_title changed (cleaned; null = the default). */
     onTitle?: (title: string | null) => void;
+    /** gasm.set_fullscreen, after the batch that asked (see GasmHostOptions.onFullscreen). */
+    onFullscreen?: ((on: boolean) => void) | null;
     /** gasm:clipboard: text the guest copied, after the batch. */
     onCopyText?: (text: string) => void;
     /** gasm:files: a file the guest saved for the player (the worker reports it saved). */
@@ -65,6 +67,8 @@ export declare class GasmWorker {
   readonly switching: boolean;
   /** The guest's set_title as of the last batch (null: default). */
   readonly title: string | null;
+  /** Shown fullscreen now, sent with each batch (gasm.is_fullscreen); the page keeps it current. */
+  fullscreen: boolean;
   /** GASM_INPUT_* flags the guest asked for, after the last batch. */
   inputMode: number;
   stats: WorkerStats | null;

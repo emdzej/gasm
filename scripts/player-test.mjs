@@ -101,6 +101,21 @@ try {
     const frames = logs.filter((l) => l.includes('pasted ')).length;
     check(`inputtest${mode}: pasted text lasts one frame`, frames === 1, `${frames} frames saw it`);
   }
+  // gasm.set_fullscreen: F asks (a key press: the browser's user activation), the stage goes
+  // fullscreen and is_fullscreen says so; leaving it from outside (Esc) reaches the game too
+  for (const mode of ['', '&worker']) {
+    logs.length = 0;
+    await send('Page.navigate', { url: `${BASE}?game=inputtest.wasm&autostart&nosplash${mode}` });
+    await running();
+    await send('Input.dispatchKeyEvent', { type: 'keyDown', code: 'KeyF', key: 'f', windowsVirtualKeyCode: 70, text: 'f' });
+    await send('Input.dispatchKeyEvent', { type: 'keyUp', code: 'KeyF', key: 'f', windowsVirtualKeyCode: 70 });
+    await sleep(800);
+    const full = await evaluate(`document.fullscreenElement?.id ?? null`);
+    check(`inputtest${mode}: set_fullscreen after a key press`, full === 'stage' && logs.some((l) => l.includes('fullscreen: on')), `${full} / ${logs.filter((l) => /fullscreen/.test(l)).join(' / ') || 'no fullscreen log'}`);
+    await evaluate(`document.exitFullscreen().then(() => true, () => false)`);
+    await sleep(500);
+    check(`inputtest${mode}: leaving fullscreen reaches the game`, logs.some((l) => l.includes('fullscreen: off')), logs.filter((l) => /fullscreen/.test(l)).join(' / '));
+  }
   // gasm:files: a save is a download. Checked in the page (the download's name and
   // blob, recorded where the player clicks its link) and by Chrome's downloadWillBegin
   // (Chrome 154 leaves headless downloads unfinished on disk, so files can't be read)

@@ -598,6 +598,7 @@ fn run(args: Args) -> Result<i32, String> {
         gl_software: args.gl_software,
         gl_stats: args.gl_stats,
         profile: args.profile.as_ref().map(std::path::PathBuf::from),
+        fullscreen: None, // (the window runner sets it)
         watch_assets,
     };
     match args.headless {

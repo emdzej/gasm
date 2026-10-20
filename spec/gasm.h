@@ -445,6 +445,17 @@ GASM_IMPORT("param") int32_t gasm_param(const char *name, uint32_t name_len, cha
  * empty resets to the default. Newer than has: probe has("gasm.set_title")
  * first. */
 GASM_IMPORT("set_title") void gasm_set_title(const char *title, uint32_t title_len);
+/* Ask to show the game fullscreen (on = 1) or in its window (0), after this
+ * frame. Returns 1 if this runner can show it fullscreen (a window, the
+ * browser player), 0 if not (headless runs): what it got is is_fullscreen, a
+ * frame or more later. Going fullscreen needs a key press or click in the last
+ * 5 seconds (as browsers require); leaving never does. Newer than has: probe
+ * has("gasm.set_fullscreen") first. */
+GASM_IMPORT("set_fullscreen") int32_t gasm_set_fullscreen(uint32_t on);
+/* 1 while the game is shown fullscreen (set_fullscreen, or the player's own
+ * keys: F11, Alt+Enter), else 0; always 0 in headless runs. Newer than has:
+ * probe has("gasm.is_fullscreen") first. */
+GASM_IMPORT("is_fullscreen") uint32_t gasm_is_fullscreen(void);
 /* End the frame inside gasm_run: the runner suspends the guest and resumes it
  * at the start of the next frame. Traps outside gasm_run (and on runners
  * without stack switching: probe has("gasm.yield_frame")). */

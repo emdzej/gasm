@@ -78,7 +78,11 @@ fn native_window(window: &Window) -> Result<NativeWindow, String> {
 
 /// Open a window and play until the guest exits, traps or the player quits.
 /// Returns the guest's exit code (0 when the player quit).
-pub fn run(session: Session, opts: Options) -> Result<i32, String> {
+/// How long after a key press or click a game may go fullscreen (Chrome's user activation lasts 5 s).
+const FULLSCREEN_AFTER_INPUT: Duration = Duration::from_secs(5);
+
+pub fn run(mut session: Session, opts: Options) -> Result<i32, String> {
+    session.fullscreen = Some(opts.fullscreen); // (set_fullscreen works here)
     let mut builder = EventLoop::builder();
     // gasm:gl draws with ANGLE, which needs an X11 window here (XWayland on Wayland desktops)
     #[cfg(all(unix, not(target_os = "macos")))]
@@ -106,6 +110,7 @@ pub fn run(session: Session, opts: Options) -> Result<i32, String> {
         typed: String::new(),
         key_events: Vec::new(),
         esc_down: None,
+        last_input: None,
         mouse: MouseState::default(),
         applied_mode: 0,
         pointer_flags: 0,
@@ -236,6 +241,8 @@ struct App {
     key_events: Vec<(u16, bool)>,
     /// Escape: a tap goes to the game, holding it quits
     esc_down: Option<Instant>,
+    /// the player's last key press or click: a game may go fullscreen only soon after one
+    last_input: Option<Instant>,
     mouse: MouseState,
     /// cursor mode currently applied to the window (GASM_INPUT_POINTER_*)
     applied_mode: u32,
@@ -302,6 +309,23 @@ impl App {
     }
 
     /// Hide / lock the cursor as the guest asked (input_mode), when it changes.
+    /// set_fullscreen: leaving is always allowed; going fullscreen only within
+    /// FULLSCREEN_AFTER_INPUT of a key press or click (as browsers require), so a game
+    /// can't take the screen on its own (and pass itself off as the desktop).
+    fn game_fullscreen(&mut self, on: bool, shown: bool) {
+        let Some(w) = &self.window else { return };
+        if on == shown {
+            return;
+        }
+        if !on {
+            w.set_fullscreen(None);
+        } else if self.last_input.is_some_and(|t| t.elapsed() <= FULLSCREEN_AFTER_INPUT) {
+            w.set_fullscreen(Some(Fullscreen::Borderless(None)));
+        } else {
+            eprintln!("[gasm] fullscreen: the game asked without a key press or click just before; ignored");
+        }
+    }
+
     /// The window title: the game's (set_title or the file name), then the runner's own part,
     /// which the guest can't change.
     fn show_title(&self) {
@@ -544,15 +568,20 @@ impl App {
                 self.next = Instant::now() + period;
             }
             // 2D guests: show the last video_present frame.
-            let title = game.with_host(|host| {
+            let shown = self.window.as_ref().is_some_and(|w| w.fullscreen().is_some());
+            let (title, request) = game.with_host(|host| {
+                host.fullscreen = shown;
                 if !host.gfx.used && host.width > 0 {
                     let (w, h) = (host.width as u32, host.height as u32);
                     let rgba = std::mem::take(&mut host.rgba);
                     host.gfx.present_video(&rgba, w, h, host.aspect);
                     host.rgba = rgba;
                 }
-                std::mem::take(&mut host.title_changed).then(|| host.title.clone())
+                (std::mem::take(&mut host.title_changed).then(|| host.title.clone()), host.fullscreen_request.take())
             });
+            if let Some(on) = request {
+                self.game_fullscreen(on, shown);
+            }
             if let Some(t) = title {
                 self.title = t.unwrap_or_else(|| self.default_title.clone());
                 self.show_title();
@@ -690,6 +719,9 @@ impl ApplicationHandler for App {
                     sp.skip |= state == ElementState::Pressed;
                 }
                 let bit = mouse_bit(button);
+                if state == ElementState::Pressed {
+                    self.last_input = Some(Instant::now());
+                }
                 match state {
                     ElementState::Pressed => {
                         self.mouse.buttons |= bit;
@@ -763,6 +795,9 @@ impl ApplicationHandler for App {
                     }
                     if code == KeyCode::Escape && !event.repeat {
                         self.esc_down = (event.state == ElementState::Pressed).then(Instant::now);
+                    }
+                    if event.state == ElementState::Pressed && !event.repeat {
+                        self.last_input = Some(Instant::now());
                     }
                     // the copy key also goes to the game
                     if Some(code) == self.opts.copy_key && event.state == ElementState::Pressed && !event.repeat {

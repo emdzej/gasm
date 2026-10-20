@@ -176,6 +176,8 @@ All pointers are `i32` offsets into guest memory. Strings are UTF-8 `(ptr, len)`
 | `param` | `(name_ptr, name_len, dst, cap) -> i32` | Launch parameter value: returns its byte length, or `-1` if unset. Copied only if length ≤ `cap`; call with `cap = 0` to query the length. |
 | `yield_frame` | `()` | End the frame inside `gasm_run`: the runner suspends the guest until the next frame ([Stack switching](#stack-switching)). Traps outside `gasm_run`. |
 | `set_title` | `(ptr, len)` | Name the game's window or browser tab, see [Window title](#window-title). Probe `has("gasm.set_title")` first: the SDK wrappers (`gasm::set_title`, `gasm_set_title_str`) do, and do nothing without it. |
+| `set_fullscreen` | `(on) -> i32` | Ask to show the game fullscreen (`on` = 1) or in its window (0), see [Fullscreen](#fullscreen). Returns 1 if this runner can show it fullscreen, 0 if not (headless runs). Probe `has("gasm.set_fullscreen")` first (`gasm::set_fullscreen` does). |
+| `is_fullscreen` | `() -> u32` | 1 while the game is shown fullscreen (asked for, or the player's own key), else 0; always 0 headless. Probe `has("gasm.is_fullscreen")` first. |
 
 Button bits: `A=0 B=1 X=2 Y=3 L=4 R=5 SELECT=6 START=7 UP=8 DOWN=9 LEFT=10 RIGHT=11`.
 Physical mapping (face buttons by position, as on a SNES pad): East=A,
@@ -788,6 +790,28 @@ one binding per line, `<pad 1-4> <button> <key code>...`. Buttons are
   `<data dir>/gasm/keymap.txt` if present) and `--print-keymap`. The web
   player has a "keys…" editor, stored in `localStorage`. Escape can't be
   bound to a pad.
+
+### Fullscreen
+
+`set_fullscreen` asks; the runner decides. A game must not be able to take the
+whole screen on its own (and pass itself off as the desktop or the browser), so:
+
+- Going fullscreen is honoured only within 5 seconds of a key press or click by
+  the player, as browsers require for `requestFullscreen` (natively the window
+  runner applies the same rule; elsewhere the request is ignored, natively with
+  a log line). Ask from the frame that handles the player's choice (a settings
+  menu's button), not at start: the player has `--fullscreen` for that. Leaving
+  fullscreen is always honoured.
+- Runners apply it after the frame that asked. What the game got is
+  `is_fullscreen`, from a later frame on: it also follows the player's own keys
+  (`gasm-run`: F11, Alt+Enter, Ctrl+Cmd+F on macOS; the browser's Esc).
+- Native window: borderless fullscreen on the window's monitor (no display mode
+  change). Browser player: the game's stage element, fullscreen. The game sees a
+  resize and nothing else.
+- Headless runs can't: `set_fullscreen` returns 0 and `is_fullscreen` is 0 on
+  every runner, so runs compare. Neither is hashed.
+- Embedders of the JS host opt in with `onFullscreen` (and keep `host.fullscreen`
+  current); without it `set_fullscreen` returns 0.
 
 ### Window title
 

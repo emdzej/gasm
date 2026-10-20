@@ -9,6 +9,15 @@ the package versions (`gasm-sdk`, `gasm-host`, `@emdzej/gasm-host`).
 ## Unreleased
 
 Runners:
+- `gasm.set_fullscreen(on)` and `gasm.is_fullscreen()` (ABI addition): a game asks
+  for fullscreen and reads back what the player sees. Honoured only within 5 s of a
+  key press or click, as browsers require (so a game can't take the screen on its
+  own); leaving always is. Native window runner and the web player (the stage
+  element; Worker mode too); headless runs answer 0 on every runner. JS embedders
+  opt in with `onFullscreen` and keep `host.fullscreen` current. SDKs:
+  `gasm::set_fullscreen` / `gasm::is_fullscreen`, `gasm_set_fullscreen` /
+  `gasm_is_fullscreen`. Godot: `window_set_mode(FULLSCREEN / WINDOWED)` and
+  `window_get_mode` (which said `MINIMIZED` before). `inputtest`: F switches.
 - Fullscreen in `gasm-run`'s window: F11 (`--fullscreen-key`), Alt+Enter and, on
   macOS, Ctrl+Cmd+F switch to borderless fullscreen on the window's monitor and
   back; `--fullscreen` starts that way. The game doesn't get those keys; it sees the

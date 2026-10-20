@@ -136,6 +136,34 @@ void DisplayServerGasm::window_set_title(const String &p_title, DisplayServerEnu
 	gasm_set_title_str(p_title.utf8().ptr());
 }
 
+// Fullscreen is the runner's: it applies a request after the frame, and only soon after
+// the player's key press or click (as browsers do), so a mode set from a settings menu's
+// button works, one from _ready doesn't. The mode reads back what the runner shows,
+// including the player's own key (F11, Alt+Enter, Esc in a browser).
+void DisplayServerGasm::window_set_mode(DisplayServerEnums::WindowMode p_mode, DisplayServerEnums::WindowID p_window) {
+	static const bool has = gasm_has_str("gasm.set_fullscreen") == 1;
+	if (!has) {
+		return;
+	}
+	switch (p_mode) {
+		case DisplayServerEnums::WINDOW_MODE_FULLSCREEN:
+		case DisplayServerEnums::WINDOW_MODE_EXCLUSIVE_FULLSCREEN:
+			gasm_set_fullscreen(1);
+			break;
+		case DisplayServerEnums::WINDOW_MODE_WINDOWED:
+		case DisplayServerEnums::WINDOW_MODE_MAXIMIZED:
+			gasm_set_fullscreen(0);
+			break;
+		default:
+			break; // (minimized: not a game's to choose)
+	}
+}
+
+DisplayServerEnums::WindowMode DisplayServerGasm::window_get_mode(DisplayServerEnums::WindowID p_window) const {
+	static const bool has = gasm_has_str("gasm.is_fullscreen") == 1;
+	return has && gasm_is_fullscreen() ? DisplayServerEnums::WINDOW_MODE_FULLSCREEN : DisplayServerEnums::WINDOW_MODE_WINDOWED;
+}
+
 void DisplayServerGasm::apply_mouse_mode() {
 	uint32_t flags = GASM_INPUT_KEYS_RAW; // Godot reads the keyboard itself
 	if (mouse_mode == DisplayServerEnums::MOUSE_MODE_HIDDEN || mouse_mode == DisplayServerEnums::MOUSE_MODE_CONFINED_HIDDEN) {

@@ -122,8 +122,13 @@ if gasm::has("gasm:gfx.destroy") { … }   // does this runner provide an import
 gasm::title!("My Game");             // built-in name (custom section), at the top level
 gasm::set_title("Level 2");          // the window / tab title (runners add "— gasm")
 gasm::video_set_aspect(4, 3);        // show 320x200 frames at 4:3; false on older runners
+gasm::set_fullscreen(true);          // after the player's key or click; false: can't here
+let full = gasm::is_fullscreen();    // what the player sees (also after F11, Esc)
 ```
 
+`set_fullscreen` works only within 5 seconds of a key press or click (as in
+browsers), so call it from the frame that handles the player's choice, never at
+start; the result is `is_fullscreen` a frame later ([Fullscreen](/docs/abi#fullscreen)).
 `set_title` and `video_set_aspect` probe for themselves and do nothing on runners
 without them; `video_set_aspect` returns `false` there, so a game that cares
 can correct the aspect itself (DOOM and ScummVM scale to 640×480 / 320×240 on
@@ -528,7 +533,9 @@ same way but hasn't been tried here.
 
 The header has the same features as the Rust crate: `gasm_has_str("gasm:gfx.destroy")`
 probes for an import, `GASM_TITLE("My Game");` (file scope) gives the module
-its built-in name, `gasm_set_title_str("Level 2")` names the window and
+its built-in name, `gasm_set_title_str("Level 2")` names the window,
+`gasm_set_fullscreen(1)` / `gasm_is_fullscreen()` (probe `gasm.set_fullscreen`) switch to fullscreen and
+read it back, and
 `gasm_video_aspect(4, 3)` shows frames at 4:3 (returns 0 on runners without it), `gasm_gfx_destroy(handle)` frees a GPU object,
 `gasm_storage_set` returns `0` or a `GASM_STORAGE_ERR_*` code (`_KEY`, `_SIZE`,
 `_QUOTA`, `_IO`), and the `GASM_POINTER_OFF_*` and `GASM_GAMEPAD_OFF_*`

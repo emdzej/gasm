@@ -116,6 +116,22 @@ pub fn set_title(title: &str) {
     }
 }
 
+/// Ask to show the game fullscreen (`true`) or in its window, after this frame.
+/// Returns whether this runner can show it fullscreen at all (a window, the
+/// browser player; not headless runs or runners without it): what the game got
+/// is [`is_fullscreen`], a frame or more later. Going fullscreen needs a key
+/// press or click in the last 5 seconds (as browsers require), so ask from the
+/// frame that handled the player's choice; leaving always works.
+pub fn set_fullscreen(on: bool) -> bool {
+    has("gasm.set_fullscreen") && unsafe { sys::set_fullscreen(on as u32) } == 1
+}
+
+/// Whether the game is shown fullscreen now ([`set_fullscreen`], or the player's
+/// own keys: F11, Alt+Enter); always `false` in headless runs.
+pub fn is_fullscreen() -> bool {
+    has("gasm.is_fullscreen") && unsafe { sys::is_fullscreen() } == 1
+}
+
 /// Launch parameter (`--param k=v` natively, `?k=v` in the browser).
 pub fn param(name: &str) -> Option<String> {
     let len = unsafe { sys::param(name.as_ptr(), name.len() as u32, std::ptr::null_mut(), 0) };
