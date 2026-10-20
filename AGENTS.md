@@ -203,8 +203,9 @@ from the repo root, then
   `c_char` is `u8` on arm64 Linux: use `c_char`, not `i8`. Electron 44+ no
   longer ships ANGLE as separate libraries.
 - **Godot:** change the engine only through `guests/godot/godot.patch` and
-  `platform/gasm` (fetch-godot.sh copies changed platform files in, so SCons
-  rebuilds only those). setjmp/longjmp use wasm exceptions (`-mllvm
+  `platform/gasm` (fetch-godot.sh copies in only changed platform files, and for
+  a new patch only the engine files whose patched content changed, so SCons
+  rebuilds just those; a new Godot version replaces the tree). setjmp/longjmp use wasm exceptions (`-mllvm
   -wasm-enable-sjlj`, also at link time for LTO; `-lsetjmp`); `wasm-opt` gets the
   module's exact features (`GODOT_FEATURES`; `--all-features` emits encodings the
   runners refuse). Godot reads the raw keyboard (`KEYS_RAW`): scripted input uses

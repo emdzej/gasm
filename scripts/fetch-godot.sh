@@ -18,13 +18,27 @@ TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 
 # ---- engine source (re-fetched when the patch changes) ----
+# The patch is applied to a fresh copy. For the same Godot version only files whose
+# content changed are copied over (as in sync-godot-variant.sh), so SCons' objects
+# stay and a patch change rebuilds what it touched, not the whole engine (85 min on
+# CI). A new version replaces the tree.
 STAMP="$VERSION $(sha256_of guests/godot/godot.patch)"
 if [ ! -f tools/godot-src/.gasm-fetch ] || [ "$(cat tools/godot-src/.gasm-fetch)" != "$STAMP" ]; then
   echo "fetching $REL/godot-$VERSION.tar.xz"
   download "$REL/godot-$VERSION.tar.xz" "$TMP/godot.tar.xz" "$SRC_SHA"
-  rm -rf tools/godot-src && mkdir -p tools/godot-src
-  tar xJf "$TMP/godot.tar.xz" -C tools/godot-src --strip-components=1
-  (cd tools/godot-src && patch -p1 -s --no-backup-if-mismatch) < guests/godot/godot.patch
+  mkdir -p "$TMP/src"
+  tar xJf "$TMP/godot.tar.xz" -C "$TMP/src" --strip-components=1
+  (cd "$TMP/src" && patch -p1 -s --no-backup-if-mismatch) < guests/godot/godot.patch
+  if [ -f tools/godot-src/.gasm-fetch ] && [ "$(cut -d' ' -f1 tools/godot-src/.gasm-fetch)" = "$VERSION" ]; then
+    # --checksum: compare contents, not times; build outputs and the gasm platform
+    # (copied below) stay
+    rsync -a --checksum --delete --itemize-changes \
+      --exclude=/bin/ --exclude='*.gen.*' --exclude='*.o' --exclude='*.a' --exclude='.sconsign*.dblite' \
+      --exclude='__pycache__/' --exclude='/.scons_*' --exclude=/platform/gasm/ --exclude=/.gasm-fetch \
+      "$TMP/src/" tools/godot-src/ | grep -v '^\.' || true
+  else
+    rm -rf tools/godot-src && mkdir -p tools && mv "$TMP/src" tools/godot-src
+  fi
   echo "$STAMP" > tools/godot-src/.gasm-fetch
 fi
 
