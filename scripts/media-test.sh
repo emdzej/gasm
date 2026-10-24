@@ -81,9 +81,11 @@ expect() {
 }
 
 run live 330 --allow-media=127.0.0.1 --param url=$BASE/live.mp3
-expect live "plays, with the station's name and changing titles" \
-  'state Connecting' 'state Playing (volume true, lowpass true, metadata true)' \
-  'name=Some("gasm test radio") title=Some("gasm test - Song 1")' 'title=Some("gasm test - Song 2")' 'position'
+# the first title can come before PLAYING (ICY metadata arrives with the connection, PLAYING
+# after 0.25 s decoded), so it is checked on its own; Song 2 comes 2 s later
+expect live "plays, with changing titles" \
+  'state Connecting' 'state Playing (volume true, lowpass true, metadata true)' 'title=Some("gasm test - Song 2")' 'position'
+cp "$TMP/live.log" "$TMP/live-name.log"; expect live-name "the station's name and its first title" 'name=Some("gasm test radio") title=Some("gasm test - Song 1")'
 
 run track 300 --allow-media=127.0.0.1 --param url=$BASE/track.mp3
 expect track "a track plays to its end" 'state Playing' 'state Ended at 3.0 s'
@@ -118,7 +120,8 @@ expect plainhttp "http (not https) is refused" 'refused: only https:// streams'
 # Godot: the Gasm singleton's media_* calls (guests/godot/examples/media)
 if [ -f build/godot.wasm ] && [ -f build/godot/media.pck ]; then
   GAME="build/godot.wasm --asset game.pck=build/godot/media.pck" run godot 330 --allow-media=127.0.0.1 --param url=$BASE/live.mp3
-  expect godot "Godot plays it through the Gasm singleton" 'media: opened' 'media: state playing' 'title gasm test - Song 1' 'title gasm test - Song 2'
+  expect godot "Godot plays it through the Gasm singleton" 'media: opened' 'media: state playing' 'title gasm test - Song 2'
+  cp "$TMP/godot.log" "$TMP/godot-title.log"; expect godot-title "Godot gets the first title" 'media: opened' 'title gasm test - Song 1'
   GAME="build/godot.wasm --asset game.pck=build/godot/media.pck" run godot-refused 30 --param url=$BASE/live.mp3
   expect godot-refused "Godot hears why it was refused" "media: refused: this game's manifest doesn't ask"
 else
