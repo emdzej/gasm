@@ -1091,7 +1091,7 @@ dependencies = [
 
 [[package]]
 name = "gasm-host"
-version = "0.15.0"
+version = "0.16.0"
 dependencies = [
  "arboard",
  "cpal",
@@ -1119,7 +1119,7 @@ dependencies = [
 
 [[package]]
 name = "gasm-relay"
-version = "0.15.0"
+version = "0.16.0"
 dependencies = [
  "rustls",
  "rustls-pki-types",

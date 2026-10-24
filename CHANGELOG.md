@@ -6,7 +6,7 @@ embedders. The ABI version is still 0: additions keep it (see
 guests can probe for newer imports with `gasm.has`. Versions are the git tags and
 the package versions (`gasm-sdk`, `gasm-host`, `@emdzej/gasm-host`).
 
-## Unreleased
+## 0.16.0 (2026-10-24)
 
 Runners:
 - `gasm:media` (ABI addition; NIP #23, design/media.md, phase 1): audio streams the
