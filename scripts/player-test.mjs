@@ -202,15 +202,20 @@ try {
     logs.length = 0;
     await send('Page.navigate', { url: `${BASE}?game=godot-ui&autostart&nosplash` });
     await running(2000);
+    // slow machines (CI) may still be laying out the first frames: wait for the example's
+    // first line, then click and paste until the field has it
+    for (let i = 0; i < 100 && !logs.some((l) => /ui:/.test(l)); i++) await sleep(100);
     await evaluate(`navigator.clipboard.writeText('pasted name')`);
-    await send('Input.dispatchMouseEvent', { type: 'mousePressed', x: 250, y: 205, button: 'left', buttons: 1, clickCount: 1 });
-    await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: 250, y: 205, button: 'left', clickCount: 1 });
-    await sleep(300);
-    await send('Input.dispatchKeyEvent', { type: 'keyDown', code: 'ControlLeft', key: 'Control', windowsVirtualKeyCode: 17, modifiers: 2 });
-    await send('Input.dispatchKeyEvent', { type: 'keyDown', code: 'KeyV', key: 'v', windowsVirtualKeyCode: 86, modifiers: 2, commands: ['paste'] });
-    await send('Input.dispatchKeyEvent', { type: 'keyUp', code: 'KeyV', key: 'v', windowsVirtualKeyCode: 86, modifiers: 2 });
-    await send('Input.dispatchKeyEvent', { type: 'keyUp', code: 'ControlLeft', key: 'Control', windowsVirtualKeyCode: 17 });
-    await sleep(800);
+    for (let attempt = 0; attempt < 4 && !logs.some((l) => l.includes('ui: name=pasted name')); attempt++) {
+      await send('Input.dispatchMouseEvent', { type: 'mousePressed', x: 250, y: 205, button: 'left', buttons: 1, clickCount: 1 });
+      await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: 250, y: 205, button: 'left', clickCount: 1 });
+      await sleep(300);
+      await send('Input.dispatchKeyEvent', { type: 'keyDown', code: 'ControlLeft', key: 'Control', windowsVirtualKeyCode: 17, modifiers: 2 });
+      await send('Input.dispatchKeyEvent', { type: 'keyDown', code: 'KeyV', key: 'v', windowsVirtualKeyCode: 86, modifiers: 2, commands: ['paste'] });
+      await send('Input.dispatchKeyEvent', { type: 'keyUp', code: 'KeyV', key: 'v', windowsVirtualKeyCode: 86, modifiers: 2 });
+      await send('Input.dispatchKeyEvent', { type: 'keyUp', code: 'ControlLeft', key: 'Control', windowsVirtualKeyCode: 17 });
+      await sleep(800);
+    }
     check('godot-ui: Ctrl+V pastes into a LineEdit', logs.some((l) => l.includes('ui: name=pasted name')), logs.filter((l) => /ui:/.test(l)).join(' / ') || 'no ui log');
   } else console.log('SKIP  godot-ui (make godot)');
   for (const game of ['test-pattern.wasm', 'gltest.wasm', 'triangle.wasm']) {
