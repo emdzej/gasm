@@ -45,6 +45,7 @@ export default withMermaid(defineConfig({
           { text: 'Writing games', link: '/dev/games' },
           { text: 'Choosing a graphics API', link: '/dev/graphics' },
           { text: 'Godot games', link: '/dev/godot' },
+          { text: 'Porting DirectX 7 games', link: '/dev/porting-directx7' },
           { text: 'Writing runners', link: '/dev/runners' },
           { text: 'Packages', link: '/dev/packages' },
           { text: 'Badge', link: '/dev/badge' },

@@ -42,6 +42,7 @@ property: most tests assert bit-identical hashes.
 | `tests/fixtures/` | byte-exact inputs (`-text`): `cd/` (asset folders), `fetch/` (recorded gasm:fetch responses, from `scripts/fetch-server.mjs` on port 8787) |
 | `scripts/` | toolchain/ROM fetchers (`lib.sh`: shared checksum helpers), test suites, packaging (`third-party-notices.sh`: license notices shipped with the games), site build, Linux container |
 | `site/` | VitePress website (docs live here; `site/docs/abi.md` includes `spec/ABI.md`) |
+| `site/dev/skills/` | agent skills (plain `SKILL.md`, any agent): `porting-directx7` (DirectX 7 era Windows games; the guide is `site/dev/porting-directx7.md`) |
 | `site/docs/roadmap.md` | **The roadmap**: everything planned or known to be missing, in one place |
 | `design/` | design documents with a status line: `threads.md` (part A implemented, B a proposal), `upscale.md` (a proposal: temporal upscaling, DLSS found but never shipped), `media.md` (a proposal: audio streams played by the runner, NIP's radio), and implemented ones kept as a record (`gasm-gl.md`, `fetch.md`, `presentation.md`, `stack-switching.md`) |
 | `.github/workflows/` | `ci.yml`, `pages.yml`, `release.yml` |

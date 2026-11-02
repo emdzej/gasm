@@ -45,6 +45,7 @@ mods and the capabilities manifest.
 | Asynchronous decompression | A runner call that unpacks a compressed block (zstd, deflate) outside the game and hands it over at the next frame: faster loading on every runner, threads or not. | not started |
 | `.gasm` packages | One file bundling `game.wasm`, its assets and a manifest. | not started |
 | `gasm:media`: DNS rebinding | Natively the private-address check resolves the host before connecting, but the HTTP client resolves it again: a resolver of our own for it (ureq's is unversioned API) would close that gap. HLS streams are an idea, not planned. [design/media.md](https://github.com/emdzej/gasm/blob/main/design/media.md) | not started |
+| Gamepad rumble and force feedback | Effects for `gasm_gamepad` slots (the Gamepad API's `vibrationActuator` in browsers, SDL-style rumble natively): DirectInput ports have force feedback with nothing to map it to. | idea |
 | Opening files (`gasm:files`) | A file picker run by the runner (importing a map, a replay): the game only sees what the player picks. Saving for the player already works (`gasm:files.save`). | not started |
 | Asking before a save | `gasm-run` writes a game's saves to a default folder (or `--save-dir`, or refuses them with `--no-save`); a native save dialog for each would let the player pick the place. | idea |
 | WIT / Component Model | Move the ABI to WIT once browsers don't need transpiling for components. | waiting on browsers |
