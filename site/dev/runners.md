@@ -252,9 +252,13 @@ Requirements for a good result:
    algorithm, about 15 lines.
 2. Use a ring buffer with a **target latency** (60 ms) and a **cap** (200 ms).
    On overflow, drop the oldest samples. On underrun, output silence until
-   the target level is buffered again.
+   the target level is buffered again, and keep the queued samples while
+   waiting: a callback that consumes them as it plays silence never reaches
+   the target, so the game stays silent after its first long frame.
 3. Never block the guest thread on audio (`gasm-run` hands samples to the
-   device callback through a lock-free ring).
+   device callback through a lock-free ring). `GASM_AUDIO_LOG=1 gasm-run …`
+   logs the ring once a second (queue length, target, pushed, trims,
+   refused samples, underruns).
 
 Browsers: use an `AudioWorklet` and post `Float32Array` chunks to it; this
 avoids SharedArrayBuffer and the COOP/COEP headers it would need. Create or

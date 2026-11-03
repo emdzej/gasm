@@ -6,6 +6,15 @@ embedders. The ABI version is still 0: additions keep it (see
 guests can probe for newer imports with `gasm.has`. Versions are the git tags and
 the package versions (`gasm-sdk`, `gasm-host`, `@emdzej/gasm-host`).
 
+## Unreleased
+
+Runners:
+- `gasm-run` (window): audio no longer goes silent after a long frame (a load). After
+  an underrun the device callback played silence while it threw away the samples it
+  was waiting for, so the queue rarely got back to the target latency and the game
+  stayed silent or garbled. It now keeps them. `GASM_AUDIO_LOG=1` logs the audio queue
+  once a second.
+
 ## 0.16.0 (2026-10-24)
 
 Runners:

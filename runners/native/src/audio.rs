@@ -93,6 +93,10 @@ mod sink {
         target: AtomicUsize,
         /// underruns so far (the consumer counts, the producer adapts the target)
         underruns: AtomicUsize,
+        /// trims and samples dropped by them, samples a full ring refused (for `GASM_AUDIO_LOG`)
+        trims: AtomicUsize,
+        trimmed: AtomicUsize,
+        refused: AtomicUsize,
     }
 
     impl Ring {
@@ -104,6 +108,9 @@ mod sink {
                 trim: AtomicBool::new(false),
                 target: AtomicUsize::new(0),
                 underruns: AtomicUsize::new(0),
+                trims: AtomicUsize::new(0),
+                trimmed: AtomicUsize::new(0),
+                refused: AtomicUsize::new(0),
             }
         }
 
@@ -116,6 +123,7 @@ mod sink {
             let head = self.head.load(Ordering::Relaxed);
             let free = self.slots.len() - (head - self.tail.load(Ordering::Acquire));
             let n = samples.len().min(free) & !1;
+            self.refused.fetch_add(samples.len() - n, Ordering::Relaxed);
             for (i, s) in samples[..n].iter().enumerate() {
                 self.slots[(head + i) % self.slots.len()].store(s.to_bits(), Ordering::Relaxed);
             }
@@ -139,6 +147,8 @@ mod sink {
             let tail = self.tail.load(Ordering::Relaxed);
             let len = self.head.load(Ordering::Acquire) - tail;
             if len > keep {
+                self.trims.fetch_add(1, Ordering::Relaxed);
+                self.trimmed.fetch_add((len - keep) & !1, Ordering::Relaxed);
                 self.tail.store(tail + ((len - keep) & !1), Ordering::Release);
             }
         }
@@ -156,6 +166,15 @@ mod sink {
         /// underruns seen at the last check, and when
         underruns_seen: usize,
         last_underrun: Option<Instant>,
+        /// `GASM_AUDIO_LOG=1`: a line a second (queue length, target, pushed, trims, underruns)
+        log: Option<AudioLog>,
+    }
+
+    struct AudioLog {
+        since: Instant,
+        pushed: usize,
+        min: usize,
+        max: usize,
     }
 
     /// The device stream feeding from an [`AudioSink`]: keep it alive while
@@ -172,6 +191,33 @@ mod sink {
         last_check: Instant,
     }
 
+    /// The device callback's half of the ring: `frames` stereo frames into `mix`. While
+    /// buffering (not `primed`) it plays silence and leaves the samples queued, so the
+    /// queue can fill up to the target; it starts playing once it has.
+    fn fill(ring: &Ring, primed: &mut bool, frames: usize, mix: &mut Vec<f32>) {
+        let target = ring.target.load(Ordering::Relaxed);
+        if ring.trim.swap(false, Ordering::AcqRel) {
+            ring.skip_to(target);
+        }
+        if !*primed && ring.len() >= target {
+            *primed = true;
+        }
+        mix.clear();
+        mix.resize(frames * 2, 0.0);
+        for f in 0..frames {
+            if !*primed {
+                break; // the rest of the block stays silent
+            }
+            match ring.pop() {
+                Some((l, r)) => (mix[f * 2], mix[f * 2 + 1]) = (l, r),
+                None => {
+                    ring.underruns.fetch_add(1, Ordering::Relaxed);
+                    *primed = false; // underrun: re-buffer
+                }
+            }
+        }
+    }
+
     fn build<T: SizedSample + FromSample<f32>>(
         device: &cpal::Device,
         config: &cpal::StreamConfig,
@@ -186,29 +232,8 @@ mod sink {
         device.build_output_stream::<T, _, _>(
             *config,
             move |out: &mut [T], _| {
-                let target = ring.target.load(Ordering::Relaxed);
-                if ring.trim.swap(false, Ordering::AcqRel) {
-                    ring.skip_to(target);
-                }
-                if !primed && ring.len() >= target {
-                    primed = true;
-                }
                 let frames = out.len() / channels.max(1);
-                mix.clear();
-                mix.resize(frames * 2, 0.0);
-                for f in 0..frames {
-                    let (l, r) = match ring.pop().filter(|_| primed) {
-                        Some(s) => s,
-                        None => {
-                            if primed {
-                                ring.underruns.fetch_add(1, Ordering::Relaxed);
-                            }
-                            primed = false; // underrun: re-buffer
-                            (0.0, 0.0)
-                        }
-                    };
-                    (mix[f * 2], mix[f * 2 + 1]) = (l, r);
-                }
+                fill(&ring, &mut primed, frames, &mut mix);
                 bus.mix(&mut mix);
                 for (f, frame) in out.chunks_mut(channels).enumerate() {
                     let (l, r) = (mix[f * 2].clamp(-1.0, 1.0), mix[f * 2 + 1].clamp(-1.0, 1.0));
@@ -308,6 +333,7 @@ mod sink {
             let sink = AudioSink {
                 ring: ring.clone(), bus: bus.clone(), device_rate, resampler: Resampler::new(device_rate), scratch: Vec::new(),
                 per_second, underruns_seen: 0, last_underrun: None,
+                log: std::env::var_os("GASM_AUDIO_LOG").filter(|v| !v.is_empty() && v != "0").map(|_| AudioLog { since: Instant::now(), pushed: 0, min: usize::MAX, max: 0 }),
             };
             Ok((sink, AudioStream { stream, ring, bus, device_name, device_rate, broken, last_check: Instant::now() }))
         }
@@ -344,9 +370,69 @@ mod sink {
                 }
             }
             let target = self.ring.target.load(Ordering::Relaxed);
+            if let Some(log) = &mut self.log {
+                let len = self.ring.len();
+                (log.pushed, log.min, log.max) = (log.pushed + self.scratch.len(), log.min.min(len), log.max.max(len));
+                if log.since.elapsed() >= Duration::from_secs(1) {
+                    let ms = |n: usize| n * 1000 / self.per_second;
+                    let r = &self.ring;
+                    eprintln!(
+                        "[audio] queue {}-{} ms (target {} ms), pushed {} ms in {} ms; total: trims {} ({} ms dropped), refused {} ms, underruns {}",
+                        ms(log.min), ms(log.max), ms(target), ms(log.pushed), log.since.elapsed().as_millis(),
+                        r.trims.load(Ordering::Relaxed), ms(r.trimmed.load(Ordering::Relaxed)),
+                        ms(r.refused.load(Ordering::Relaxed)), r.underruns.load(Ordering::Relaxed),
+                    );
+                    *log = AudioLog { since: Instant::now(), pushed: 0, min: usize::MAX, max: 0 };
+                }
+            }
             if self.ring.len() > target + (self.per_second as f32 * HEADROOM_S) as usize {
                 self.ring.trim.store(true, Ordering::Release);
             }
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        /// A game pushing in real time, a block at a time, must start playing: buffering
+        /// used to pop (and throw away) the samples it waited for, so the queue never
+        /// reached the target and the game stayed silent.
+        #[test]
+        fn buffering_keeps_the_samples() {
+            let ring = Ring::new(4096);
+            ring.target.store(600, Ordering::Relaxed); // 300 frames
+            let (mut primed, mut mix) = (false, Vec::new());
+            let block: Vec<f32> = (0..200).map(|i| i as f32 + 1.0).collect(); // 100 frames
+            let mut heard = Vec::new();
+            for _ in 0..10 {
+                ring.push(&block);
+                fill(&ring, &mut primed, 100, &mut mix);
+                heard.extend(mix.iter().copied().filter(|&s| s != 0.0));
+            }
+            // once primed, every pushed sample comes out, in order
+            assert!(primed);
+            assert_eq!(heard.len() + ring.len(), block.len() * 10);
+            assert_eq!(&heard[..200], &block[..]);
+            assert_eq!(ring.underruns.load(Ordering::Relaxed), 0);
+        }
+
+        #[test]
+        fn underrun_rebuffers_without_dropping() {
+            let ring = Ring::new(4096);
+            ring.target.store(4, Ordering::Relaxed);
+            let (mut primed, mut mix) = (false, Vec::new());
+            ring.push(&[1.0, 1.0, 2.0, 2.0]);
+            fill(&ring, &mut primed, 3, &mut mix); // two frames, then an underrun
+            assert_eq!(mix, [1.0, 1.0, 2.0, 2.0, 0.0, 0.0]);
+            assert!(!primed);
+            assert_eq!(ring.underruns.load(Ordering::Relaxed), 1);
+            ring.push(&[3.0, 3.0]);
+            fill(&ring, &mut primed, 1, &mut mix); // below the target: silence, kept
+            assert_eq!((mix.as_slice(), ring.len()), (&[0.0, 0.0][..], 2));
+            ring.push(&[4.0, 4.0]);
+            fill(&ring, &mut primed, 2, &mut mix);
+            assert_eq!(mix, [3.0, 3.0, 4.0, 4.0]);
         }
     }
 }
