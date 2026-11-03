@@ -6,7 +6,7 @@ embedders. The ABI version is still 0: additions keep it (see
 guests can probe for newer imports with `gasm.has`. Versions are the git tags and
 the package versions (`gasm-sdk`, `gasm-host`, `@emdzej/gasm-host`).
 
-## Unreleased
+## 0.16.1 (2026-11-03)
 
 Runners:
 - `gasm-run` (window): audio no longer goes silent after a long frame (a load). After
